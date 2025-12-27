@@ -1,0 +1,17 @@
+2ndboot
+GPATH
+GRTAGS
+GSYMS
+GTAGS
+build_boot2_elf
+interrupt.s
+interrupt.s
+io.s
+io.s
+mode32
+mode32.sym
+start16
+start16.s
+start16.s
+start32.s
+start32.s

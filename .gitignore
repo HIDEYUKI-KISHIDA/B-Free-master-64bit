@@ -1,0 +1,44 @@
+# .gitignore
+
+# OS/Editor/Build system files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.bak
+*.tmp
+*.log
+*.out
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.iso
+*.img
+*.bin
+*.elf
+*.map
+*.d
+*.pyc
+__pycache__/
+
+# VSCode
+.vscode/
+
+# Build directories
+build/
+build64/
+build_armtest/
+
+# User-specific
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Others
+*.old
+*.orig

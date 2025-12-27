@@ -1,0 +1,30 @@
+#
+#
+#
+
+# -DDEBUG
+CC = /mingw32/bin/gcc
+AR = /mingw32/bin/ar
+RANLIB = /mingw32/bin/ranlib
+COPT=-fno-builtin -fno-leading-underscore
+CFLAGS=-I../h -I../i386 -I.. -I../servers $(COPT)
+
+OBJS=	call_kernel.o sys_task.o sys_message.o sys_debug.o string.o binary.o \
+	port_manager.o message_port.o io.o dma.o sys_errno.o sys_interrupt.o eventflag.o \
+	sys_eventflag.o interrupt.o \
+	sys_virtual.o \
+	console.o \
+	sys_misc.o \
+	sys_lowlib.o \
+	sys_time.o \
+	malloc.o
+
+
+libkernel.a: $(OBJS)
+	$(AR) rv libkernel.a $(OBJS)
+	$(RANLIB) libkernel.a
+
+
+
+clean:
+	rm -f $(OBJS) libkernel.a
