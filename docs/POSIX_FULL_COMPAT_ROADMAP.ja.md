@@ -26,7 +26,7 @@
 
 - [x] 独立 OFD（別 `open` = 別オフセット、`dup` = 共有）
 - [x] `/tmp` 実ディレクトリ（mkdir/rmdir/ネスト/chdir）
-- [ ] dirent カーソルをすべて OFD へ
+- [x] dirent カーソルをすべて OFD へ（`kernel/sysmain/fs_ofd.c`、検証 `P4_DIRENT_OFD`）
 - [ ] unlink-while-open / vnode 寿命
 - [ ] `openat`/`*at` の dirfd 相対解決
 - [ ] 永続ブロック FS（後段）
