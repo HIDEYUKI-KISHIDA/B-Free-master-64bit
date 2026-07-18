@@ -14,3 +14,10 @@ cd bfree_x86_64
 ```
 
 Expected output: `RESULT: ALL PASS`
+
+### Block volume (M1 persistent FS)
+
+```bash
+# format + mount + sync API available via bfree_blk_format / bfree_fs_mount / bfree_fs_sync
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # includes P4_BLOCK_FS
+```

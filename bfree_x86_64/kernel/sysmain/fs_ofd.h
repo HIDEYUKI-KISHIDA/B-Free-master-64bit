@@ -5,9 +5,12 @@
  * - dirent_index per OFD (not shared on vnode)
  * - unlink-while-open via vnode refcount + deferred free
  * - openat/unlinkat/mkdirat dirfd-relative resolution
+ * - persistent block FS via blk_vol + blk_persist
  */
 #ifndef BFREE_FS_OFD_H
 #define BFREE_FS_OFD_H
+
+#include "blk_vol.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -32,9 +35,12 @@ struct bfree_vnode {
 	struct bfree_vnode *parent;
 	struct bfree_vnode *children[BFREE_MAX_CHILD];
 	size_t          child_count;
-	unsigned        nref;     /* OFD references; 0 => reclaimable */
-	int             unlinked; /* removed from parent; kept until nref==0 */
-	char           *data;
+	unsigned        nref;
+	int             unlinked;
+	uint32_t        ino;
+	uint32_t        data_blks[BFREE_BLK_MAX_FILE_BLKS];
+	uint32_t        data_blk_count;
+	char           *data;   /* ephemeral mode only */
 	size_t          size;
 };
 
@@ -51,9 +57,18 @@ struct bfree_fs {
 	struct bfree_ofd ofd_table[BFREE_MAX_OFD];
 	int            fd_ofd[BFREE_MAX_FD];
 	int            next_ofd;
+	struct bfree_blk_vol *vol;
+	bfree_blk_super_t super;
+	int            mounted;
+	struct bfree_vnode *vnodes[BFREE_BLK_MAX_INODES];
+	size_t         vnode_count;
 };
 
 void bfree_fs_init(struct bfree_fs *fs);
+
+int  bfree_fs_mount(struct bfree_fs *fs, const char *path);
+int  bfree_fs_sync(struct bfree_fs *fs);
+void bfree_fs_umount(struct bfree_fs *fs);
 
 int  bfree_open(struct bfree_fs *fs, const char *path, int flags, int mode);
 int  bfree_openat(struct bfree_fs *fs, int dirfd, const char *path,

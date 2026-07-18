@@ -22,6 +22,7 @@ make -C "${ROOT}" -s host-tests
 run_test test_p4_dirent_ofd
 run_test test_p4_unlink_open
 run_test test_p4_openat
+run_test test_p4_block_fs
 
 if [[ "${FAIL}" -ne 0 ]]; then
   echo "RESULT: FAIL"

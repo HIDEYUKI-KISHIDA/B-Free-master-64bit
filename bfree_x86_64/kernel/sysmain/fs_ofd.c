@@ -2,6 +2,7 @@
  * Synthetic vnode FS: per-OFD dirent cursors, unlink-while-open, *at syscalls.
  */
 #include "fs_ofd.h"
+#include "blk_persist.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -39,22 +40,24 @@ static void vnode_hold(struct bfree_vnode *vn)
 		vn->nref++;
 }
 
-static void vnode_free(struct bfree_vnode *vn)
+static void vnode_free(struct bfree_fs *fs, struct bfree_vnode *vn)
 {
-	if (vn == NULL)
+	if (vn == NULL || vn == &fs->root)
 		return;
+	if (fs->mounted)
+		bfree_blk_file_free(fs, vn);
 	free(vn->data);
 	free(vn);
 }
 
-static void vnode_rele(struct bfree_vnode *vn)
+static void vnode_rele(struct bfree_fs *fs, struct bfree_vnode *vn)
 {
 	if (vn == NULL)
 		return;
 	if (vn->nref == 0)
 		return;
 	if (--vn->nref == 0 && vn->unlinked)
-		vnode_free(vn);
+		vnode_free(fs, vn);
 }
 
 int bfree_vnode_is_alive(struct bfree_vnode *vn)
@@ -126,9 +129,11 @@ void bfree_fs_init(struct bfree_fs *fs)
 	memset(fs, 0, sizeof(*fs));
 	snprintf(fs->root.name, sizeof(fs->root.name), "/");
 	fs->root.type = BFREE_VNODE_DIR;
+	fs->root.ino = 1;
 	for (i = 0; i < BFREE_MAX_FD; i++)
 		fs->fd_ofd[i] = -1;
-	ensure_tmp_hierarchy(fs);
+	if (!fs->mounted)
+		ensure_tmp_hierarchy(fs);
 }
 
 static int alloc_ofd_slot(struct bfree_fs *fs)
@@ -398,7 +403,7 @@ static int ofd_open_vnode(struct bfree_fs *fs, struct bfree_vnode *vn,
 
 	fd = alloc_fd(fs, ofd_idx);
 	if (fd < 0) {
-		vnode_rele(vn);
+		vnode_rele(fs, vn);
 		ofd->refcount = 0;
 		return -EMFILE;
 	}
@@ -461,7 +466,7 @@ int bfree_close(struct bfree_fs *fs, int fd)
 	vn = ofd->vnode;
 	fs->fd_ofd[fd] = -1;
 	if (--ofd->refcount == 0) {
-		vnode_rele(vn);
+		vnode_rele(fs, vn);
 		memset(ofd, 0, sizeof(*ofd));
 	}
 	return 0;
@@ -483,6 +488,14 @@ ssize_t bfree_read(struct bfree_fs *fs, int fd, void *buf, size_t count)
 	avail = ofd->vnode->size - (size_t)ofd->offset;
 	if (count > avail)
 		count = avail;
+	if (fs->mounted) {
+		ssize_t n = bfree_blk_file_read(fs, ofd->vnode, ofd->offset, buf,
+						count);
+		if (n < 0)
+			return n;
+		ofd->offset += n;
+		return n;
+	}
 	memcpy(buf, ofd->vnode->data + ofd->offset, count);
 	ofd->offset += (off_t)count;
 	return (ssize_t)count;
@@ -503,6 +516,14 @@ ssize_t bfree_write(struct bfree_fs *fs, int fd, const void *buf, size_t count)
 		return -EINVAL;
 
 	new_size = (size_t)ofd->offset + count;
+	if (fs->mounted) {
+		ssize_t n = bfree_blk_file_write(fs, ofd->vnode, ofd->offset, buf,
+						 count);
+		if (n < 0)
+			return n;
+		ofd->offset += n;
+		return n;
+	}
 	if (new_size > ofd->vnode->size) {
 		new_data = realloc(ofd->vnode->data, new_size);
 		if (new_data == NULL)
@@ -608,7 +629,8 @@ int bfree_mkdirat(struct bfree_fs *fs, int dirfd, const char *path, int mode)
 	return vnode_add_child(parent, child);
 }
 
-static int vnode_unlink(struct bfree_vnode *parent, struct bfree_vnode *child)
+static int vnode_unlink(struct bfree_fs *fs, struct bfree_vnode *parent,
+			struct bfree_vnode *child)
 {
 	if (child->type == BFREE_VNODE_DIR)
 		return -EISDIR;
@@ -616,7 +638,7 @@ static int vnode_unlink(struct bfree_vnode *parent, struct bfree_vnode *child)
 		return -ENOENT;
 	child->unlinked = 1;
 	if (child->nref == 0)
-		vnode_free(child);
+		vnode_free(fs, child);
 	return 0;
 }
 
@@ -632,7 +654,7 @@ int bfree_unlink(struct bfree_fs *fs, const char *path)
 	child = vnode_find_child(parent, leaf);
 	if (child == NULL)
 		return -ENOENT;
-	return vnode_unlink(parent, child);
+	return vnode_unlink(fs, parent, child);
 }
 
 int bfree_unlinkat(struct bfree_fs *fs, int dirfd, const char *path, int flags)
@@ -661,10 +683,10 @@ int bfree_unlinkat(struct bfree_fs *fs, int dirfd, const char *path, int flags)
 			return -ENOENT;
 		child->unlinked = 1;
 		if (child->nref == 0)
-			vnode_free(child);
+			vnode_free(fs, child);
 		return 0;
 	}
-	return vnode_unlink(parent, child);
+	return vnode_unlink(fs, parent, child);
 }
 
 int bfree_rmdir(struct bfree_fs *fs, const char *path)
@@ -688,7 +710,7 @@ int bfree_rmdir(struct bfree_fs *fs, const char *path)
 		return -ENOENT;
 	child->unlinked = 1;
 	if (child->nref == 0)
-		vnode_free(child);
+		vnode_free(fs, child);
 	return 0;
 }
 

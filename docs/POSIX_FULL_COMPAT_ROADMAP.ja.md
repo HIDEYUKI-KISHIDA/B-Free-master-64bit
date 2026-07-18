@@ -22,14 +22,14 @@
 - ゴールと非ゴールの固定
 - 以降の PR はこの文書のチェックリストを更新する
 
-### M1 — ファイルシステム（Phase 4A–D）
+### M1 — ファイルシステム（Phase 4A–D） ✅ 完了
 
 - [x] 独立 OFD（別 `open` = 別オフセット、`dup` = 共有）
 - [x] `/tmp` 実ディレクトリ（mkdir/rmdir/ネスト/chdir）
 - [x] dirent カーソルをすべて OFD へ（`kernel/sysmain/fs_ofd.c`、検証 `P4_DIRENT_OFD`）
 - [x] unlink-while-open / vnode 寿命（`nref` + `unlinked`、検証 `P4_UNLINK_OPEN`）
 - [x] `openat`/`*at` の dirfd 相対解決（`openat`/`mkdirat`/`unlinkat`、検証 `P4_OPENAT`）
-- [ ] 永続ブロック FS（後段）
+- [x] 永続ブロック FS（`blk_vol.c`/`blk_persist.c`、検証 `P4_BLOCK_FS`）
 
 ### M2 — プロセス（最小の正直なモデル）
 
@@ -88,6 +88,9 @@
 
 実装の主戦場:
 
+- `bfree_x86_64/kernel/sysmain/fs_ofd.c`
+- `bfree_x86_64/kernel/sysmain/blk_vol.c`
+- `bfree_x86_64/kernel/sysmain/blk_persist.c`
 - `bfree_x86_64/kernel/sysmain/syscall.c`
 - `bfree_x86_64/kernel/sysmain/process.c`
 - `bfree_x86_64/kernel/sysmain/vmm.c`
