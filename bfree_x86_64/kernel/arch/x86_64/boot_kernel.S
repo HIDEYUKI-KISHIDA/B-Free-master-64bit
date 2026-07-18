@@ -2,17 +2,15 @@
 	.text
 	.global _start
 _start:
-	mov $0xe9, %dx
-	lea msg(%rip), %rsi
+	mov $stack_top, %rsp
+	and $-16, %rsp
+	call bfree_kernel_boot
 1:
-	movb (%rsi), %al
-	test %al, %al
-	je 2f
-	out %al, %dx
-	inc %rsi
-	jmp 1b
-2:
 	hlt
-	jmp 2b
-msg:
-	.asciz "KERNEL_OK\n"
+	jmp 1b
+
+	.section .bss
+	.align 16
+stack:
+	.space 16384
+stack_top:

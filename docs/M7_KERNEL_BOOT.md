@@ -22,8 +22,8 @@ cd bfree_x86_64
 ./tools/qemu_kernel_smoke.sh   # SKIP without QEMU
 ```
 
-## Residual (M8+)
+## Residual (M9+)
 
-- Hardware `lidt` / `wrmsr` on real ring-0 boot (tables prepared, not loaded in host tests)
-- Paging + initramfs
-- musl with raw `syscall` insn under in-kernel trap (requires QEMU full kernel + MSR)
+- QEMU `-initrd` external load
+- GDT + ring-3 user launch for musl raw `syscall`
+- Full upstream LTP on booted guest
