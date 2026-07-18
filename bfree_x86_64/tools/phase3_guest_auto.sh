@@ -51,6 +51,15 @@ run_test test_p5_net_unix
 run_test test_p5_ipc_shm
 run_test test_p5_syscall_gate
 
+# M6 boot / trap
+run_test test_p6_syscall_invoke
+run_test test_p6_trap_entry
+
+echo "== phase3_guest_auto: QEMU boot smoke =="
+if ! "${ROOT}/tools/qemu_boot_smoke.sh"; then
+  FAIL=1
+fi
+
 echo "== phase3_guest_auto: POSIX regress gate =="
 if ! "${ROOT}/tools/phase3_guest_posix_regress.sh"; then
   FAIL=1
