@@ -7,14 +7,18 @@ LDFLAGS ?=
 
 HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_block_fs \
 	test_p4_vfork_exec test_p4_waitid test_p4_fork test_p4_pipe_signal test_p4_shell_cli \
-	test_p4_rw_dup2 test_p4_brk_mmap test_p4_elf_load test_p4_clone_futex test_p4_tty_job
+	test_p4_rw_dup2 test_p4_brk_mmap test_p4_elf_load test_p4_clone_futex test_p4_tty_job \
+	test_p5_devnode test_p5_mount test_p5_cred test_p5_net_unix test_p5_ipc_shm test_p5_syscall_gate
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 
-FS_OBJS := $(BUILD_DIR)/fs_ofd.o $(BUILD_DIR)/blk_vol.o $(BUILD_DIR)/blk_persist.o
+FS_OBJS := $(BUILD_DIR)/fs_ofd.o $(BUILD_DIR)/blk_vol.o $(BUILD_DIR)/blk_persist.o \
+	$(BUILD_DIR)/devnode.o $(BUILD_DIR)/mount.o
 PROC_OBJS := $(BUILD_DIR)/process.o $(BUILD_DIR)/vmm.o $(BUILD_DIR)/shell_cli.o \
 	$(BUILD_DIR)/guest_io.o $(BUILD_DIR)/elf_load.o $(BUILD_DIR)/thread.o $(BUILD_DIR)/tty.o
-COMMON_OBJS := $(FS_OBJS) $(PROC_OBJS)
+M5_OBJS := $(BUILD_DIR)/cred.o $(BUILD_DIR)/net_unix.o $(BUILD_DIR)/ipc_shm.o \
+	$(BUILD_DIR)/syscall_dispatch.o
+COMMON_OBJS := $(FS_OBJS) $(PROC_OBJS) $(M5_OBJS)
 
 .PHONY: all host-tests clean
 
@@ -36,6 +40,24 @@ $(BUILD_DIR)/blk_vol.o: kernel/sysmain/blk_vol.c kernel/sysmain/blk_vol.h | $(BU
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
 $(BUILD_DIR)/blk_persist.o: kernel/sysmain/blk_persist.c kernel/sysmain/blk_persist.h kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/devnode.o: kernel/sysmain/devnode.c kernel/sysmain/devnode.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/mount.o: kernel/sysmain/mount.c kernel/sysmain/mount.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/cred.o: kernel/sysmain/cred.c kernel/sysmain/cred.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/net_unix.o: kernel/sysmain/net_unix.c kernel/sysmain/net_unix.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/ipc_shm.o: kernel/sysmain/ipc_shm.c kernel/sysmain/ipc_shm.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/syscall_dispatch.o: kernel/sysmain/syscall_dispatch.c kernel/sysmain/syscall_dispatch.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
 $(BUILD_DIR)/process.o: kernel/sysmain/process.c kernel/sysmain/process.h kernel/sysmain/vmm.h kernel/sysmain/elf_load.h | $(BUILD_DIR)
@@ -90,6 +112,24 @@ $(BUILD_DIR)/test_p4_clone_futex.o: tools/test_p4_clone_futex.c kernel/sysmain/t
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
 $(BUILD_DIR)/test_p4_tty_job.o: tools/test_p4_tty_job.c kernel/sysmain/tty.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/test_p5_devnode.o: tools/test_p5_devnode.c kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/test_p5_mount.o: tools/test_p5_mount.c kernel/sysmain/mount.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/test_p5_cred.o: tools/test_p5_cred.c kernel/sysmain/cred.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/test_p5_net_unix.o: tools/test_p5_net_unix.c kernel/sysmain/net_unix.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/test_p5_ipc_shm.o: tools/test_p5_ipc_shm.c kernel/sysmain/ipc_shm.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/test_p5_syscall_gate.o: tools/test_p5_syscall_gate.c kernel/sysmain/syscall_dispatch.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
 $(BUILD_DIR)/%: $(BUILD_DIR)/%.o $(COMMON_OBJS)

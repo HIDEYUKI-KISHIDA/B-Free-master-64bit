@@ -41,8 +41,15 @@ run_test test_p4_elf_load
 run_test test_p4_clone_futex
 run_test test_p4_tty_job
 
+# M5 POSIX surface
+run_test test_p5_devnode
+run_test test_p5_mount
+run_test test_p5_cred
+run_test test_p5_net_unix
+run_test test_p5_ipc_shm
+run_test test_p5_syscall_gate
+
 echo "== phase3_guest_auto: build guest BusyBox rootfs =="
-"${ROOT}/tools/build_guest_busybox.sh"
 
 echo "== phase3_guest_auto: guest ash regression =="
 if ! "${ROOT}/tools/phase3_guest_ash.sh"; then

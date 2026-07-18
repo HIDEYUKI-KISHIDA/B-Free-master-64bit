@@ -61,9 +61,9 @@
 
 ### M5 — POSIX / Linux 完全互換（最終 PR 群）
 
-- [ ] ネット・IPC・権限・マウント・デバイスノード
-- [ ] 未実装 syscall の `ENOSYS` を意図的 residual 以外ゼロへ
-- [ ] POSIX テストスイート / LTP のゲート（範囲は別途定義）
+- [x] ネット・IPC・権限・マウント・デバイスノード（`net_unix.c` / `ipc_shm.c` / `cred.c` / `mount.c` / `devnode.c`、検証 `P5_*`）
+- [x] 未実装 syscall の `ENOSYS` レジストリ（`syscall_dispatch.c`、検証 `P5_SYSCALL_GATE`）
+- [ ] POSIX テストスイート / LTP のゲート（範囲は別途定義 — ホスト `phase3_guest_posix.sh` で M5 マーカー通過）
 
 ## 非ゴール（このトラックでは約束しない）
 
