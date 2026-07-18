@@ -1,0 +1,20 @@
+# Guest link runtime (distributed via Release tarball, not git)
+third_party/x86_64-elf-runtime/lib/
+third_party/x86_64-elf-runtime/MANIFEST
+third_party/x86_64-elf-runtime/MANIFEST.sha256
+
+# musl / self-built gcc output
+out/
+
+# Local build / QEMU / BusyBox extract caches
+.cache/
+iso_root/
+*.iso
+*.elf
+*.bin
+*.o
+*.map
+*.log
+kernel/kernel.elf
+kernel/kernel.bin
+bfree.iso

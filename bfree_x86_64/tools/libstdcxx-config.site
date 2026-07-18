@@ -1,0 +1,28 @@
+# Sourced by libstdc++-v3/configure via CONFIG_SITE (x86_64-elf static / no DSO).
+ac_cv_search_shl_load=no
+ac_cv_func_shl_load=no
+ac_cv_lib_dld_shl_load=no
+ac_cv_lib_dl_dlopen=no
+ac_cv_func_dlopen=no
+ac_cv_func_dlsym=no
+ac_cv_func_dlclose=no
+libstdcxx_cv_shlib=no
+gl_cv_cc_visibility=no
+# Guest Qt needs mutex, condition_variable, chrono, futures (QThread, QReadWriteLock, …).
+libstdcxx_cv_threads=yes
+libstdcxx_cv_mutex_native=yes
+libstdcxx_cv_gthr_posix=yes
+lt_cv_prog_compiler_static_works=yes
+lt_cv_prog_compiler_c_static_works=yes
+cross_compiling=yes
+libstdcxx_cv_output_filetype=elf64-x86-64
+ac_cv_prog_cc_g=yes
+ac_cv_prog_cxx_g=yes
+ac_cv_cxx_compiler_gnu=yes
+lt_cv_prog_compiler_c_static_works=yes
+lt_cv_prog_compiler_cxx_static_works=yes
+ac_cv_c_compiler_works=yes
+ac_cv_prog_cc_cross=yes
+ac_cv_prog_cxx_cross=yes
+# x86_64-elf-as has no -r (reload); libtool must not pass it when assembling .s
+ac_cv_prog_AS_R=no

@@ -1,0 +1,50 @@
+ENTRY(_start)
+
+SECTIONS
+{
+  . = 0x100000;
+
+  /* Multiboot2 header: VMA/LMAともに1MB、KEEPで除去防止 */
+  .multiboot2 0x100000 : {
+    KEEP(*(.multiboot2))
+  }
+
+  /* .text以降は4Kアライン */
+  . = ALIGN(4K);
+  .text : {
+    *(.text .text.*)
+  }
+
+  .rodata ALIGN(4K) : {
+    *(.rodata .rodata.*)
+  }
+
+  .data ALIGN(4K) : {
+    *(.data .data.*)
+  }
+
+
+  .bss ALIGN(4K) (NOLOAD) : {
+    _bss_start = .;
+    /* Large page_table_t objects first so they stay below 0x400000 (init.elf VA). */
+    *(.bss.page_table)
+    *(.bss .bss.*)
+    *(COMMON)
+    _bss_end = .;
+  }
+
+  /* PMMビットマップ領域（NOLOAD、BITMAP_SIZE分確保） */
+  .pmm_bitmap ALIGN(4K) (NOLOAD) : {
+    _pmm_bitmap_start = .;
+    . = . + 0x20000; /* 4GiB / 4KiB / 8 = 128KiB */
+    _pmm_bitmap_end = .;
+  }
+
+  /DISCARD/ : { *(.note.GNU-stack) }
+
+  .stack ALIGN(4K) (NOLOAD) : {
+    _stack_start = .;
+    *(.stack)
+    _stack_end = .;
+  }
+}

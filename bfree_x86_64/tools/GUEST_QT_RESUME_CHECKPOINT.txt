@@ -1,0 +1,215 @@
+B-Free guest Qt + B5 — resume checkpoint (2026-05-19)
+========================================================
+
+Progress summary (phases P0–P4, 3-step status, distribution): see
+  docs/DISTRIBUTION_STAGES_AND_STATUS.ja.md  (updated 2026-06-04)
+
+Use this file after Windows/WSL restart. All paths below are inside WSL
+unless noted as Windows paths.
+
+Last known state before WSL I/O failure
+---------------------------------------
+- WSL showed:  /usr/bin/ls: Input/output error
+- Windows:     wsl -d Ubuntu → Wsl/Service/E_UNEXPECTED
+- Action taken: Windows reboot planned (user)
+
+Work already DONE (do not repeat unless verify fails)
+-----------------------------------------------------
+[OK] B5a — ISO QML staged
+     Program/bfree_x86_64/iso_root/bfree/qml/GuestMvpShell.qml
+
+[OK] B3 host Qt (WSL smoke)
+     /root/out/bfree-qt6-static/lib/libQt6Core.a
+     userland/desktop_qt/desktop (host smoke, QT_QPA_PLATFORM=bfree)
+
+[OK] bfree QPA static plugin
+     gui_server/integration_gui/bfree_qpa/build/plugins/platforms/libqbfree.a
+     (build with CONFIG+=guestinput for guest)
+
+[OK] B3 guest qtbase
+     /root/out/bfree-qt6-guest-static/lib/libQt6Core.a  (~18 MB)
+     Build dir: /root/out/bfree-qt6-guest-static/build-qtbase
+
+[OK] B3 guest qtshadertools
+     /root/out/bfree-qt6-guest-static/lib/libQt6ShaderTools.a
+     Build dir: /root/out/bfree-qt6-guest-static/build-qtshadertools
+
+[OK] B3 guest qtdeclarative (libraries; install partially failed)
+     /root/out/bfree-qt6-guest-static/lib/libQt6Qml.a
+     /root/out/bfree-qt6-guest-static/lib/libQt6QmlCore.a
+     Build tree has Quick:
+       /root/out/bfree-qt6-guest-static/build-qtdeclarative/lib/libQt6Quick.a
+     User copied libQt6Quick.a to prefix immediately before I/O crash — VERIFY after reboot.
+
+NOT done yet (next engineering steps)
+-------------------------------------
+[ ] Verify guest Qt libs on /root (see section 1)
+[ ] Optional: copy other libQt6Quick*.a from build-qtdeclarative/lib/ if link fails
+[ ] B4b-guest: bash tools/build_guest_desktop_elf.sh
+[ ] B5 ISO+QEMU: bash build_mvp_native_desktop.sh run
+[ ] QEMU login → GuestMvpShell from qrc (not desktop_stub)
+
+Environment (set in every WSL session)
+----------------------------------------
+  export BFREE_QT_SRC=/root/src/qt6
+  export BFREE_QT_BUILD_DIR=/root/out/bfree-qt6-static
+  export BFREE_QT_GUEST_BUILD_DIR=/root/out/bfree-qt6-guest-static
+  export BFREE_QPA_BUILD=/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/gui_server/integration_gui/bfree_qpa/build
+
+Repo (Windows path → use in WSL as /mnt/c/...):
+  /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64
+
+================================================================================
+SECTION 0 — Recover WSL (Windows PowerShell, Admin if needed)
+================================================================================
+
+1) Reboot Windows (if not done yet).
+
+2) Open PowerShell:
+     wsl --shutdown
+     wsl -l -v
+     wsl -d Ubuntu
+
+3) If E_UNEXPECTED / CreateInstance E_FAIL persists:
+   - Settings → Apps → Installed apps → Ubuntu → Repair (or Reset as last resort)
+   - Or:  wsl --update
+   - Reboot again
+   - Do NOT use "net stop LxssManager" on modern Windows (service name invalid).
+
+4) Inside Ubuntu, sanity check:
+     ls /root/out/bfree-qt6-guest-static/lib/libQt6Core.a
+     df -h /root
+     free -h
+
+   If /root is empty or missing, guest Qt must be rebuilt (hours). Qt sources should
+   still be at /root/src/qt6 if that disk survived.
+
+================================================================================
+SECTION 1 — After WSL is back: verify guest Qt prefix
+================================================================================
+
+  export BFREE_QT_GUEST_BUILD_DIR=/root/out/bfree-qt6-guest-static
+  G=$BFREE_QT_GUEST_BUILD_DIR
+  BD=$G/build-qtdeclarative
+
+  for f in libQt6Core.a libQt6Qml.a libQt6QmlCore.a libQt6Quick.a libQt6ShaderTools.a; do
+    ls -la "$G/lib/$f" 2>/dev/null || echo "MISSING: $G/lib/$f"
+  done
+
+  # If libQt6Quick.a missing in prefix but present in build tree:
+  ls -la "$BD/lib/libQt6Quick.a" && \
+    cp -a "$BD/lib/libQt6Quick.a" "$G/lib/"
+
+  # If link later complains about QuickTemplates2 etc.:
+  ls "$BD/lib"/libQt6Quick*.a 2>/dev/null
+  cp -an "$BD/lib"/libQt6Quick*.a "$G/lib/" 2>/dev/null || true
+
+  # If qmake says "Unknown module(s) in QT: quick":
+  bash tools/sync_guest_qtdecl_to_prefix.sh
+
+  cd /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64
+  bash tools/check_b5_prereqs.sh
+
+Expected: guest Qt [OK], desktop.elf still [--] until build_guest_desktop_elf.sh.
+
+================================================================================
+SECTION 2 — Build guest desktop.elf (B4b-guest / B5b)
+================================================================================
+
+  cd /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64
+  export BFREE_QT_GUEST_BUILD_DIR=/root/out/bfree-qt6-guest-static
+  export BFREE_QPA_BUILD=$PWD/gui_server/integration_gui/bfree_qpa/build
+
+  bash tools/build_guest_desktop_elf.sh
+
+  ls -la userland/desktop_qt/desktop.elf
+  # Qt-linked binary should be >> 100 KB (build.sh uses that threshold for ISO).
+
+================================================================================
+SECTION 3 — ISO + QEMU
+================================================================================
+
+  cd /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64
+  export BFREE_QT_GUEST_BUILD_DIR=/root/out/bfree-qt6-guest-static
+
+  bash build_mvp_native_desktop.sh run
+  # Login: bfree / bfree (focus QEMU VGA window, not serial-only terminal)
+  # Goal: GuestMvpShell.qml from qrc via guest Qt + bfree QPA
+
+================================================================================
+SECTION 4 — qtdeclarative build notes (if you must rebuild)
+================================================================================
+
+Configure flags that worked (tools OFF to avoid qmlprofiler link errors):
+
+  cd $BFREE_QT_GUEST_BUILD_DIR/build-qtdeclarative
+  $BFREE_QT_GUEST_BUILD_DIR/bin/qt-cmake \
+    $BFREE_QT_SRC/qtdeclarative \
+    -DCMAKE_INSTALL_PREFIX=$BFREE_QT_GUEST_BUILD_DIR \
+    -DQT_BUILD_TOOLS=OFF \
+    -DQT_BUILD_EXAMPLES=OFF \
+    -DFEATURE_qml_profiler=OFF
+
+  cmake --build . --target QmlCore Quick --parallel 2
+  cp -a lib/libQt6Quick.a lib/libQt6QmlCore.a $BFREE_QT_GUEST_BUILD_DIR/lib/
+
+Prerequisite order: qtbase → qtshadertools → qtdeclarative (Quick needs ShaderTools).
+
+Build on /root/out/... not under /mnt/c. Use --parallel 2 if WSL keeps dying.
+
+================================================================================
+SECTION 4c — guest-elf link: guest Qt is Linux/glibc static (2026-05-19)
+================================================================================
+
+  guest_main.cpp COMPILES with x86_64-elf-g++ + host /usr/include/c++/13.
+
+  LINK fails: libQt6Core.a wants -lglib-2.0 -licui18n -lpthread -lc (host Qt
+  configure), not B-Free freestanding. /root/out/bfree-qt6-guest-static was built
+  with linux-g++ + CROSS_COMPILE, not true bfree-g++ mkspec.
+
+  Until guest Qt is reconfigured (no GLib/ICU system libs, bfree sysroot):
+    ISO keeps desktop_stub after login.
+  Optional: host Linux link test with /usr/bin/g++ (not exec_initrd desktop.elf).
+
+  Toolchain PATH: export PATH="$HOME/bin:/usr/local/x86_64-elf/bin:$PATH"
+
+================================================================================
+SECTION 4b — x86_64-elf-g++ missing (Ubuntu Noble has no apt package)
+================================================================================
+
+  /usr/local/x86_64-elf/bin/x86_64-elf-gcc = C/asm only (no C++).
+  apt has no g++-x86-64-elf on Noble; crosstool-ng is not in apt either.
+
+  Prebuilt (gcc 13.2 + g++, ~650 MB download):
+
+    cd /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64
+    bash tools/install_x86_64_elf_gpp_prebuilt.sh
+    # Zip layout: bin/ at extract root (NOT x86_64-elf-tools/bin/).
+    mkdir -p ~/x86_64-elf-toolchain && unzip -qo ~/x86_64-elf-tools-linux.zip -d ~/x86_64-elf-toolchain
+    export PATH="$HOME/x86_64-elf-toolchain/bin:/usr/local/x86_64-elf/bin:$PATH"
+    which x86_64-elf-g++
+
+  Then re-run Section 2 make guest-elf.
+
+================================================================================
+SECTION 5 — WSL crash mitigation for long builds
+================================================================================
+
+- cmake --build . --parallel 2   (not $(nproc))
+- nohup ... > /root/qtdecl-build.log 2>&1 &
+- Disable Windows sleep during builds
+- Optional .wslconfig in %UserProfile%\.wslconfig :
+    [wsl2]
+    memory=8GB
+
+================================================================================
+Quick reference — what each artifact is
+================================================================================
+
+  ./desktop (WSL)              host smoke only, NOT on ISO
+  desktop_stub/desktop.elf     current fallback session (~16 KB)
+  userland/desktop_qt/desktop.elf   target: static Qt + bfree QPA + GuestMvpShell qrc
+  BFREE_QT_GUEST_LINKED=1      ISO picks large desktop.elf when build.sh runs
+
+See also: GUEST_QT_DESKTOP.txt, tools/build_bfree_qt6_guest.sh,
+          tools/check_b5_prereqs.sh, tools/build_guest_desktop_elf.sh

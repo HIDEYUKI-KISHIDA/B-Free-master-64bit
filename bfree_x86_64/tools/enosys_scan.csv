@@ -1,0 +1,184 @@
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,200,gpu_backend,    return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,348,gpu_backend,    return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,458,gpu_backend,        return state->ops->wait_vblank ? state->ops->wait_vblank() : TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,463,gpu_backend,        return state->ops->page_flip ? state->ops->page_flip(((tk2gpu_buffer_t*)arg)->handle) : TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,472,gpu_backend,            if (slot == 0) return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,476,gpu_backend,            if (slot->offset + buf_size > state->fbinfo.size) return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,492,gpu_backend,        return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,510,gpu_backend,        return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,514,gpu_backend,        return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,531,gpu_backend,        return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.c,533,gpu_backend,    return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/gpu_backend.h,21,(internal),#define TK2GPU_ENOSYS     -38
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/runtime_link_stubs.c,45,runtime_link_stubs,    return TK2GPU_ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/posix.c,32,posix,// 未実装APIのENOSYS返却例
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/posix.c,37,posix,// 必要に応じて他APIも同様にラッパ・ENOSYS返却を追加
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/posix.c,4,posix,// * システムコールラッパ本体・ABI/アラインメント・ENOSYS返却を明示
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c,191,syscall,    return -38; // -ENOSYS: ホスト側でフォールバックするよう通知
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c,209,syscall,        return -38; // -ENOSYS
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c,275,syscall,    return -38; // -ENOSYS
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c,282,syscall,    return -38; // -ENOSYS
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/API_NAME.c,1,API_NAME,// 例: ENOSYSスタブ
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/API_NAME.c,5,API_NAME,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_demo_stubs.c,130,demo_stubs,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_demo_stubs.c,149,demo_stubs,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_demo_stubs.c,170,demo_stubs,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/accept.c,23,accept,            errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/access.c,17,access,    if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/access.c,28,access,    if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/access.c,42,access,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/bind.c,25,bind,        errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1005,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1013,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1020,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1027,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1034,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1041,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1049,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1057,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1065,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1073,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1081,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1089,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1098,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1106,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1113,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1120,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1127,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1135,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1142,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1150,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1158,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1165,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1173,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1180,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1188,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1196,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1204,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1212,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1220,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1227,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1235,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1242,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1249,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1257,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1265,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,1273,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,4,btron_thread_host, * BFREE_BTRON_NO_HOST_PTHREAD または非 Linux では ENOSYS。
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,743,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,751,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,758,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,778,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,786,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,793,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,800,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,808,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,815,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,828,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,836,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,845,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,853,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,868,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,875,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,882,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,889,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,897,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,905,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,912,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,919,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,926,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,934,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,941,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,948,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,955,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,962,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,971,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,980,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,989,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/btron_thread_host.c,997,btron_thread_host,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/chmod.c,27,chmod,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/chown.c,28,chown,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/chroot.c,22,chroot,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/close.c,47,close,            if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/close.c,63,close,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/connect.c,25,connect,        errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/faccessat.c,14,faccessat,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/faccessat.c,40,faccessat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/faccessat2.c,14,faccessat2,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/faccessat2.c,43,faccessat2,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fattach.c,3,fattach,/* STREAMS (POSIX XSR) — Linux/WSL ではカーネル非搭載が一般的。互換方針: ENOSYS のまま。 */
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fattach.c,9,fattach,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fchmod.c,16,fchmod,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fchmod.c,41,fchmod,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fchmodat.c,15,fchmodat,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fchmodat.c,41,fchmodat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fchown.c,16,fchown,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fchown.c,42,fchown,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fchownat.c,15,fchownat,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fchownat.c,42,fchownat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fdetach.c,3,fdetach,/* STREAMS — 非搭載ホストでは ENOSYS を維持。 */
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fdetach.c,8,fdetach,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fstatat.c,39,fstatat,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/fstatvfs.c,43,fstatvfs,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/getmsg.c,11,getmsg,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/getmsg.c,3,getmsg,/* STREAMS getmsg — 非搭載環境では ENOSYS。 */
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/ipc_named_open_bridge.c,36,ipc_named_open_bridge,			errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/link.c,26,link,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/linkat.c,14,linkat,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/linkat.c,40,linkat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/listen.c,21,listen,        errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/lstat.c,25,lstat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/mkdir.c,26,mkdir,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/mknod.c,29,mknod,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/mknodat.c,16,mknodat,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/mknodat.c,42,mknodat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/poll.c,3,poll,// shm_open.c と同様、syscall が未実装 (例: -ENOSYS/-38) のときはホスト libc に落とすパターンを他 API にも横展開可能。
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/process.c,13,process,        if (errno == 0) errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/process.c,23,process,        if (errno == 0) errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/process.c,33,process,        if (errno == 0) errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/readlink.c,27,readlink,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/rename.c,26,rename,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/renameat.c,14,renameat,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/renameat.c,39,renameat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/rmdir.c,25,rmdir,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/socket.c,127,socket,        errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/socket.c,91,socket,                errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/socketpair.c,19,socketpair,		if (errno == ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/socketpair.c,35,socketpair,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/statvfs.c,50,statvfs,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/statvfs.c,57,statvfs,        if (errno == 0) errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/symlink.c,26,symlink,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/timerfd.c,27,timerfd,    if (errno == ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/timerfd.c,48,timerfd,    if (errno == ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/timerfd.c,69,timerfd,    if (errno == ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/unlink.c,25,unlink,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/unlinkat.c,14,unlinkat,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/unlinkat.c,41,unlinkat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/utime.c,26,utime,	if (errno != ENOSYS) {
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/utime.c,42,utime,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/bfree_posix/utimensat.c,33,utimensat,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/libc_common.c,189,libc_common,        errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc___strerror.h,67,(internal),E(ENOSYS;       "Function not implemented")
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_confstr.c,16,confstr,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_getrlimit.c,16,getrlimit,	if (!ret || errno != ENOSYS)
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_getrusage.c,21,getrusage,	if (SYS_getrusage_time64 == SYS_getrusage || r != -ENOSYS)
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_mmap.c,44,mmap,        errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_posix_mem_offset.c,12,posix_mem_offset,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_posix_spawnattr_sched.c,14,posix_spawnattr_sched,	return ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_posix_spawnattr_sched.c,19,posix_spawnattr_sched,	return ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_posix_spawnattr_sched.c,24,posix_spawnattr_sched,	return ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_posix_spawnattr_sched.c,8,posix_spawnattr_sched,	return ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_posix_typed_mem_stubs.c,3,posix_typed_mem_stubs, * 真の TMR オブジェクトはカーネル依存のため、他環境では ENOSYS。
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_posix_typed_mem_stubs.c,68,posix_typed_mem_stubs,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_posix_typed_mem_stubs.c,77,posix_typed_mem_stubs,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_pthread_impl.h,185,(internal),	__syscall(SYS_futex; addr; FUTEX_WAKE|priv; cnt) != -ENOSYS ||
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_pthread_impl.h,191,(internal),	__syscall(SYS_futex; addr; FUTEX_WAIT|priv; val; 0) != -ENOSYS ||
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_putmsg_stub.c,13,putmsg_stub,	errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_putmsg_stub.c,5,putmsg_stub,/* STREAMS putmsg — 非搭載環境では ENOSYS。 */
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_readv.c,13,readv,	if (errno != ENOSYS && errno != EOPNOTSUPP) return -1;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_sched_getparam.c,7,sched_getparam,	return __syscall_ret(-ENOSYS);
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_sched_getscheduler.c,7,sched_getscheduler,	return __syscall_ret(-ENOSYS);
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_sched_setparam.c,7,sched_setparam,	return __syscall_ret(-ENOSYS);
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_sched_setscheduler.c,7,sched_setscheduler,	return __syscall_ret(-ENOSYS);
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_statvfs.c,11,statvfs,    errno = ENOSYS;
+/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/libc/musl_libc_syscall.h,66,(internal),	if (r != -ENOSYS) return r;

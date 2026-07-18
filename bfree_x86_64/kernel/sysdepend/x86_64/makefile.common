@@ -1,0 +1,38 @@
+# x86_64 共通Makefile（makefile.common）
+# T-Kernel 2.0 x86_64移植用
+# 仕様: TK2_x86_64_Spec.md v2.3準拠
+
+# コンパイラ/リンカ設定
+CC      = x86_64-elf-gcc
+LD      = x86_64-elf-ld
+AS      = x86_64-elf-as
+AR      = x86_64-elf-ar
+OBJCOPY = x86_64-elf-objcopy
+OBJDUMP = x86_64-elf-objdump
+
+# CFLAGS（64bit/ノーレッドゾーン/大規模モデル/スタック保護無効/標準lib無効/フリースタンディング）
+CFLAGS  = -m64 -mno-red-zone -mcmodel=large -fno-stack-protector -nostdlib -ffreestanding
+
+# LDFLAGS（ELF64/カスタムリンカスクリプト）
+LDFLAGS = -m elf_x86_64 -T $(LDSCRIPT)
+
+# オブジェクト/出力
+OBJDIR  = obj
+BINDIR  = bin
+
+# ソースディレクトリ
+SRCDIR  = .
+INCDIR  = ../include
+
+# 依存ファイル
+VPATH   = $(SRCDIR):$(INCDIR)
+
+# デフォルトターゲット
+all:
+	@echo "Please specify a target (e.g. kernel, clean)"
+
+# クリーン
+clean:
+	rm -rf $(OBJDIR)/*.o $(BINDIR)/*
+
+.PHONY: all clean
