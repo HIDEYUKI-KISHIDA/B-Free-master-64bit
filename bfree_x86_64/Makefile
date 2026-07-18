@@ -4,15 +4,14 @@ CC ?= gcc
 CFLAGS ?= -Wall -Wextra -std=c11 -O2 -g
 BUILD_DIR := build/host-tests
 
-HOST_TEST_SRCS := tools/test_p4_dirent_ofd.c
-HOST_TEST_OBJS := $(addprefix $(BUILD_DIR)/,$(notdir $(HOST_TEST_SRCS:.c=.o)))
+HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat
 FS_OFD_OBJ := $(BUILD_DIR)/fs_ofd.o
 
 .PHONY: all host-tests clean
 
 all: host-tests
 
-host-tests: $(BUILD_DIR)/test_p4_dirent_ofd
+host-tests: $(addprefix $(BUILD_DIR)/,$(HOST_TESTS))
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -20,10 +19,10 @@ $(BUILD_DIR):
 $(BUILD_DIR)/fs_ofd.o: kernel/sysmain/fs_ofd.c kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
-$(BUILD_DIR)/test_p4_dirent_ofd.o: tools/test_p4_dirent_ofd.c kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: tools/%.c kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
-$(BUILD_DIR)/test_p4_dirent_ofd: $(BUILD_DIR)/test_p4_dirent_ofd.o $(FS_OFD_OBJ)
+$(BUILD_DIR)/%: $(BUILD_DIR)/%.o $(FS_OFD_OBJ)
 	$(CC) $(CFLAGS) $^ -o $@
 
 clean:

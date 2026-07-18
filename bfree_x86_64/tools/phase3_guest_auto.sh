@@ -6,15 +6,22 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="${ROOT}/build/host-tests"
 FAIL=0
 
+run_test() {
+  local name="$1"
+  echo "== phase3_guest_auto: ${name} =="
+  if ! "${BUILD_DIR}/${name}"; then
+    FAIL=1
+  fi
+}
+
 mkdir -p "${BUILD_DIR}"
 
 echo "== phase3_guest_auto: build host tests =="
 make -C "${ROOT}" -s host-tests
 
-echo "== phase3_guest_auto: P4_DIRENT_OFD =="
-if ! "${BUILD_DIR}/test_p4_dirent_ofd"; then
-  FAIL=1
-fi
+run_test test_p4_dirent_ofd
+run_test test_p4_unlink_open
+run_test test_p4_openat
 
 if [[ "${FAIL}" -ne 0 ]]; then
   echo "RESULT: FAIL"

@@ -27,8 +27,8 @@
 - [x] 独立 OFD（別 `open` = 別オフセット、`dup` = 共有）
 - [x] `/tmp` 実ディレクトリ（mkdir/rmdir/ネスト/chdir）
 - [x] dirent カーソルをすべて OFD へ（`kernel/sysmain/fs_ofd.c`、検証 `P4_DIRENT_OFD`）
-- [ ] unlink-while-open / vnode 寿命
-- [ ] `openat`/`*at` の dirfd 相対解決
+- [x] unlink-while-open / vnode 寿命（`nref` + `unlinked`、検証 `P4_UNLINK_OPEN`）
+- [x] `openat`/`*at` の dirfd 相対解決（`openat`/`mkdirat`/`unlinkat`、検証 `P4_OPENAT`）
 - [ ] 永続ブロック FS（後段）
 
 ### M2 — プロセス（最小の正直なモデル）

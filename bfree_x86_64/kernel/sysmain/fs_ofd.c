@@ -1,5 +1,5 @@
 /*
- * Synthetic vnode FS with per-OFD directory cursors (M1 milestone).
+ * Synthetic vnode FS: per-OFD dirent cursors, unlink-while-open, *at syscalls.
  */
 #include "fs_ofd.h"
 
@@ -11,6 +11,8 @@
 #define DT_UNKNOWN 0
 #define DT_DIR     4
 #define DT_REG     8
+
+#define AT_REMOVEDIR 0x200
 
 static int path_is_absolute(const char *path)
 {
@@ -31,6 +33,35 @@ static struct bfree_vnode *vnode_alloc(const char *name, bfree_vtype_t type,
 	return vn;
 }
 
+static void vnode_hold(struct bfree_vnode *vn)
+{
+	if (vn != NULL)
+		vn->nref++;
+}
+
+static void vnode_free(struct bfree_vnode *vn)
+{
+	if (vn == NULL)
+		return;
+	free(vn->data);
+	free(vn);
+}
+
+static void vnode_rele(struct bfree_vnode *vn)
+{
+	if (vn == NULL)
+		return;
+	if (vn->nref == 0)
+		return;
+	if (--vn->nref == 0 && vn->unlinked)
+		vnode_free(vn);
+}
+
+int bfree_vnode_is_alive(struct bfree_vnode *vn)
+{
+	return vn != NULL && vn->nref > 0;
+}
+
 static int vnode_add_child(struct bfree_vnode *dir, struct bfree_vnode *child)
 {
 	if (dir->type != BFREE_VNODE_DIR || dir->child_count >= BFREE_MAX_CHILD)
@@ -38,6 +69,22 @@ static int vnode_add_child(struct bfree_vnode *dir, struct bfree_vnode *child)
 	dir->children[dir->child_count++] = child;
 	child->parent = dir;
 	return 0;
+}
+
+static int vnode_remove_child(struct bfree_vnode *parent, struct bfree_vnode *child)
+{
+	size_t i;
+
+	for (i = 0; i < parent->child_count; i++) {
+		if (parent->children[i] == child) {
+			parent->children[i] =
+				parent->children[parent->child_count - 1];
+			parent->child_count--;
+			child->parent = NULL;
+			return 0;
+		}
+	}
+	return -ENOENT;
 }
 
 static struct bfree_vnode *vnode_find_child(struct bfree_vnode *dir,
@@ -130,6 +177,77 @@ struct bfree_ofd *bfree_ofd_for_fd(struct bfree_fs *fs, int fd)
 	return ofd_from_fd(fs, fd);
 }
 
+static struct bfree_vnode *dirfd_vnode(struct bfree_fs *fs, int dirfd)
+{
+	struct bfree_ofd *ofd;
+
+	if (dirfd == BFREE_AT_FDCWD)
+		return &fs->root;
+	ofd = ofd_from_fd(fs, dirfd);
+	if (ofd == NULL)
+		return NULL;
+	if (ofd->vnode->type != BFREE_VNODE_DIR)
+		return NULL;
+	return ofd->vnode;
+}
+
+static struct bfree_vnode *lookup_component(struct bfree_vnode *dir,
+					    const char *name)
+{
+	if (strcmp(name, ".") == 0)
+		return dir;
+	if (strcmp(name, "..") == 0)
+		return dir->parent != NULL ? dir->parent : dir;
+	return vnode_find_child(dir, name);
+}
+
+static struct bfree_vnode *lookup_from_dir(struct bfree_vnode *start,
+					   const char *path)
+{
+	struct bfree_vnode *cur = start;
+	const char *p;
+	char component[BFREE_MAX_NAME];
+
+	if (start == NULL || path == NULL)
+		return NULL;
+	if (path[0] == '\0')
+		return start;
+
+	p = path;
+	while (*p == '/')
+		p++;
+
+	for (;;) {
+		const char *slash = strchr(p, '/');
+		size_t len = slash ? (size_t)(slash - p) : strlen(p);
+
+		if (len == 0) {
+			if (slash == NULL)
+				return cur;
+			p = slash + 1;
+			while (*p == '/')
+				p++;
+			continue;
+		}
+		if (len >= sizeof(component))
+			return NULL;
+		memcpy(component, p, len);
+		component[len] = '\0';
+
+		cur = lookup_component(cur, component);
+		if (cur == NULL)
+			return NULL;
+
+		if (slash == NULL)
+			return cur;
+		if (cur->type != BFREE_VNODE_DIR)
+			return NULL;
+		p = slash + 1;
+		while (*p == '/')
+			p++;
+	}
+}
+
 static struct bfree_vnode *resolve_parent(struct bfree_fs *fs,
 					  const char *path,
 					  char *leaf,
@@ -178,6 +296,61 @@ static struct bfree_vnode *resolve_parent(struct bfree_fs *fs,
 	return NULL;
 }
 
+static int resolve_parent_at(struct bfree_fs *fs, int dirfd, const char *path,
+			     struct bfree_vnode **parent_out, char *leaf,
+			     size_t leaf_sz)
+{
+	const char *p = path;
+	char component[BFREE_MAX_NAME];
+	struct bfree_vnode *cur;
+	struct bfree_vnode *base;
+
+	if (path_is_absolute(path)) {
+		*parent_out = resolve_parent(fs, path, leaf, leaf_sz);
+		return (*parent_out != NULL) ? 0 : -ENOENT;
+	}
+
+	base = dirfd_vnode(fs, dirfd);
+	if (base == NULL)
+		return -EBADF;
+	if (path[0] == '\0')
+		return -ENOENT;
+
+	cur = base;
+	p = path;
+	while (*p == '/')
+		p++;
+
+	for (;;) {
+		const char *slash = strchr(p, '/');
+		size_t len = slash ? (size_t)(slash - p) : strlen(p);
+
+		if (len == 0)
+			break;
+		if (len >= sizeof(component))
+			return -ENAMETOOLONG;
+		memcpy(component, p, len);
+		component[len] = '\0';
+
+		if (slash == NULL) {
+			snprintf(leaf, leaf_sz, "%s", component);
+			*parent_out = cur;
+			return 0;
+		}
+
+		cur = lookup_component(cur, component);
+		if (cur == NULL)
+			return -ENOENT;
+		if (cur->type != BFREE_VNODE_DIR)
+			return -ENOTDIR;
+		p = slash + 1;
+		while (*p == '/')
+			p++;
+	}
+
+	return -ENOENT;
+}
+
 struct bfree_vnode *bfree_lookup(struct bfree_fs *fs, const char *path)
 {
 	char leaf[BFREE_MAX_NAME];
@@ -192,6 +365,15 @@ struct bfree_vnode *bfree_lookup(struct bfree_fs *fs, const char *path)
 	if (strcmp(leaf, "/") == 0)
 		return parent;
 	return vnode_find_child(parent, leaf);
+}
+
+static struct bfree_vnode *lookup_at(struct bfree_fs *fs, int dirfd,
+				     const char *path)
+{
+	if (path_is_absolute(path))
+		return bfree_lookup(fs, path);
+
+	return lookup_from_dir(dirfd_vnode(fs, dirfd), path);
 }
 
 static int ofd_open_vnode(struct bfree_fs *fs, struct bfree_vnode *vn,
@@ -212,9 +394,11 @@ static int ofd_open_vnode(struct bfree_fs *fs, struct bfree_vnode *vn,
 	ofd->offset = 0;
 	ofd->dirent_index = 0;
 	ofd->refcount = 1;
+	vnode_hold(vn);
 
 	fd = alloc_fd(fs, ofd_idx);
 	if (fd < 0) {
+		vnode_rele(vn);
 		ofd->refcount = 0;
 		return -EMFILE;
 	}
@@ -227,6 +411,20 @@ int bfree_open(struct bfree_fs *fs, const char *path, int flags, int mode)
 
 	(void)mode;
 	vn = bfree_lookup(fs, path);
+	if (vn == NULL)
+		return -ENOENT;
+	return ofd_open_vnode(fs, vn, flags);
+}
+
+int bfree_openat(struct bfree_fs *fs, int dirfd, const char *path,
+		 int flags, int mode)
+{
+	struct bfree_vnode *vn;
+
+	(void)mode;
+	if (path == NULL)
+		return -EINVAL;
+	vn = lookup_at(fs, dirfd, path);
 	if (vn == NULL)
 		return -ENOENT;
 	return ofd_open_vnode(fs, vn, flags);
@@ -254,14 +452,18 @@ int bfree_dup(struct bfree_fs *fs, int fd)
 int bfree_close(struct bfree_fs *fs, int fd)
 {
 	struct bfree_ofd *ofd;
+	struct bfree_vnode *vn;
 
 	ofd = ofd_from_fd(fs, fd);
 	if (ofd == NULL)
 		return -EBADF;
 
+	vn = ofd->vnode;
 	fs->fd_ofd[fd] = -1;
-	if (--ofd->refcount == 0)
+	if (--ofd->refcount == 0) {
+		vnode_rele(vn);
 		memset(ofd, 0, sizeof(*ofd));
+	}
 	return 0;
 }
 
@@ -326,13 +528,13 @@ off_t bfree_lseek(struct bfree_fs *fs, int fd, off_t offset, int whence)
 		return -ESPIPE;
 
 	switch (whence) {
-	case 0: /* SEEK_SET */
+	case 0:
 		new_off = offset;
 		break;
-	case 1: /* SEEK_CUR */
+	case 1:
 		new_off = ofd->offset + offset;
 		break;
-	case 2: /* SEEK_END */
+	case 2:
 		new_off = (off_t)ofd->vnode->size + offset;
 		break;
 	default:
@@ -342,6 +544,25 @@ off_t bfree_lseek(struct bfree_fs *fs, int fd, off_t offset, int whence)
 		return -EINVAL;
 	ofd->offset = new_off;
 	return ofd->offset;
+}
+
+int bfree_create(struct bfree_fs *fs, const char *path, int mode)
+{
+	char leaf[BFREE_MAX_NAME];
+	struct bfree_vnode *parent;
+	struct bfree_vnode *child;
+
+	(void)mode;
+	parent = resolve_parent(fs, path, leaf, sizeof(leaf));
+	if (parent == NULL || parent->type != BFREE_VNODE_DIR)
+		return -ENOENT;
+	if (vnode_find_child(parent, leaf) != NULL)
+		return -EEXIST;
+
+	child = vnode_alloc(leaf, BFREE_VNODE_FILE, parent);
+	if (child == NULL)
+		return -ENOMEM;
+	return vnode_add_child(parent, child);
 }
 
 int bfree_mkdir(struct bfree_fs *fs, const char *path, int mode)
@@ -363,12 +584,94 @@ int bfree_mkdir(struct bfree_fs *fs, const char *path, int mode)
 	return vnode_add_child(parent, child);
 }
 
+int bfree_mkdirat(struct bfree_fs *fs, int dirfd, const char *path, int mode)
+{
+	char leaf[BFREE_MAX_NAME];
+	struct bfree_vnode *parent;
+	struct bfree_vnode *child;
+	int rc;
+
+	if (path_is_absolute(path))
+		return bfree_mkdir(fs, path, mode);
+
+	rc = resolve_parent_at(fs, dirfd, path, &parent, leaf, sizeof(leaf));
+	if (rc < 0)
+		return rc;
+	if (parent->type != BFREE_VNODE_DIR)
+		return -ENOTDIR;
+	if (vnode_find_child(parent, leaf) != NULL)
+		return -EEXIST;
+
+	child = vnode_alloc(leaf, BFREE_VNODE_DIR, parent);
+	if (child == NULL)
+		return -ENOMEM;
+	return vnode_add_child(parent, child);
+}
+
+static int vnode_unlink(struct bfree_vnode *parent, struct bfree_vnode *child)
+{
+	if (child->type == BFREE_VNODE_DIR)
+		return -EISDIR;
+	if (vnode_remove_child(parent, child) < 0)
+		return -ENOENT;
+	child->unlinked = 1;
+	if (child->nref == 0)
+		vnode_free(child);
+	return 0;
+}
+
+int bfree_unlink(struct bfree_fs *fs, const char *path)
+{
+	char leaf[BFREE_MAX_NAME];
+	struct bfree_vnode *parent;
+	struct bfree_vnode *child;
+
+	parent = resolve_parent(fs, path, leaf, sizeof(leaf));
+	if (parent == NULL)
+		return -ENOENT;
+	child = vnode_find_child(parent, leaf);
+	if (child == NULL)
+		return -ENOENT;
+	return vnode_unlink(parent, child);
+}
+
+int bfree_unlinkat(struct bfree_fs *fs, int dirfd, const char *path, int flags)
+{
+	char leaf[BFREE_MAX_NAME];
+	struct bfree_vnode *parent;
+	struct bfree_vnode *child;
+	int rc;
+
+	if (path_is_absolute(path))
+		return bfree_unlink(fs, path);
+
+	rc = resolve_parent_at(fs, dirfd, path, &parent, leaf, sizeof(leaf));
+	if (rc < 0)
+		return rc;
+	child = vnode_find_child(parent, leaf);
+	if (child == NULL)
+		return -ENOENT;
+
+	if (flags & AT_REMOVEDIR) {
+		if (child->type != BFREE_VNODE_DIR)
+			return -ENOTDIR;
+		if (child->child_count != 0)
+			return -ENOTEMPTY;
+		if (vnode_remove_child(parent, child) < 0)
+			return -ENOENT;
+		child->unlinked = 1;
+		if (child->nref == 0)
+			vnode_free(child);
+		return 0;
+	}
+	return vnode_unlink(parent, child);
+}
+
 int bfree_rmdir(struct bfree_fs *fs, const char *path)
 {
 	char leaf[BFREE_MAX_NAME];
 	struct bfree_vnode *parent;
 	struct bfree_vnode *child;
-	size_t i;
 
 	parent = resolve_parent(fs, path, leaf, sizeof(leaf));
 	if (parent == NULL)
@@ -381,16 +684,12 @@ int bfree_rmdir(struct bfree_fs *fs, const char *path)
 	if (child->child_count != 0)
 		return -ENOTEMPTY;
 
-	for (i = 0; i < parent->child_count; i++) {
-		if (parent->children[i] == child) {
-			parent->children[i] =
-				parent->children[parent->child_count - 1];
-			parent->child_count--;
-			free(child);
-			return 0;
-		}
-	}
-	return -ENOENT;
+	if (vnode_remove_child(parent, child) < 0)
+		return -ENOENT;
+	child->unlinked = 1;
+	if (child->nref == 0)
+		vnode_free(child);
+	return 0;
 }
 
 static unsigned char dirent_type(struct bfree_vnode *vn)
@@ -422,7 +721,8 @@ ssize_t bfree_getdents64(struct bfree_fs *fs, int fd, void *buf, size_t count)
 	while (idx < dir->child_count) {
 		struct bfree_vnode *child = dir->children[idx];
 		size_t namelen = strlen(child->name) + 1;
-		size_t reclen = (sizeof(struct bfree_linux_dirent64) + namelen + 7) & ~7;
+		size_t reclen =
+			(sizeof(struct bfree_linux_dirent64) + namelen + 7) & ~7;
 		struct bfree_linux_dirent64 *de;
 
 		if (out_used + reclen > count)

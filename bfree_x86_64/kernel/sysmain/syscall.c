@@ -31,6 +31,26 @@ int sys_open(const char *path, int flags, int mode)
 	return bfree_open(&guest.fs, path, flags, mode);
 }
 
+int sys_openat(int dirfd, const char *path, int flags, int mode)
+{
+	return bfree_openat(&guest.fs, dirfd, path, flags, mode);
+}
+
+int sys_unlink(const char *path)
+{
+	return bfree_unlink(&guest.fs, path);
+}
+
+int sys_unlinkat(int dirfd, const char *path, int flags)
+{
+	return bfree_unlinkat(&guest.fs, dirfd, path, flags);
+}
+
+int sys_mkdirat(int dirfd, const char *path, int mode)
+{
+	return bfree_mkdirat(&guest.fs, dirfd, path, mode);
+}
+
 int sys_close(int fd)
 {
 	return bfree_close(&guest.fs, fd);
