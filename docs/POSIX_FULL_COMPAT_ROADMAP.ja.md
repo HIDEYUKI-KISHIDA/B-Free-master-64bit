@@ -65,6 +65,12 @@
 - [x] 未実装 syscall の `ENOSYS` レジストリ（`syscall_dispatch.c`、検証 `P5_SYSCALL_GATE`）
 - [x] POSIX テストスイート / LTP のゲート（ホスト `posix_regress/` + `phase3_guest_posix_regress.sh`；フル LTP はブート後）
 
+### M6 — ブート / syscall trap（ホスト回帰）
+
+- [x] ランタイム syscall dispatch（`bfree_invoke_syscall`、検証 `P6_SYSCALL_INVOKE`）
+- [x] x86_64 trap エントリスタブ（`syscall_entry.S`、検証 `P6_TRAP_ENTRY`）
+- [x] QEMU ブートスモーク（`boot_smoke.S`、検証 `P6_BOOT_SMOKE` — QEMU 無しは SKIP）
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」

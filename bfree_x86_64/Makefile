@@ -9,10 +9,12 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p4_vfork_exec test_p4_waitid test_p4_fork test_p4_pipe_signal test_p4_shell_cli \
 	test_p4_rw_dup2 test_p4_brk_mmap test_p4_elf_load test_p4_clone_futex test_p4_tty_job \
 	test_p4_musl_load test_p4_musl_exec \
-	test_p5_devnode test_p5_mount test_p5_cred test_p5_net_unix test_p5_ipc_shm test_p5_syscall_gate
+	test_p5_devnode test_p5_mount test_p5_cred test_p5_net_unix test_p5_ipc_shm test_p5_syscall_gate \
+	test_p6_syscall_invoke test_p6_trap_entry
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
+BOOT_SMOKE_ELF := build/boot_smoke.elf
 
 FS_OBJS := $(BUILD_DIR)/fs_ofd.o $(BUILD_DIR)/blk_vol.o $(BUILD_DIR)/blk_persist.o \
 	$(BUILD_DIR)/devnode.o $(BUILD_DIR)/mount.o
@@ -21,13 +23,17 @@ PROC_OBJS := $(BUILD_DIR)/process.o $(BUILD_DIR)/vmm.o $(BUILD_DIR)/shell_cli.o 
 	$(BUILD_DIR)/thread.o $(BUILD_DIR)/tty.o
 M5_OBJS := $(BUILD_DIR)/cred.o $(BUILD_DIR)/net_unix.o $(BUILD_DIR)/ipc_shm.o \
 	$(BUILD_DIR)/syscall_dispatch.o
+M6_OBJS := $(BUILD_DIR)/syscall.o $(BUILD_DIR)/syscall_entry.o
 COMMON_OBJS := $(FS_OBJS) $(PROC_OBJS) $(M5_OBJS)
+P6_OBJS := $(COMMON_OBJS) $(M6_OBJS)
 
-.PHONY: all host-tests clean musl-static
+.PHONY: all host-tests clean musl-static boot-smoke
 
-all: host-tests
+all: host-tests boot-smoke
 
 host-tests: $(PAYLOAD_ELF) $(MUSL_STATIC_ELF) $(addprefix $(BUILD_DIR)/,$(HOST_TESTS))
+
+boot-smoke: $(BOOT_SMOKE_ELF)
 
 musl-static: $(MUSL_STATIC_ELF)
 
@@ -68,6 +74,12 @@ $(BUILD_DIR)/ipc_shm.o: kernel/sysmain/ipc_shm.c kernel/sysmain/ipc_shm.h | $(BU
 
 $(BUILD_DIR)/syscall_dispatch.o: kernel/sysmain/syscall_dispatch.c kernel/sysmain/syscall_dispatch.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/syscall.o: kernel/sysmain/syscall.c kernel/sysmain/syscall.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/syscall_entry.o: kernel/arch/x86_64/syscall_entry.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/process.o: kernel/sysmain/process.c kernel/sysmain/process.h kernel/sysmain/vmm.h \
 	kernel/sysmain/elf_load.h kernel/sysmain/elf_host_run.h | $(BUILD_DIR)
@@ -151,8 +163,25 @@ $(BUILD_DIR)/test_p5_ipc_shm.o: tools/test_p5_ipc_shm.c kernel/sysmain/ipc_shm.h
 $(BUILD_DIR)/test_p5_syscall_gate.o: tools/test_p5_syscall_gate.c kernel/sysmain/syscall_dispatch.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
+$(BUILD_DIR)/test_p6_syscall_invoke.o: tools/test_p6_syscall_invoke.c kernel/sysmain/syscall.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/test_p6_trap_entry.o: tools/test_p6_trap_entry.c kernel/sysmain/syscall.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BOOT_SMOKE_ELF): kernel/arch/x86_64/boot_smoke.S kernel/arch/x86_64/boot_smoke.ld
+	mkdir -p build
+	$(CC) $(CFLAGS) -nostdlib -static -fno-pie -fno-stack-protector \
+		-Wl,-T,kernel/arch/x86_64/boot_smoke.ld -o $@ kernel/arch/x86_64/boot_smoke.S
+
+$(BUILD_DIR)/test_p6_syscall_invoke: $(BUILD_DIR)/test_p6_syscall_invoke.o $(P6_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p6_trap_entry: $(BUILD_DIR)/test_p6_trap_entry.o $(P6_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 $(BUILD_DIR)/%: $(BUILD_DIR)/%.o $(COMMON_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 clean:
-	rm -rf $(BUILD_DIR)
+	rm -rf $(BUILD_DIR) build/boot_smoke.elf

@@ -4,7 +4,7 @@
 
 ## POSIX compatibility roadmap
 
-See [docs/POSIX_FULL_COMPAT_ROADMAP.ja.md](docs/POSIX_FULL_COMPAT_ROADMAP.ja.md) for milestone tracking (M0–M5).
+See [docs/POSIX_FULL_COMPAT_ROADMAP.ja.md](docs/POSIX_FULL_COMPAT_ROADMAP.ja.md) for milestone tracking (M0–M6).
 
 ### Run verification (host tests)
 
@@ -50,3 +50,11 @@ cd bfree_x86_64 && ./tools/phase3_guest_posix_regress.sh  # POSIX_REGRESS: ALL P
 ```
 
 See [docs/M5_POSIX_GATE.md](docs/M5_POSIX_GATE.md).
+
+### Boot / syscall trap (M6)
+
+```bash
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P6_SYSCALL_INVOKE, P6_TRAP_ENTRY, P6_BOOT_SMOKE
+```
+
+See [docs/M6_BOOT_TRAP.md](docs/M6_BOOT_TRAP.md).
