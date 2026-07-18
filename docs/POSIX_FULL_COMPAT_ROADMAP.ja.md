@@ -71,6 +71,15 @@
 - [x] x86_64 trap エントリスタブ（`syscall_entry.S`、検証 `P6_TRAP_ENTRY`）
 - [x] QEMU ブートスモーク（`boot_smoke.S`、検証 `P6_BOOT_SMOKE` — QEMU 無しは SKIP）
 
+### M7 — カーネルブート / in-kernel trap（ホスト回帰）
+
+- [x] IDT / syscall MSR 状態初期化（`trap_setup.c`、検証 `P7_TRAP_SETUP`）
+- [x] カーネル main（`kernel_main.c`、検証 `P7_KERNEL_MAIN`）
+- [x] trap 経由静的ペイロード（`trap_payload.c`、検証 `P7_TRAP_PAYLOAD`）
+- [x] musl static trap-init exec（`elf_trap_exec.c`、検証 `P7_MUSL_TRAP`）
+- [x] QEMU `kernel.elf` ブート（`boot_kernel.S`、検証 `P7_KERNEL_BOOT` — QEMU 無しは SKIP）
+- [x] LTP スタイルゲート（`ltp_regress/` + `phase3_guest_ltp.sh`）
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」
