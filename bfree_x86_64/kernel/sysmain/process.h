@@ -4,9 +4,13 @@
 #ifndef BFREE_PROCESS_H
 #define BFREE_PROCESS_H
 
+#include "vmm.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
+
+struct bfree_fs;
 
 #define BFREE_MAX_PROC       16
 #define BFREE_MAX_PROG        8
@@ -25,6 +29,7 @@
 #define WEXITED  4
 
 typedef int (*bfree_prog_fn)(int argc, char **argv, char **envp);
+typedef int (*bfree_thread_fn)(void *arg);
 
 typedef enum {
 	BFREE_PROC_FREE = 0,
@@ -34,18 +39,19 @@ typedef enum {
 	BFREE_PROC_BLOCKED_VFORK,
 } bfree_proc_state_t;
 
-struct bfree_as {
-	uint8_t *mem;
-	size_t   size;
-};
-
 struct bfree_proc {
 	int               pid;
 	int               ppid;
+	int               pgid;
+	int               sid;
+	int               is_thread;
+	int               as_shared;
 	bfree_proc_state_t state;
 	int               exit_status;
 	int               vfork_done;
 	struct bfree_as   as;
+	bfree_thread_fn   thread_fn;
+	void             *thread_arg;
 	int               sigchld_pending;
 	int               sigint_pending;
 	int               sigpipe_pending;
@@ -71,6 +77,7 @@ struct bfree_proc_mgr {
 };
 
 void bfree_proc_init(struct bfree_proc_mgr *mgr);
+void bfree_proc_attach_fs(struct bfree_fs *fs);
 
 int  bfree_proc_register(const char *path, bfree_prog_fn fn);
 
