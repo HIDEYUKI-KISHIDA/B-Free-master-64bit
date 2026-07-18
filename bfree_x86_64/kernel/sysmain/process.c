@@ -3,6 +3,8 @@
  */
 #include "process.h"
 #include "vmm.h"
+#include "elf_load.h"
+#include "fs_ofd.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -15,6 +17,7 @@ struct bfree_prog_entry {
 
 static struct bfree_prog_entry prog_table[BFREE_MAX_PROG];
 static int prog_count;
+static struct bfree_fs *g_exec_fs;
 
 static struct bfree_proc *proc_at(struct bfree_proc_mgr *mgr, int idx)
 {
@@ -97,6 +100,11 @@ static void notify_sigchld(struct bfree_proc_mgr *mgr, struct bfree_proc *child)
 		parent->sigchld_pending = child->pid;
 }
 
+void bfree_proc_attach_fs(struct bfree_fs *fs)
+{
+	g_exec_fs = fs;
+}
+
 void bfree_proc_init(struct bfree_proc_mgr *mgr)
 {
 	memset(mgr, 0, sizeof(*mgr));
@@ -104,8 +112,10 @@ void bfree_proc_init(struct bfree_proc_mgr *mgr)
 	mgr->current = 0;
 	mgr->procs[0].pid = 1;
 	mgr->procs[0].ppid = 0;
+	mgr->procs[0].pgid = 1;
+	mgr->procs[0].sid = 0;
 	mgr->procs[0].state = BFREE_PROC_RUNNING;
-	bfree_as_init(&mgr->procs[0].as, 4096);
+	bfree_as_init(&mgr->procs[0].as, 65536);
 }
 
 int bfree_proc_register(const char *path, bfree_prog_fn fn)
@@ -185,10 +195,30 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 		 char **argv, char **envp)
 {
 	bfree_prog_fn fn;
+	struct bfree_elf_image img;
+	struct bfree_proc *self;
+	typedef int (*elf_entry_t)(void);
+	elf_entry_t entry;
 	int argc;
 	int rc;
 
 	(void)envp;
+	self = current_proc(mgr);
+	if (self == NULL)
+		return -ESRCH;
+
+	if (g_exec_fs != NULL) {
+		rc = bfree_elf_load_path(g_exec_fs, path, &self->as, &img);
+		if (rc == 0) {
+			entry = (elf_entry_t)(uintptr_t)img.entry;
+			rc = entry();
+			bfree_exit(mgr, rc);
+			return 0;
+		}
+		if (rc != -ENOENT && rc != -ENOEXEC)
+			return rc;
+	}
+
 	fn = lookup_prog(path);
 	if (fn == NULL)
 		return -ENOENT;
@@ -229,15 +259,18 @@ void bfree_exit(struct bfree_proc_mgr *mgr, int status)
 		mgr->current = parent_idx;
 }
 
-static int reap_one(struct bfree_proc *zombie, int *status)
+static int reap_one(struct bfree_proc_mgr *mgr, struct bfree_proc *zombie,
+		    int *status)
 {
 	int pid = zombie->pid;
 
 	if (status != NULL)
 		*status = zombie->exit_status;
-	bfree_as_free(&zombie->as);
+	if (!zombie->as_shared)
+		bfree_as_free(&zombie->as);
 	memset(zombie, 0, sizeof(*zombie));
 	zombie->state = BFREE_PROC_FREE;
+	(void)mgr;
 	return pid;
 }
 
@@ -263,7 +296,7 @@ int bfree_wait4(struct bfree_proc_mgr *mgr, int pid, int *status,
 		if (pid > 0 && p->pid != pid)
 			continue;
 		if (pid == 0 || pid == -1 || p->pid == pid)
-			return reap_one(p, status);
+			return reap_one(mgr, p, status);
 	}
 	return -ECHILD;
 }
@@ -288,10 +321,10 @@ int bfree_waitid(struct bfree_proc_mgr *mgr, int idtype, int id,
 			continue;
 		found = 1;
 		if (options & WNOHANG) {
-			reap_one(p, status);
+			reap_one(mgr, p, status);
 			return 0;
 		}
-		return reap_one(p, status);
+		return reap_one(mgr, p, status);
 	}
 	if (options & WNOHANG)
 		return 0;
@@ -317,6 +350,8 @@ int bfree_fork(struct bfree_proc_mgr *mgr)
 	memset(child, 0, sizeof(*child));
 	child->pid = mgr->next_pid++;
 	child->ppid = parent->pid;
+	child->pgid = parent->pgid;
+	child->sid = parent->sid;
 	child->state = BFREE_PROC_RUNNABLE;
 	if (bfree_as_fork_copy(&child->as, &parent->as) < 0) {
 		child->state = BFREE_PROC_FREE;

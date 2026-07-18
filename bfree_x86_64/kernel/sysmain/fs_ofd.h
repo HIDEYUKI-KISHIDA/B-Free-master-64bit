@@ -23,6 +23,7 @@
 #define BFREE_MAX_FD     64
 
 #define BFREE_AT_FDCWD   (-100)
+#define BFREE_FD_CLOEXEC 1
 
 typedef enum {
 	BFREE_VNODE_FILE = 0,
@@ -54,8 +55,10 @@ struct bfree_ofd {
 
 struct bfree_fs {
 	struct bfree_vnode root;
+	struct bfree_vnode *cwd;
 	struct bfree_ofd ofd_table[BFREE_MAX_OFD];
 	int            fd_ofd[BFREE_MAX_FD];
+	int            fd_flags[BFREE_MAX_FD];
 	int            next_ofd;
 	struct bfree_blk_vol *vol;
 	bfree_blk_super_t super;
@@ -74,7 +77,12 @@ int  bfree_open(struct bfree_fs *fs, const char *path, int flags, int mode);
 int  bfree_openat(struct bfree_fs *fs, int dirfd, const char *path,
 		  int flags, int mode);
 int  bfree_dup(struct bfree_fs *fs, int fd);
+int  bfree_dup2(struct bfree_fs *fs, int oldfd, int newfd);
+int  bfree_fcntl(struct bfree_fs *fs, int fd, int cmd, long arg);
 int  bfree_close(struct bfree_fs *fs, int fd);
+
+int  bfree_chdir(struct bfree_fs *fs, const char *path);
+int  bfree_getcwd(struct bfree_fs *fs, char *buf, size_t size);
 
 ssize_t bfree_read(struct bfree_fs *fs, int fd, void *buf, size_t count);
 ssize_t bfree_write(struct bfree_fs *fs, int fd, const void *buf, size_t count);

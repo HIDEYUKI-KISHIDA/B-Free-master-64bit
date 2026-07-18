@@ -34,6 +34,13 @@ run_test test_p4_pipe_signal
 # M3 normal CLI
 run_test test_p4_shell_cli
 
+# M4 musl / static binary base
+run_test test_p4_rw_dup2
+run_test test_p4_brk_mmap
+run_test test_p4_elf_load
+run_test test_p4_clone_futex
+run_test test_p4_tty_job
+
 echo "== phase3_guest_auto: build guest BusyBox rootfs =="
 "${ROOT}/tools/build_guest_busybox.sh"
 

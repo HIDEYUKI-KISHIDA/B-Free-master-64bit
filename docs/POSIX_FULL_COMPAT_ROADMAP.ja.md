@@ -13,6 +13,7 @@
 - 協調的 `vfork` → 子 AS への `execve` → `exit` → `wait4` / `waitid`（複数 zombie）
 - eager-copy `fork`、パイプ両端、SIGCHLD / SIGINT / SIGPIPE
 - M3 shell CLI ハーネス + upstream BusyBox guest rootfs（`shell_cli.c`、`build_guest_busybox.sh`、`ash_regress/`）
+- M4 syscall 層（`guest_io.c`、`elf_load.c`、`thread.c`、`tty.c` — read/write/dup2/brk/mmap/clone/futex/job control）
 - 非 VFORK `clone` / スレッドは当面 `ENOSYS`（嘘の成功を返さない）
 
 明示 `-ENOSYS` は個別に数本 + **未登録 Linux syscall の default**。Linux x86_64 の syscall は数百本あり、dispatch に載っているのはおおよそ 100 本弱で、その多くも意味論が狭いスタブである。
@@ -50,11 +51,13 @@
 - [x] 外部コマンド・コマンド置換・サブシェル（`shell_cli.c`、検証 `P4_CMDSUBST` / `P4_SUBSHELL` / `P4_SHELL_CLI`）
 - [x] ゲスト ash 回帰（`phase3_guest_ash.sh` + `tools/ash_regress/`、upstream BusyBox rootfs、検証 `ASH_*`）
 
-### M4 — musl / 一般静的バイナリ
+### M4 — musl / 一般静的バイナリ ✅ 完了（ホスト回帰）
 
-- [ ] 主要 syscall の意味論を stub → 実実装へ
-- [ ] スレッド（`clone` スレッドフラグ）、robust futex
-- [ ] tty ジョブ制御、セッション / プロセスグループ
+- [x] 主要 syscall（`read`/`write`/`lseek`/`dup2`/`fcntl`/`chdir`/`getcwd`/`brk`/`mmap`、検証 `P4_RW_DUP2` / `P4_BRK_MMAP`）
+- [x] ELF64 `execve` ローダ（`elf_load.c`、検証 `P4_ELF_LOAD`）
+- [x] スレッド（`clone` CLONE_VM|CLONE_THREAD、`futex` wake、検証 `P4_CLONE_FUTEX`）
+- [x] tty ジョブ制御基盤（`setsid`/`setpgid`/`tcsetpgrp`、検証 `P4_TTY_JOB`）
+- [ ] musl 静的バイナリ実機ゲスト実行（ブート統合後）
 
 ### M5 — POSIX / Linux 完全互換（最終 PR 群）
 
@@ -97,6 +100,10 @@
 - `bfree_x86_64/kernel/sysmain/process.c`
 - `bfree_x86_64/kernel/sysmain/vmm.c`
 - `bfree_x86_64/kernel/sysmain/shell_cli.c`
+- `bfree_x86_64/kernel/sysmain/guest_io.c`
+- `bfree_x86_64/kernel/sysmain/elf_load.c`
+- `bfree_x86_64/kernel/sysmain/thread.c`
+- `bfree_x86_64/kernel/sysmain/tty.c`
 - `bfree_x86_64/tools/phase3_guest_auto.sh`
 - `bfree_x86_64/tools/phase3_guest_ash.sh`
 - `bfree_x86_64/tools/build_guest_busybox.sh`

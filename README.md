@@ -34,3 +34,9 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P4_SHELL_CLI + guest ash (ASH
 ```
 
 Guest rootfs is built from **upstream BusyBox** (no B-Free shell hacks). See [docs/M3_BUSYBOX_PATCH_ROLLBACK.md](docs/M3_BUSYBOX_PATCH_ROLLBACK.md).
+
+### musl / static binary base (M4)
+
+```bash
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P4_RW_DUP2, P4_BRK_MMAP, P4_ELF_LOAD, P4_CLONE_FUTEX, P4_TTY_JOB
+```

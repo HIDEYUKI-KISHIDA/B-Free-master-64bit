@@ -130,8 +130,11 @@ void bfree_fs_init(struct bfree_fs *fs)
 	snprintf(fs->root.name, sizeof(fs->root.name), "/");
 	fs->root.type = BFREE_VNODE_DIR;
 	fs->root.ino = 1;
-	for (i = 0; i < BFREE_MAX_FD; i++)
+	fs->cwd = &fs->root;
+	for (i = 0; i < BFREE_MAX_FD; i++) {
 		fs->fd_ofd[i] = -1;
+		fs->fd_flags[i] = 0;
+	}
 	if (!fs->mounted)
 		ensure_tmp_hierarchy(fs);
 }
@@ -187,7 +190,7 @@ static struct bfree_vnode *dirfd_vnode(struct bfree_fs *fs, int dirfd)
 	struct bfree_ofd *ofd;
 
 	if (dirfd == BFREE_AT_FDCWD)
-		return &fs->root;
+		return fs->cwd != NULL ? fs->cwd : &fs->root;
 	ofd = ofd_from_fd(fs, dirfd);
 	if (ofd == NULL)
 		return NULL;
@@ -361,6 +364,11 @@ struct bfree_vnode *bfree_lookup(struct bfree_fs *fs, const char *path)
 	char leaf[BFREE_MAX_NAME];
 	struct bfree_vnode *parent;
 
+	if (path == NULL)
+		return NULL;
+	if (!path_is_absolute(path))
+		return lookup_from_dir(fs->cwd != NULL ? fs->cwd : &fs->root,
+				       path);
 	if (strcmp(path, "/") == 0)
 		return &fs->root;
 
@@ -451,7 +459,108 @@ int bfree_dup(struct bfree_fs *fs, int fd)
 		ofd->refcount--;
 		return -EMFILE;
 	}
+	fs->fd_flags[new_fd] = fs->fd_flags[fd];
 	return new_fd;
+}
+
+int bfree_dup2(struct bfree_fs *fs, int oldfd, int newfd)
+{
+	struct bfree_ofd *ofd;
+	int ofd_idx;
+	int flags;
+
+	if (oldfd < 0 || oldfd >= BFREE_MAX_FD ||
+	    newfd < 0 || newfd >= BFREE_MAX_FD)
+		return -EBADF;
+	if (oldfd == newfd)
+		return newfd;
+	ofd = ofd_from_fd(fs, oldfd);
+	if (ofd == NULL)
+		return -EBADF;
+	ofd_idx = fs->fd_ofd[oldfd];
+	flags = fs->fd_flags[oldfd];
+	if (fs->fd_ofd[newfd] >= 0)
+		bfree_close(fs, newfd);
+	ofd->refcount++;
+	fs->fd_ofd[newfd] = ofd_idx;
+	fs->fd_flags[newfd] = flags;
+	return newfd;
+}
+
+#define F_GETFD 1
+#define F_SETFD 2
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC 1
+#endif
+
+int bfree_fcntl(struct bfree_fs *fs, int fd, int cmd, long arg)
+{
+	if (ofd_from_fd(fs, fd) == NULL)
+		return -EBADF;
+	switch (cmd) {
+	case F_GETFD:
+		return (fs->fd_flags[fd] & BFREE_FD_CLOEXEC) ? FD_CLOEXEC : 0;
+	case F_SETFD:
+		fs->fd_flags[fd] = (arg & FD_CLOEXEC) ? BFREE_FD_CLOEXEC : 0;
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+int bfree_chdir(struct bfree_fs *fs, const char *path)
+{
+	struct bfree_vnode *vn;
+
+	vn = bfree_lookup(fs, path);
+	if (vn == NULL)
+		return -ENOENT;
+	if (vn->type != BFREE_VNODE_DIR)
+		return -ENOTDIR;
+	fs->cwd = vn;
+	return 0;
+}
+
+int bfree_getcwd(struct bfree_fs *fs, char *buf, size_t size)
+{
+	struct bfree_vnode *vn;
+	char stack[BFREE_MAX_PATH][BFREE_MAX_NAME];
+	int depth = 0;
+	size_t len;
+	int i;
+
+	if (buf == NULL || size == 0)
+		return -EINVAL;
+	vn = fs->cwd != NULL ? fs->cwd : &fs->root;
+	if (vn == &fs->root) {
+		if (size < 2)
+			return -ERANGE;
+		buf[0] = '/';
+		buf[1] = '\0';
+		return 0;
+	}
+	while (vn != NULL && vn != &fs->root && depth < BFREE_MAX_PATH) {
+		snprintf(stack[depth], sizeof(stack[depth]), "%s", vn->name);
+		depth++;
+		vn = vn->parent;
+	}
+	len = 1;
+	for (i = depth - 1; i >= 0; i--) {
+		size_t n = strlen(stack[i]) + 1;
+
+		if (len + n >= size)
+			return -ERANGE;
+		buf[len - 1] = '/';
+		memcpy(buf + len, stack[i], n);
+		len += n;
+	}
+	if (len == 1) {
+		buf[0] = '/';
+		buf[1] = '\0';
+	} else {
+		buf[len - 1] = '\0';
+	}
+	return 0;
 }
 
 int bfree_close(struct bfree_fs *fs, int fd)
