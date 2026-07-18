@@ -26,3 +26,11 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # includes P4_BLOCK_FS
 ```bash
 cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # includes P4_VFORK_EXEC, P4_WAITID, P4_FORK, P4_PIPE_SIGNAL
 ```
+
+### Normal CLI (M3)
+
+```bash
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P4_SHELL_CLI + guest ash (ASH_*)
+```
+
+Guest rootfs is built from **upstream BusyBox** (no B-Free shell hacks). See [docs/M3_BUSYBOX_PATCH_ROLLBACK.md](docs/M3_BUSYBOX_PATCH_ROLLBACK.md).
