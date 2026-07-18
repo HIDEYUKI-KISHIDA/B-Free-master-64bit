@@ -17,7 +17,7 @@ run_test() {
 mkdir -p "${BUILD_DIR}"
 
 echo "== phase3_guest_auto: build host tests =="
-make -C "${ROOT}" -s host-tests
+make -C "${ROOT}" -s host-tests boot-smoke kernel boot-trap-payload
 
 # M1 filesystem
 run_test test_p4_dirent_ofd
@@ -57,6 +57,22 @@ run_test test_p6_trap_entry
 
 echo "== phase3_guest_auto: QEMU boot smoke =="
 if ! "${ROOT}/tools/qemu_boot_smoke.sh"; then
+  FAIL=1
+fi
+
+# M7 kernel boot / trap
+run_test test_p7_kernel_main
+run_test test_p7_trap_setup
+run_test test_p7_trap_payload
+run_test test_p7_musl_trap
+
+echo "== phase3_guest_auto: QEMU kernel boot =="
+if ! "${ROOT}/tools/qemu_kernel_smoke.sh"; then
+  FAIL=1
+fi
+
+echo "== phase3_guest_auto: LTP regress gate =="
+if ! "${ROOT}/tools/phase3_guest_ltp.sh"; then
   FAIL=1
 fi
 

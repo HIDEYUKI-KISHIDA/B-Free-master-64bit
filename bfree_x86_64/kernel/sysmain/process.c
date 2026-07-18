@@ -5,6 +5,7 @@
 #include "vmm.h"
 #include "elf_load.h"
 #include "elf_host_run.h"
+#include "elf_trap_exec.h"
 #include "fs_ofd.h"
 
 #include <errno.h>
@@ -210,8 +211,12 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 	if (g_exec_fs != NULL) {
 		rc = bfree_elf_load_path(g_exec_fs, path, &self->as, &img);
 		if (rc == 0) {
-			rc = bfree_elf_host_exec(&self->as, img.entry,
+			rc = bfree_elf_trap_exec(&self->as, img.entry,
 						 img.load_size, &status);
+			if (rc != 0)
+				rc = bfree_elf_host_exec(&self->as, img.entry,
+							 img.load_size,
+							 &status);
 			if (rc == 0)
 				bfree_exit(mgr, status);
 			return rc;

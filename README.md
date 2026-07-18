@@ -4,7 +4,7 @@
 
 ## POSIX compatibility roadmap
 
-See [docs/POSIX_FULL_COMPAT_ROADMAP.ja.md](docs/POSIX_FULL_COMPAT_ROADMAP.ja.md) for milestone tracking (M0–M6).
+See [docs/POSIX_FULL_COMPAT_ROADMAP.ja.md](docs/POSIX_FULL_COMPAT_ROADMAP.ja.md) for milestone tracking (M0–M7).
 
 ### Run verification (host tests)
 
@@ -58,3 +58,11 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P6_SYSCALL_INVOKE, P6_TRAP_EN
 ```
 
 See [docs/M6_BOOT_TRAP.md](docs/M6_BOOT_TRAP.md).
+
+### Kernel boot / in-kernel trap (M7)
+
+```bash
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P7_* + LTP_REGRESS
+```
+
+See [docs/M7_KERNEL_BOOT.md](docs/M7_KERNEL_BOOT.md).

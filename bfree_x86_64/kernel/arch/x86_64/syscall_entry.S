@@ -2,6 +2,7 @@
  * x86_64 Linux syscall trap entry (M6).
  * On entry: rax=nr, rdi=a0, rsi=a1, rdx=a2, r10=a3, r8=a4, r9=a5.
  */
+	.section .note.GNU-stack,"",@progbits
 	.text
 	.globl bfree_trap_syscall_entry
 bfree_trap_syscall_entry:
