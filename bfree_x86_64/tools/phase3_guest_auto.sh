@@ -31,6 +31,9 @@ run_test test_p4_waitid
 run_test test_p4_fork
 run_test test_p4_pipe_signal
 
+# M3 normal CLI
+run_test test_p4_shell_cli
+
 if [[ "${FAIL}" -ne 0 ]]; then
   echo "RESULT: FAIL"
   exit 1

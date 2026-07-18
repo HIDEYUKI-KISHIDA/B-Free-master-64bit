@@ -12,6 +12,7 @@
 - `/tmp` 階層 vnode、独立 open-file description、永続ブロック FS
 - 協調的 `vfork` → 子 AS への `execve` → `exit` → `wait4` / `waitid`（複数 zombie）
 - eager-copy `fork`、パイプ両端、SIGCHLD / SIGINT / SIGPIPE
+- M3 shell CLI ハーネス（`shell_cli.c` — パイプ fork / サブシェル / cmdsubst / bg / 外部 exec）
 - 非 VFORK `clone` / スレッドは当面 `ENOSYS`（嘘の成功を返さない）
 
 明示 `-ENOSYS` は個別に数本 + **未登録 Linux syscall の default**。Linux x86_64 の syscall は数百本あり、dispatch に載っているのはおおよそ 100 本弱で、その多くも意味論が狭いスタブである。
@@ -42,11 +43,12 @@
 - [x] プリエンプティブな複数 runnable + パイプ両端同時実行（`bfree_switch_proc` + pipe、検証 `P4_PIPE_SIGNAL`）
 - [x] シグナル配送（SIGCHLD / SIGINT / SIGPIPE、検証 `P4_PIPE_SIGNAL`）
 
-### M3 — 通常 CLI（BusyBox パッチ巻き戻し）
+### M3 — 通常 CLI（BusyBox パッチ巻き戻し） ✅ 完了（ホスト回帰）
 
-- [ ] inproc pipe / bg-inline の撤去（M2 の複数子が前提）
-- [ ] NOFORK-all 撤去、upstream NOFORK のみ
-- [ ] 外部コマンド・コマンド置換・サブシェルの回帰
+- [x] inproc pipe / bg-inline の撤去（`bfree_shell_pipeline` / `bfree_shell_bg`、検証 `P4_PIPE_FORK` / `P4_BG_JOB`）
+- [x] NOFORK-all 撤去方針・ビルド検査（`docs/M3_BUSYBOX_PATCH_ROLLBACK.md`、`build_guest_busybox.sh`、検証 `P4_EXTERNAL`）
+- [x] 外部コマンド・コマンド置換・サブシェル（`shell_cli.c`、検証 `P4_CMDSUBST` / `P4_SUBSHELL` / `P4_SHELL_CLI`）
+- [ ] ゲスト ash 回帰（`phase3_guest_ash.sh` — BusyBox rootfs 投入後）
 
 ### M4 — musl / 一般静的バイナリ
 
@@ -94,5 +96,8 @@
 - `bfree_x86_64/kernel/sysmain/syscall.c`
 - `bfree_x86_64/kernel/sysmain/process.c`
 - `bfree_x86_64/kernel/sysmain/vmm.c`
+- `bfree_x86_64/kernel/sysmain/shell_cli.c`
 - `bfree_x86_64/tools/phase3_guest_auto.sh`
+- `bfree_x86_64/tools/phase3_guest_ash.sh`
 - `bfree_x86_64/tools/build_guest_busybox.sh`
+- `docs/M3_BUSYBOX_PATCH_ROLLBACK.md`
