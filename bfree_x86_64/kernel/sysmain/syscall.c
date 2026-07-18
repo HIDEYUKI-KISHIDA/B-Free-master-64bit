@@ -1,10 +1,15 @@
 /*
- * Linux syscall dispatch for bfree_x86_64 guest (M1–M4).
+ * Linux syscall dispatch for bfree_x86_64 guest (M1–M5).
  */
+#include "cred.h"
 #include "elf_load.h"
 #include "fs_ofd.h"
 #include "guest_io.h"
+#include "ipc_shm.h"
+#include "mount.h"
+#include "net_unix.h"
 #include "process.h"
+#include "syscall_dispatch.h"
 #include "thread.h"
 #include "tty.h"
 
@@ -21,6 +26,7 @@ static struct guest_state guest;
 
 void guest_init(void)
 {
+	bfree_syscall_registry_init();
 	bfree_fs_init(&guest.fs);
 	bfree_proc_init(&guest.proc);
 	bfree_proc_attach_fs(&guest.fs);
@@ -223,4 +229,112 @@ int sys_ioctl(int fd, unsigned long req, void *arg)
 	if (req == 0x540f) /* TIOCGPGRP */
 		return bfree_tcgetpgrp(0);
 	return -EINVAL;
+}
+
+int sys_mount(const char *target, const char *source, const char *fstype,
+	      unsigned long flags, const void *data)
+{
+	(void)fstype;
+	(void)flags;
+	(void)data;
+	return bfree_mount(&guest.fs, target, source);
+}
+
+int sys_umount2(const char *target, int flags)
+{
+	return bfree_umount2(&guest.fs, target, flags);
+}
+
+unsigned int sys_getuid(void)
+{
+	return bfree_getuid();
+}
+
+unsigned int sys_geteuid(void)
+{
+	return bfree_geteuid();
+}
+
+unsigned int sys_getgid(void)
+{
+	return bfree_getgid();
+}
+
+unsigned int sys_getegid(void)
+{
+	return bfree_getegid();
+}
+
+int sys_setuid(unsigned int uid)
+{
+	return bfree_setuid(uid);
+}
+
+int sys_setgid(unsigned int gid)
+{
+	return bfree_setgid(gid);
+}
+
+int sys_setreuid(unsigned int ruid, unsigned int euid)
+{
+	return bfree_setreuid(ruid, euid);
+}
+
+int sys_setregid(unsigned int rgid, unsigned int egid)
+{
+	return bfree_setregid(rgid, egid);
+}
+
+int sys_socket(int domain, int type, int protocol)
+{
+	return bfree_socket(domain, type, protocol);
+}
+
+int sys_bind(int sockfd, const struct bfree_sockaddr_un *addr,
+	     unsigned int addrlen)
+{
+	return bfree_bind(sockfd, addr, addrlen);
+}
+
+int sys_connect(int sockfd, const struct bfree_sockaddr_un *addr,
+		unsigned int addrlen)
+{
+	return bfree_connect(sockfd, addr, addrlen);
+}
+
+ssize_t sys_sendto(int sockfd, const void *buf, unsigned int len, int flags,
+		   const struct bfree_sockaddr_un *addr, unsigned int addrlen)
+{
+	return bfree_sendto(sockfd, buf, len, flags, addr, addrlen);
+}
+
+ssize_t sys_recvfrom(int sockfd, void *buf, unsigned int len, int flags,
+		     struct bfree_sockaddr_un *addr, unsigned int *addrlen)
+{
+	return bfree_recvfrom(sockfd, buf, len, flags, addr, addrlen);
+}
+
+int sys_socketpair(int domain, int type, int protocol, int sv[2])
+{
+	return bfree_socketpair(domain, type, protocol, sv);
+}
+
+int sys_shmget(int key, unsigned long size, int shmflg)
+{
+	return bfree_shmget(key, size, shmflg);
+}
+
+void *sys_shmat(int shmid, const void *shmaddr, int shmflg)
+{
+	return bfree_shmat(shmid, shmaddr, shmflg);
+}
+
+int sys_shmdt(const void *shmaddr)
+{
+	return bfree_shmdt(shmaddr);
+}
+
+int sys_shmctl(int shmid, int cmd, struct bfree_shmid_ds *buf)
+{
+	return bfree_shmctl(shmid, cmd, buf);
 }

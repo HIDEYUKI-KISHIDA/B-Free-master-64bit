@@ -28,7 +28,11 @@
 typedef enum {
 	BFREE_VNODE_FILE = 0,
 	BFREE_VNODE_DIR  = 1,
+	BFREE_VNODE_DEV  = 2,
 } bfree_vtype_t;
+
+#define BFREE_DEV_NULL  1
+#define BFREE_DEV_ZERO  2
 
 struct bfree_vnode {
 	char            name[BFREE_MAX_NAME];
@@ -39,6 +43,7 @@ struct bfree_vnode {
 	unsigned        nref;
 	int             unlinked;
 	uint32_t        ino;
+	uint32_t        dev_id;
 	uint32_t        data_blks[BFREE_BLK_MAX_FILE_BLKS];
 	uint32_t        data_blk_count;
 	char           *data;   /* ephemeral mode only */

@@ -4,6 +4,7 @@
 #include "process.h"
 #include "vmm.h"
 #include "elf_load.h"
+#include "elf_host_run.h"
 #include "fs_ofd.h"
 
 #include <errno.h>
@@ -197,10 +198,9 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 	bfree_prog_fn fn;
 	struct bfree_elf_image img;
 	struct bfree_proc *self;
-	typedef int (*elf_entry_t)(void);
-	elf_entry_t entry;
 	int argc;
 	int rc;
+	int status;
 
 	(void)envp;
 	self = current_proc(mgr);
@@ -210,10 +210,11 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 	if (g_exec_fs != NULL) {
 		rc = bfree_elf_load_path(g_exec_fs, path, &self->as, &img);
 		if (rc == 0) {
-			entry = (elf_entry_t)(uintptr_t)img.entry;
-			rc = entry();
-			bfree_exit(mgr, rc);
-			return 0;
+			rc = bfree_elf_host_exec(&self->as, img.entry,
+						 img.load_size, &status);
+			if (rc == 0)
+				bfree_exit(mgr, status);
+			return rc;
 		}
 		if (rc != -ENOENT && rc != -ENOEXEC)
 			return rc;

@@ -1,6 +1,7 @@
 /*
  * Synthetic vnode FS: per-OFD dirent cursors, unlink-while-open, *at syscalls.
  */
+#include "devnode.h"
 #include "fs_ofd.h"
 #include "blk_persist.h"
 
@@ -137,6 +138,7 @@ void bfree_fs_init(struct bfree_fs *fs)
 	}
 	if (!fs->mounted)
 		ensure_tmp_hierarchy(fs);
+	bfree_devnodes_init(fs);
 }
 
 static int alloc_ofd_slot(struct bfree_fs *fs)
@@ -589,6 +591,8 @@ ssize_t bfree_read(struct bfree_fs *fs, int fd, void *buf, size_t count)
 	ofd = ofd_from_fd(fs, fd);
 	if (ofd == NULL)
 		return -EBADF;
+	if (ofd->vnode->type == BFREE_VNODE_DEV)
+		return bfree_dev_read(fs, fd, buf, count);
 	if (ofd->vnode->type != BFREE_VNODE_FILE)
 		return -EISDIR;
 	if (ofd->offset < 0 || (size_t)ofd->offset > ofd->vnode->size)
@@ -619,6 +623,8 @@ ssize_t bfree_write(struct bfree_fs *fs, int fd, const void *buf, size_t count)
 	ofd = ofd_from_fd(fs, fd);
 	if (ofd == NULL)
 		return -EBADF;
+	if (ofd->vnode->type == BFREE_VNODE_DEV)
+		return bfree_dev_write(fs, fd, buf, count);
 	if (ofd->vnode->type != BFREE_VNODE_FILE)
 		return -EISDIR;
 	if (ofd->offset < 0)

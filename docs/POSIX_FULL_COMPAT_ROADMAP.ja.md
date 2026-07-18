@@ -57,13 +57,13 @@
 - [x] ELF64 `execve` ローダ（`elf_load.c`、検証 `P4_ELF_LOAD`）
 - [x] スレッド（`clone` CLONE_VM|CLONE_THREAD、`futex` wake、検証 `P4_CLONE_FUTEX`）
 - [x] tty ジョブ制御基盤（`setsid`/`setpgid`/`tcsetpgrp`、検証 `P4_TTY_JOB`）
-- [ ] musl 静的バイナリ実機ゲスト実行（ブート統合後）
+- [x] musl 静的バイナリ実機ゲスト実行（ホスト `elf_host_run` シム + 検証 `P4_MUSL_LOAD` / `P4_MUSL_EXEC`；ブート統合後は syscall trap へ移行）
 
 ### M5 — POSIX / Linux 完全互換（最終 PR 群）
 
-- [ ] ネット・IPC・権限・マウント・デバイスノード
-- [ ] 未実装 syscall の `ENOSYS` を意図的 residual 以外ゼロへ
-- [ ] POSIX テストスイート / LTP のゲート（範囲は別途定義）
+- [x] ネット・IPC・権限・マウント・デバイスノード（`net_unix.c` / `ipc_shm.c` / `cred.c` / `mount.c` / `devnode.c`、検証 `P5_*`）
+- [x] 未実装 syscall の `ENOSYS` レジストリ（`syscall_dispatch.c`、検証 `P5_SYSCALL_GATE`）
+- [x] POSIX テストスイート / LTP のゲート（ホスト `posix_regress/` + `phase3_guest_posix_regress.sh`；フル LTP はブート後）
 
 ## 非ゴール（このトラックでは約束しない）
 
@@ -104,7 +104,11 @@
 - `bfree_x86_64/kernel/sysmain/elf_load.c`
 - `bfree_x86_64/kernel/sysmain/thread.c`
 - `bfree_x86_64/kernel/sysmain/tty.c`
+- `bfree_x86_64/kernel/sysmain/elf_host_run.c`
 - `bfree_x86_64/tools/phase3_guest_auto.sh`
 - `bfree_x86_64/tools/phase3_guest_ash.sh`
+- `bfree_x86_64/tools/phase3_guest_posix_regress.sh`
+- `bfree_x86_64/tools/posix_regress/`
+- `bfree_x86_64/tools/build_musl_static.sh`
 - `bfree_x86_64/tools/build_guest_busybox.sh`
 - `docs/M3_BUSYBOX_PATCH_ROLLBACK.md`
