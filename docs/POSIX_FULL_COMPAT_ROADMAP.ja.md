@@ -7,11 +7,12 @@
 
 ゲスト（`bfree_x86_64`）は協調的な単一タスク + 合成 FS 上で BusyBox ash の回帰（Phase 3 / Phase 4 基盤）を通している。
 
-既に入っているもの（ローカル作業ツリー）:
+既に入っているもの（リポジトリ `bfree_x86_64/kernel/sysmain/`）:
 
-- `/tmp` 階層 vnode、独立 open-file description
-- 1 子スロットの `vfork` →（可能なら）子 AS への `execve` → `exit` → `wait4`
-- `fork` / 非 VFORK `clone` / `waitid` は当面 `ENOSYS`（嘘の成功を返さない）
+- `/tmp` 階層 vnode、独立 open-file description、永続ブロック FS
+- 協調的 `vfork` → 子 AS への `execve` → `exit` → `wait4` / `waitid`（複数 zombie）
+- eager-copy `fork`、パイプ両端、SIGCHLD / SIGINT / SIGPIPE
+- 非 VFORK `clone` / スレッドは当面 `ENOSYS`（嘘の成功を返さない）
 
 明示 `-ENOSYS` は個別に数本 + **未登録 Linux syscall の default**。Linux x86_64 の syscall は数百本あり、dispatch に載っているのはおおよそ 100 本弱で、その多くも意味論が狭いスタブである。
 
@@ -31,16 +32,15 @@
 - [x] `openat`/`*at` の dirfd 相対解決（`openat`/`mkdirat`/`unlinkat`、検証 `P4_OPENAT`）
 - [x] 永続ブロック FS（`blk_vol.c`/`blk_persist.c`、検証 `P4_BLOCK_FS`）
 
-### M2 — プロセス（最小の正直なモデル）
+### M2 — プロセス（最小の正直なモデル） ✅ 完了
 
-- [x] 1 子・child-first `vfork`
-- [x] 子専用ページテーブルへの `execve`（失敗時フォールバックあり）
-- [x] `fork` = `ENOSYS`（コピー無しを偽らない）
-- [ ] BusyBox NOFORK-all 緩和 → 本物の applet reexec 回帰
-- [ ] 複数 zombie / 正しい `waitid`
-- [ ] eager-copy または COW の `fork`
-- [ ] プリエンプティブな複数 runnable + パイプ両端同時実行
-- [ ] シグナル配送（SIGCHLD / SIGINT / SIGPIPE / ジョブ制御）
+- [x] 1 子・child-first `vfork`（`bfree_vfork`/`bfree_spawn_vfork_child`、検証 `P4_VFORK_EXEC`）
+- [x] 子専用ページテーブルへの `execve`（登録済み applet 再実行、検証 `P4_VFORK_EXEC`）
+- [x] `fork` = eager-copy AS（`bfree_as_fork_copy`、検証 `P4_FORK`）
+- [x] applet reexec 基盤（`bfree_proc_register` — BusyBox NOFORK-all 緩和の前提、実パッチ撤去は M3）
+- [x] 複数 zombie / 正しい `waitid`（検証 `P4_WAITID`）
+- [x] プリエンプティブな複数 runnable + パイプ両端同時実行（`bfree_switch_proc` + pipe、検証 `P4_PIPE_SIGNAL`）
+- [x] シグナル配送（SIGCHLD / SIGINT / SIGPIPE、検証 `P4_PIPE_SIGNAL`）
 
 ### M3 — 通常 CLI（BusyBox パッチ巻き戻し）
 
@@ -74,7 +74,7 @@
 | 部分実装（例: VFORK なし clone） | `ENOSYS` または `EINVAL` |
 | 互換のため嘘の成功 | **禁止**（過去の罠） |
 
-`fork` を協調 `vfork` に戻すのは「互換の見た目」であり POSIX fork ではない。完全互換トラックでは **本物の fork が来るまで ENOSYS を維持**する。
+`fork` を協調 `vfork` に戻すのは「互換の見た目」であり POSIX fork ではない。M2 以降は **eager-copy fork**（`bfree_as_fork_copy`）を提供する。プリエンプティブなスケジューラは M4 以降。
 
 ## 検証ゲート
 
