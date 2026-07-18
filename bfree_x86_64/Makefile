@@ -8,23 +8,28 @@ LDFLAGS ?=
 HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_block_fs \
 	test_p4_vfork_exec test_p4_waitid test_p4_fork test_p4_pipe_signal test_p4_shell_cli \
 	test_p4_rw_dup2 test_p4_brk_mmap test_p4_elf_load test_p4_clone_futex test_p4_tty_job \
+	test_p4_musl_load test_p4_musl_exec \
 	test_p5_devnode test_p5_mount test_p5_cred test_p5_net_unix test_p5_ipc_shm test_p5_syscall_gate
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
+MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
 
 FS_OBJS := $(BUILD_DIR)/fs_ofd.o $(BUILD_DIR)/blk_vol.o $(BUILD_DIR)/blk_persist.o \
 	$(BUILD_DIR)/devnode.o $(BUILD_DIR)/mount.o
 PROC_OBJS := $(BUILD_DIR)/process.o $(BUILD_DIR)/vmm.o $(BUILD_DIR)/shell_cli.o \
-	$(BUILD_DIR)/guest_io.o $(BUILD_DIR)/elf_load.o $(BUILD_DIR)/thread.o $(BUILD_DIR)/tty.o
+	$(BUILD_DIR)/guest_io.o $(BUILD_DIR)/elf_load.o $(BUILD_DIR)/elf_host_run.o \
+	$(BUILD_DIR)/thread.o $(BUILD_DIR)/tty.o
 M5_OBJS := $(BUILD_DIR)/cred.o $(BUILD_DIR)/net_unix.o $(BUILD_DIR)/ipc_shm.o \
 	$(BUILD_DIR)/syscall_dispatch.o
 COMMON_OBJS := $(FS_OBJS) $(PROC_OBJS) $(M5_OBJS)
 
-.PHONY: all host-tests clean
+.PHONY: all host-tests clean musl-static
 
 all: host-tests
 
-host-tests: $(PAYLOAD_ELF) $(addprefix $(BUILD_DIR)/,$(HOST_TESTS))
+host-tests: $(PAYLOAD_ELF) $(MUSL_STATIC_ELF) $(addprefix $(BUILD_DIR)/,$(HOST_TESTS))
+
+musl-static: $(MUSL_STATIC_ELF)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -32,6 +37,10 @@ $(BUILD_DIR):
 $(PAYLOAD_ELF): tools/elf_payload.c tools/elf_payload.ld | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -nostdlib -static -fno-pie -fno-stack-protector \
 		-Wl,-T,tools/elf_payload.ld -Wl,-e,elf_main -o $@ tools/elf_payload.c
+
+$(MUSL_STATIC_ELF): tools/build_musl_static.sh tools/musl_static/hello.S tools/musl_static/hello.ld \
+		tools/musl_static/hello.c third_party/MUSL_VERSION | $(BUILD_DIR)
+	MUSL_STATIC_ASM_ONLY=1 bash tools/build_musl_static.sh
 
 $(BUILD_DIR)/fs_ofd.o: kernel/sysmain/fs_ofd.c kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
@@ -60,7 +69,8 @@ $(BUILD_DIR)/ipc_shm.o: kernel/sysmain/ipc_shm.c kernel/sysmain/ipc_shm.h | $(BU
 $(BUILD_DIR)/syscall_dispatch.o: kernel/sysmain/syscall_dispatch.c kernel/sysmain/syscall_dispatch.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
-$(BUILD_DIR)/process.o: kernel/sysmain/process.c kernel/sysmain/process.h kernel/sysmain/vmm.h kernel/sysmain/elf_load.h | $(BUILD_DIR)
+$(BUILD_DIR)/process.o: kernel/sysmain/process.c kernel/sysmain/process.h kernel/sysmain/vmm.h \
+	kernel/sysmain/elf_load.h kernel/sysmain/elf_host_run.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
 $(BUILD_DIR)/vmm.o: kernel/sysmain/vmm.c kernel/sysmain/vmm.h | $(BUILD_DIR)
@@ -73,6 +83,9 @@ $(BUILD_DIR)/guest_io.o: kernel/sysmain/guest_io.c kernel/sysmain/guest_io.h | $
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
 $(BUILD_DIR)/elf_load.o: kernel/sysmain/elf_load.c kernel/sysmain/elf_load.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/elf_host_run.o: kernel/sysmain/elf_host_run.c kernel/sysmain/elf_host_run.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
 
 $(BUILD_DIR)/thread.o: kernel/sysmain/thread.c kernel/sysmain/thread.h | $(BUILD_DIR)
@@ -113,6 +126,12 @@ $(BUILD_DIR)/test_p4_clone_futex.o: tools/test_p4_clone_futex.c kernel/sysmain/t
 
 $(BUILD_DIR)/test_p4_tty_job.o: tools/test_p4_tty_job.c kernel/sysmain/tty.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
+
+$(BUILD_DIR)/test_p4_musl_load.o: tools/test_p4_musl_load.c kernel/sysmain/elf_load.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -DMUSL_STATIC_ELF_PATH=\"$(MUSL_STATIC_ELF)\" -c $< -o $@
+
+$(BUILD_DIR)/test_p4_musl_exec.o: tools/test_p4_musl_exec.c kernel/sysmain/elf_load.h kernel/sysmain/elf_host_run.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/sysmain -DMUSL_STATIC_ELF_PATH=\"$(MUSL_STATIC_ELF)\" -c $< -o $@
 
 $(BUILD_DIR)/test_p5_devnode.o: tools/test_p5_devnode.c kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ikernel/sysmain -c $< -o $@
