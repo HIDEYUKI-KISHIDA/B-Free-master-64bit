@@ -34,6 +34,14 @@ run_test test_p4_pipe_signal
 # M3 normal CLI
 run_test test_p4_shell_cli
 
+echo "== phase3_guest_auto: build guest BusyBox rootfs =="
+"${ROOT}/tools/build_guest_busybox.sh"
+
+echo "== phase3_guest_auto: guest ash regression =="
+if ! "${ROOT}/tools/phase3_guest_ash.sh"; then
+  FAIL=1
+fi
+
 if [[ "${FAIL}" -ne 0 ]]; then
   echo "RESULT: FAIL"
   exit 1

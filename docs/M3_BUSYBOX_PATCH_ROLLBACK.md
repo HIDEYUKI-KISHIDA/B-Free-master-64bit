@@ -28,7 +28,7 @@ export CROSS_COMPILE=x86_64-linux-gnu-
 ./bfree_x86_64/tools/build_guest_busybox.sh
 ```
 
-The script validates that patch-rollback markers are absent and produces `guest/rootfs/bin/busybox`.
+The script validates that patch-rollback markers are absent and produces `guest/rootfs/bin/busybox` using the frozen config `configs/busybox_m3.config` (minimal static ash, no networking).
 
 ## Host verification (in-repo, no BusyBox tree required)
 
@@ -49,13 +49,18 @@ M3 markers:
 
 ## Guest ash regression (local tree)
 
-After guest boot is wired:
-
 ```bash
-./bfree_x86_64/tools/phase3_guest_ash.sh   # future: QEMU + ash scripts
+./bfree_x86_64/tools/build_guest_busybox.sh   # fetch upstream BusyBox, build rootfs
+./bfree_x86_64/tools/phase3_guest_ash.sh      # ASH_PIPE, ASH_SUBSHELL, ASH_CMDSUBST, ASH_BG, ASH_EXTERNAL
 ```
 
-Scripts under `bfree_x86_64/tools/ash_regress/` will mirror the host `P4_*` cases.
+Or run the full gate (host P4 + guest ash):
+
+```bash
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh
+```
+
+Scripts under `bfree_x86_64/tools/ash_regress/` mirror the host `P4_*` cases using upstream ash (no inproc pipe / bg-inline / NOFORK-all).
 
 ## Syscall prerequisites for real BusyBox
 

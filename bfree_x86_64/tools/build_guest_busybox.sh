@@ -1,22 +1,40 @@
 #!/usr/bin/env bash
-# Build guest BusyBox userspace (requires local toolchain + BusyBox tree).
+# Build guest BusyBox rootfs (upstream, no B-Free shell hacks).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUSYBOX_SRC="${BUSYBOX_SRC:-${ROOT}/third_party/busybox}"
+THIRD="${ROOT}/third_party"
+VERSION_FILE="${THIRD}/BUSYBOX_VERSION"
+BUSYBOX_SRC="${BUSYBOX_SRC:-${THIRD}/busybox}"
 ROOTFS="${ROOT}/guest/rootfs"
+CONFIG="${ROOT}/configs/busybox_m3.config"
 DOC="${ROOT}/../docs/M3_BUSYBOX_PATCH_ROLLBACK.md"
+URL_BASE="https://busybox.net/downloads"
 
-echo "== build_guest_busybox: M3 patch-rollback build ==" >&2
+echo "== build_guest_busybox: M3 patch-rollback build =="
 
-if [[ ! -d "${BUSYBOX_SRC}" ]]; then
-  echo "SKIP: BusyBox tree not found at ${BUSYBOX_SRC}" >&2
-  echo "See ${DOC} for vendoring instructions." >&2
-  echo "Host M3 regression: cd ${ROOT} && ./tools/phase3_guest_auto.sh" >&2
-  exit 0
+if [[ ! -f "${VERSION_FILE}" ]]; then
+  echo "ERROR: missing ${VERSION_FILE}" >&2
+  exit 1
 fi
+BB_VER="$(tr -d '[:space:]' < "${VERSION_FILE}")"
 
-# Reject known hack markers (must not be present after M3 rollback).
+fetch_busybox() {
+  local tarball="${THIRD}/busybox-${BB_VER}.tar.bz2"
+  if [[ -d "${BUSYBOX_SRC}" ]]; then
+    return 0
+  fi
+  echo "Fetching BusyBox ${BB_VER}..." >&2
+  mkdir -p "${THIRD}"
+  if [[ ! -f "${tarball}" ]]; then
+    wget -q -O "${tarball}" "${URL_BASE}/busybox-${BB_VER}.tar.bz2"
+  fi
+  tar -xjf "${tarball}" -C "${THIRD}"
+  mv "${THIRD}/busybox-${BB_VER}" "${BUSYBOX_SRC}"
+}
+
+fetch_busybox
+
 HACK_MARKERS=(
   "run_pipe_inproc"
   "NOFORK_all"
@@ -31,7 +49,22 @@ for marker in "${HACK_MARKERS[@]}"; do
   fi
 done
 
-mkdir -p "${ROOTFS}/bin"
-echo "build_guest_busybox: would cross-compile from ${BUSYBOX_SRC}" >&2
-echo "build_guest_busybox: install to ${ROOTFS}/bin/busybox" >&2
-echo "OK: no hack markers found; integrate cross-compile in local tree." >&2
+if [[ ! -f "${CONFIG}" ]]; then
+  echo "ERROR: missing ${CONFIG}" >&2
+  exit 1
+fi
+
+cp "${CONFIG}" "${BUSYBOX_SRC}/.config"
+make -C "${BUSYBOX_SRC}" -j"$(nproc)" busybox
+
+rm -rf "${ROOTFS}"
+mkdir -p "${ROOTFS}"
+make -C "${BUSYBOX_SRC}" CONFIG_PREFIX="${ROOTFS}" install
+
+if [[ ! -x "${ROOTFS}/bin/busybox" ]]; then
+  echo "ERROR: install failed — no ${ROOTFS}/bin/busybox" >&2
+  exit 1
+fi
+
+echo "OK: ${ROOTFS}/bin/busybox ($(file -b "${ROOTFS}/bin/busybox"))"
+echo "OK: no hack markers; upstream ash ready for guest rootfs"
