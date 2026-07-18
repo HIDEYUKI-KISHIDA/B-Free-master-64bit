@@ -19,10 +19,17 @@ mkdir -p "${BUILD_DIR}"
 echo "== phase3_guest_auto: build host tests =="
 make -C "${ROOT}" -s host-tests
 
+# M1 filesystem
 run_test test_p4_dirent_ofd
 run_test test_p4_unlink_open
 run_test test_p4_openat
 run_test test_p4_block_fs
+
+# M2 process
+run_test test_p4_vfork_exec
+run_test test_p4_waitid
+run_test test_p4_fork
+run_test test_p4_pipe_signal
 
 if [[ "${FAIL}" -ne 0 ]]; then
   echo "RESULT: FAIL"

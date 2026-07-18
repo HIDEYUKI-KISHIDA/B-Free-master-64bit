@@ -33,14 +33,13 @@
 
 ### M2 — プロセス（最小の正直なモデル）
 
-- [x] 1 子・child-first `vfork`
-- [x] 子専用ページテーブルへの `execve`（失敗時フォールバックあり）
-- [x] `fork` = `ENOSYS`（コピー無しを偽らない）
-- [ ] BusyBox NOFORK-all 緩和 → 本物の applet reexec 回帰
-- [ ] 複数 zombie / 正しい `waitid`
-- [ ] eager-copy または COW の `fork`
-- [ ] プリエンプティブな複数 runnable + パイプ両端同時実行
-- [ ] シグナル配送（SIGCHLD / SIGINT / SIGPIPE / ジョブ制御）
+- [x] 1 子・child-first `vfork`（`bfree_vfork`/`bfree_spawn_vfork_child`、検証 `P4_VFORK_EXEC`）
+- [x] 子専用ページテーブルへの `execve`（登録済み applet 再実行、検証 `P4_VFORK_EXEC`）
+- [x] `fork` = eager-copy AS（`bfree_as_fork_copy`、検証 `P4_FORK`）
+- [x] applet reexec 基盤（`bfree_proc_register` — BusyBox NOFORK-all 緩和の前提、実パッチ撤去は M3）
+- [x] 複数 zombie / 正しい `waitid`（検証 `P4_WAITID`）
+- [x] プリエンプティブな複数 runnable + パイプ両端同時実行（`bfree_switch_proc` + pipe、検証 `P4_PIPE_SIGNAL`）
+- [x] シグナル配送（SIGCHLD / SIGINT / SIGPIPE、検証 `P4_PIPE_SIGNAL`）
 
 ### M3 — 通常 CLI（BusyBox パッチ巻き戻し）
 

@@ -1,24 +1,28 @@
 /*
- * Linux syscall dispatch stubs for bfree_x86_64 guest.
- *
- * Full guest integration wires these to the cooperative scheduler in
- * process.c and the page tables in vmm.c.  Filesystem syscalls delegate to
- * fs_ofd.c where directory cursors are per-OFD (M1).
+ * Linux syscall dispatch for bfree_x86_64 guest (M1 FS + M2 process).
  */
 #include "fs_ofd.h"
+#include "process.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
-struct guest_fs_state {
+struct guest_state {
 	struct bfree_fs fs;
+	struct bfree_proc_mgr proc;
 };
 
-static struct guest_fs_state guest;
+static struct guest_state guest;
 
-void guest_fs_init(void)
+void guest_init(void)
 {
 	bfree_fs_init(&guest.fs);
+	bfree_proc_init(&guest.proc);
+}
+
+struct bfree_proc_mgr *guest_proc_mgr(void)
+{
+	return &guest.proc;
 }
 
 int sys_getdents64(int fd, void *buf, size_t count)
@@ -61,12 +65,50 @@ int sys_dup(int fd)
 	return bfree_dup(&guest.fs, fd);
 }
 
-/* process.c / vmm.c: vfork, execve, ENOSYS fork — see POSIX roadmap M2. */
-int sys_fork(void)
+int sys_vfork(void)
 {
-	return -38; /* ENOSYS */
+	return bfree_vfork(&guest.proc);
 }
 
-int sys_vfork(void);
-int sys_execve(const char *path, char *const argv[], char *const envp[]);
-int sys_wait4(int pid, int *status, int options, void *rusage);
+int sys_execve(const char *path, char *const argv[], char *const envp[])
+{
+	return bfree_execve(&guest.proc, path, (char **)argv, (char **)envp);
+}
+
+void sys_exit(int status)
+{
+	bfree_exit(&guest.proc, status);
+}
+
+int sys_wait4(int pid, int *status, int options, void *rusage)
+{
+	return bfree_wait4(&guest.proc, pid, status, options, rusage);
+}
+
+int sys_waitid(int idtype, int id, void *siginfo, int options)
+{
+	int status = 0;
+	int rc;
+
+	(void)siginfo;
+	rc = bfree_waitid(&guest.proc, idtype, id, &status, options);
+	if (rc >= 0 && siginfo != NULL)
+		*(int *)siginfo = status;
+	return rc;
+}
+
+int sys_fork(void)
+{
+	return bfree_fork(&guest.proc);
+}
+
+int sys_pipe(int pipefd[2])
+{
+	return bfree_pipe_open(&guest.proc, pipefd);
+}
+
+int sys_kill(int pid, int sig)
+{
+	bfree_kill(&guest.proc, pid, sig);
+	return 0;
+}
