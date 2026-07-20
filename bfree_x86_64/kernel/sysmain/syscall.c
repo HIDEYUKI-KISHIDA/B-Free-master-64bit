@@ -3,7 +3,6 @@
 // * System V ABI順（RDI, RSI, RDX, RCX, R8, R9）で受け取る
 // * syscall番号で個別APIをdispatch
 #include <stdint.h>
-#include <stddef.h>
 #include "../string.h"
 
 #include "../fbdev.h"
@@ -11,22 +10,10 @@
 #include "../include/tk/kernel.h"
 #include "timer_manager.h"
 #include "security_policy.h"
-#include "bfree_guest_thread.h"
+#include "vmm.h"
 #include "elf_loader.h"
 #include "process.h"
 #include "../../userland/libc/bfree_epoll.h"
-
-extern page_table_t kernel_page_table;
-
-#ifndef BFREE_GUEST_FD_TABLE_SIZE
-#define BFREE_GUEST_FD_TABLE_SIZE 64
-#endif
-static int g_fd_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];
-static int g_fd_snap_child[BFREE_GUEST_FD_TABLE_SIZE];
-static int g_fd_dup_save_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];
-static int g_fd_dup_save_snap_child[BFREE_GUEST_FD_TABLE_SIZE];
-
-extern void bfree_enable_user_fpu(void);
 
 extern void bfree_enable_user_fpu(void);
 
@@ -46,14 +33,6 @@ void bfree_guest_heap_reset(void)
     g_guest_heap_next = (uint64_t)BFREE_GUEST_HEAP_BASE;
     g_guest_brk = (uint64_t)BFREE_GUEST_HEAP_BASE;
 }
-
-/* init.elf PT_LOAD at 0x400000 (3 pages in serial). Drop User mappings after
- * exec_initrd so later mmap/brk cannot alias stale init pages. IMPORTANT:
- * kernel_page_table BSS spans past 0x400000, so leaving PTE=0 here makes
- * vmm_clone_kernel_page_table #PF when it memcpy's that object. Restore
- * identity supervisor mappings (Present|RW) after clearing User PT_LOAD. */
-#define BFREE_INIT_USER_LOAD_BASE  0x00400000ULL
-#define BFREE_INIT_USER_LOAD_SIZE  0x00010000ULL
 
 /* init.elf PT_LOAD at 0x400000 (3 pages in serial). Drop User mappings after
  * exec_initrd so later mmap/brk cannot alias stale init pages. IMPORTANT:
@@ -88,7 +67,6 @@ static void bfree_exec_unmap_init_legacy(page_table_t *pt)
 /* syscall_entry.S: if knl_syscall_handler returns this, replace user RCX/R11/RSP for SYSRET */
 #define BFREE_SYSRET_EXEC_TRANSFER ((long)-4094)
 #define BFREE_SYSRET_FORK_PARENT   ((long)-4093)
-#define BFREE_SYSRET_SIGNAL        ((long)-4091)
 
 uint64_t g_bfree_sysret_exec_rsp;
 uint64_t g_bfree_sysret_exec_rcx;
@@ -98,15 +76,16 @@ uint64_t g_bfree_sysret_exec_rsi;
 uint64_t g_bfree_sysret_exec_rdx;
 /* Non-zero: syscall_entry.S loads this into CR3 before the new user RSP (vfork child AS). */
 uint64_t g_bfree_sysret_exec_cr3;
-/* Exec-only user RIP for BFREE_SYSRET_EXEC_TRANSFER (coop must not clobber). */
-uint64_t g_bfree_exec_transfer_rip;
-/* RAX loaded by BFREE_SYSRET_SIGNAL (0 at handler entry; interrupted retval on sigreturn). */
-uint64_t g_bfree_sysret_sig_rax;
 
-/* exec_initrd path in kernel .bss — load_elf_image switches to kernel_page_table
- * and must not read a path string that still lives on the ring3 stack (would #GP). */
-static char g_bfree_exec_initrd_kpath[64];
-/* Non-zero: syscall_entry.S loads this into CR3 before the new user RSP (vfork child AS). */
+/* --- post-wipe stubs for advanced syscall_entry.S (filled by hole redo) --- */
+uint64_t g_bfree_exec_transfer_rip;
+uint64_t g_bfree_sig_saved_rbx;
+uint64_t g_bfree_sig_saved_rbp;
+uint64_t g_bfree_sig_saved_r12;
+uint64_t g_bfree_sig_saved_r13;
+uint64_t g_bfree_sig_saved_r14;
+uint64_t g_bfree_sig_saved_r15;
+
 
 uint64_t g_bfree_user_sysret_rcx;
 uint64_t g_bfree_user_sysret_r11;
@@ -140,196 +119,16 @@ static int g_guest_fork_active;
 static int g_guest_fork_pid;
 static int g_guest_fork_status;
 static int g_guest_fork_status_ready;
-/* 1 if this coop child was created via SYS_fork AS-copy (parent kept running).
- * Distinct from has_private_as: vfork+exec also gains a private AS, but the
- * parent was frozen and still needs the shared-AS stack snapshot restored. */
-static int g_guest_fork_was_as_copy;
 static int g_guest_next_pid = 2;
-static int g_guest_sid = 1;
-static int g_guest_pgid = 1;
-static int g_guest_tty_pgrp = 1;
-/* Debug: log first N APP syscalls after busybox transfer (hang diagnosis). */
-static int g_guest_sys_trace;
 static uintptr_t g_guest_clear_child_tid;
-static int g_guest_thread_active;
-static int g_guest_thread_tid;
-static int g_guest_thread_slots_used;
-
-static void bfree_guest_sig_raise(int sig);
-static int bfree_guest_sig_is_blocked(int sig);
-static int bfree_guest_sig_take_eintr(void);
-static long bfree_guest_sig_try_deliver(long syscall_ret);
-static void bfree_guest_alarm_poll(void);
-static long bfree_coop_yield_to_parent(void);
-static long bfree_coop_yield_to_child(void);
-static void bfree_coop_as_switch_to(int side);
-static void bfree_coop_fd_snap_init(void);
-static void bfree_coop_fd_switch_to(int side);
-static int g_coop_side;
-static int g_coop_child_blocked;
-static int g_coop_parent_started;
-static int g_coop_session = -1;
-static long g_guest_wait_status_ptr;
-static int g_guest_waitid_active;
-static long g_guest_waitid_infop;
-static uint32_t g_guest_uid;
-static uint32_t g_guest_gid;
-static uint32_t g_guest_euid;
-static uint32_t g_guest_egid;
-static uint64_t g_guest_sig_pending;
-static uint64_t g_guest_sig_mask;
-/* Callee-saved snapshot for BFREE_SYSRET_SIGNAL (syscall_entry.S). */
-uint64_t g_bfree_sig_saved_rbx;
-uint64_t g_bfree_sig_saved_rbp;
-uint64_t g_bfree_sig_saved_r12;
-uint64_t g_bfree_sig_saved_r13;
-uint64_t g_bfree_sig_saved_r14;
-uint64_t g_bfree_sig_saved_r15;
-uint64_t g_bfree_sig_saved_rdx;
-
-static void bfree_guest_cwd_copy(char *dst, size_t dst_sz, const char *src);
-static void bfree_guest_load_heap_cwd(const char *cwd_src, uint64_t heap_src, uint64_t brk_src);
-static void bfree_guest_park_heap_side(int child_side);
-static void bfree_guest_as_copy_switch_heap_to_child(void);
-static void bfree_guest_as_copy_switch_heap_to_parent(void);
-static void bfree_guest_restore_parent_isol(int as_copy);
-static void bfree_coop_publish_parent_resume(void);
-static void bfree_coop_publish_child_resume(void);
-static long bfree_coop_yield_to_parent_done(long ret);
-static long bfree_coop_yield_to_child_done(long ret);
-static void bfree_coop_session_park_globals(int sess);
-static void bfree_coop_sessions_init(void);
-static long bfree_guest_exit_from_fork_signal(int sig);
-static void bfree_inet_sock_release(int resolved);
-static int bfree_guest_is_vfile_fd(int fd);
-static int bfree_guest_alias_add(int vnode, const char *name);
-static int bfree_guest_vfile_unlink_name(const char *name);
-static int bfree_linux_path_is_dot_or_slash(const char *path);
-
-/* Declared early so cooperative fork / AS-copy can snapshot/restore. */
+/* Declared early so cooperative fork can snapshot/restore it. */
 static char g_guest_cwd[256] = "/";
+/* Kernel-side cwd is not in the shared user address space, so without an
+ * explicit snapshot a cooperative child `chdir` would permanently move the
+ * parent shell. Save/restore gives fork-like cwd isolation for ash subshells. */
 static char g_guest_fork_saved_cwd[256];
 static uint64_t g_guest_fork_saved_heap_next;
 static uint64_t g_guest_fork_saved_brk;
-static int g_guest_fork_was_as_copy;
-static int g_guest_parent_parked_heap_valid;
-static uint64_t g_guest_parent_parked_heap_next;
-static uint64_t g_guest_parent_parked_brk;
-static char g_guest_parent_parked_cwd[256];
-static int g_guest_child_parked_heap_valid;
-static uint64_t g_guest_child_parked_heap_next;
-static uint64_t g_guest_child_parked_brk;
-static char g_guest_child_parked_cwd[256];
-
-static void bfree_guest_cwd_copy(char *dst, size_t dst_sz, const char *src)
-{
-    size_t i;
-
-    for (i = 0; i < dst_sz; ++i) {
-        dst[i] = src[i];
-        if (src[i] == '\0') {
-            break;
-        }
-    }
-    if (dst_sz > 0U) {
-        dst[dst_sz - 1U] = '\0';
-    }
-}
-
-static void bfree_guest_load_heap_cwd(const char *cwd_src, uint64_t heap_src, uint64_t brk_src)
-{
-    bfree_guest_cwd_copy(g_guest_cwd, sizeof(g_guest_cwd), cwd_src);
-    g_guest_heap_next = heap_src;
-    g_guest_brk = brk_src;
-}
-
-static void bfree_guest_park_heap_side(int child_side)
-{
-    if (child_side) {
-        g_guest_child_parked_heap_next = g_guest_heap_next;
-        g_guest_child_parked_brk = g_guest_brk;
-        bfree_guest_cwd_copy(g_guest_child_parked_cwd, sizeof(g_guest_child_parked_cwd),
-                             g_guest_cwd);
-        g_guest_child_parked_heap_valid = 1;
-    } else {
-        g_guest_parent_parked_heap_next = g_guest_heap_next;
-        g_guest_parent_parked_brk = g_guest_brk;
-        bfree_guest_cwd_copy(g_guest_parent_parked_cwd, sizeof(g_guest_parent_parked_cwd),
-                             g_guest_cwd);
-        g_guest_parent_parked_heap_valid = 1;
-    }
-}
-
-static void bfree_guest_as_copy_switch_heap_to_child(void)
-{
-    bfree_guest_park_heap_side(0);
-    if (g_guest_child_parked_heap_valid) {
-        bfree_guest_load_heap_cwd(g_guest_child_parked_cwd,
-                                  g_guest_child_parked_heap_next,
-                                  g_guest_child_parked_brk);
-    } else {
-        bfree_guest_load_heap_cwd(g_guest_fork_saved_cwd,
-                                  g_guest_fork_saved_heap_next,
-                                  g_guest_fork_saved_brk);
-    }
-}
-
-static void bfree_guest_as_copy_switch_heap_to_parent(void)
-{
-    bfree_guest_park_heap_side(1);
-    if (g_guest_parent_parked_heap_valid) {
-        bfree_guest_load_heap_cwd(g_guest_parent_parked_cwd,
-                                  g_guest_parent_parked_heap_next,
-                                  g_guest_parent_parked_brk);
-    }
-}
-
-static void bfree_guest_restore_parent_isol(int as_copy)
-{
-    if (as_copy && g_guest_parent_parked_heap_valid) {
-        bfree_guest_load_heap_cwd(g_guest_parent_parked_cwd,
-                                  g_guest_parent_parked_heap_next,
-                                  g_guest_parent_parked_brk);
-    } else {
-        bfree_guest_load_heap_cwd(g_guest_fork_saved_cwd,
-                                  g_guest_fork_saved_heap_next,
-                                  g_guest_fork_saved_brk);
-    }
-    g_guest_parent_parked_heap_valid = 0;
-    g_guest_child_parked_heap_valid = 0;
-}
-
-static page_table_t *bfree_linux_user_pt(void)
-{
-    if (knl_current_task != 0 && knl_current_task->page_table_base != 0) {
-        return (page_table_t *)knl_current_task->page_table_base;
-    }
-    return &kernel_page_table;
-}
-
-static void *bfree_linux_user_kva(page_table_t *pt, uint64_t uaddr)
-{
-    (void)pt;
-    return (void *)(uintptr_t)uaddr; /* identity user map in B-Free guest */
-}
-
-static long sys_linux_syscall_dispatch_exit_reenter(void)
-{
-    return bfree_guest_exit_from_fork(0);
-}
-
-
-/* Dual-live session stubs (full H02 not recovered). */
-static void bfree_coop_session_park_globals(int sess)
-{
-    (void)sess;
-}
-
-static void bfree_coop_sessions_init(void)
-{
-    g_coop_session = -1;
-}
-
 /* Parent stack snapshot: child returns from forkshell before exec and reuses
  * the shared stack, trashing the frozen parent's frame (jp etc.). */
 #define BFREE_VFORK_STACK_SAVE_PAGES 16
@@ -337,51 +136,6 @@ static void bfree_coop_sessions_init(void)
 static uint8_t g_guest_fork_stack_save[BFREE_VFORK_STACK_SAVE_BYTES] __attribute__((aligned(16)));
 static uint64_t g_guest_fork_stack_save_base;
 static int g_guest_fork_stack_save_valid;
-
-/* Minimal Linux waitid / SIGCHLD constants (used by exit-from-fork too). */
-#define BFREE_P_ALL  0
-#define BFREE_P_PID  1
-#define BFREE_P_PGID 2
-#define BFREE_WNOHANG_ID 0x00000001
-#define BFREE_WEXITED    0x00000004
-#define BFREE_SIGCHLD    17
-#define BFREE_CLD_EXITED 1
-#define BFREE_CLD_KILLED 2
-
-typedef struct {
-    int si_signo;
-    int si_errno;
-    int si_code;
-    int __pad0;
-    int si_pid;
-    unsigned int si_uid;
-    int si_status;
-    long si_utime;
-    long si_stime;
-} bfree_siginfo_wait_t;
-
-static int bfree_guest_vfork_stack_snapshot(uint64_t rsp);
-static void bfree_guest_vfork_stack_restore(void);
-/* Declared early so cooperative fork can snapshot/restore it. */
-/* Kernel-side cwd is not in the shared user address space, so without an
- * explicit snapshot a cooperative child `chdir` would permanently move the
- * parent shell. Save/restore gives fork-like cwd isolation for ash subshells. */
-/* Parent stack snapshot: child returns from forkshell before exec and reuses
- * the shared stack, trashing the frozen parent's frame (jp etc.). */
-#define BFREE_VFORK_STACK_SAVE_PAGES 16
-#define BFREE_VFORK_STACK_SAVE_BYTES ((uint64_t)BFREE_VFORK_STACK_SAVE_PAGES * PAGE_SIZE)
-static uint8_t g_guest_fork_stack_save[BFREE_VFORK_STACK_SAVE_BYTES] __attribute__((aligned(16)));
-
-/* Minimal Linux waitid / SIGCHLD constants (used by exit-from-fork too). */
-#define BFREE_P_ALL  0
-#define BFREE_P_PID  1
-#define BFREE_P_PGID 2
-#define BFREE_WNOHANG_ID 0x00000001
-#define BFREE_WEXITED    0x00000004
-#define BFREE_SIGCHLD    17
-#define BFREE_CLD_EXITED 1
-#define BFREE_CLD_KILLED 2
-
 
 static int bfree_guest_vfork_stack_snapshot(uint64_t rsp);
 static void bfree_guest_vfork_stack_restore(void);
@@ -395,116 +149,6 @@ static uint64_t bfree_rdmsr64(uint32_t msr);
 #ifndef BFREE_MSR_FS_BASE
 #define BFREE_MSR_FS_BASE 0xC0000100ULL
 #endif
-static void bfree_guest_pipe_reclaim_dead_slots(void);
-static long sys_linux_pipe2(long pipefd_ptr, long flags);
-static void bfree_wrmsr64(uint32_t msr, uint64_t val);
-static uint64_t bfree_rdmsr64(uint32_t msr);
-#ifndef BFREE_MSR_FS_BASE
-#define BFREE_MSR_FS_BASE 0xC0000100ULL
-#endif
-
-static void bfree_guest_thread_init(void)
-{
-    g_guest_thread_active = 0;
-    g_guest_thread_tid = 0;
-    g_guest_thread_slots_used = 0;
-}
-
-static void bfree_guest_thread_save_parent_ctx(void)
-{
-    g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;
-    g_bfree_fork_saved_r11 = g_bfree_user_sysret_r11;
-    g_bfree_fork_saved_rsp = g_bfree_user_sysret_rsp;
-    g_bfree_fork_saved_rbx = g_bfree_user_sysret_rbx;
-    g_bfree_fork_saved_rbp = g_bfree_user_sysret_rbp;
-    g_bfree_fork_saved_r12 = g_bfree_user_sysret_r12;
-    g_bfree_fork_saved_r13 = g_bfree_user_sysret_r13;
-    g_bfree_fork_saved_r14 = g_bfree_user_sysret_r14;
-    g_bfree_fork_saved_r15 = g_bfree_user_sysret_r15;
-    g_bfree_fork_saved_rdx = g_bfree_user_sysret_rdx;
-}
-
-static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid, long ctid, long tls)
-{
-    int tid;
-    uint64_t child_rsp;
-    uint64_t parent_fs;
-
-    if (g_guest_fork_active || g_guest_thread_active) {
-        return -11;
-    }
-    if (g_guest_thread_slots_used >= BFREE_GUEST_MAX_THREADS) {
-        return -11;
-    }
-    if (newsp == 0 || !bfree_user_ptr_mapped(newsp)) {
-        return -14;
-    }
-    child_rsp = (uint64_t)(uintptr_t)newsp;
-    child_rsp &= ~0xFULL;
-
-    tid = g_guest_next_pid++;
-    if (tid <= 0) {
-        return -11;
-    }
-
-    parent_fs = bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE);
-    g_guest_fork_saved_fsbase = parent_fs;
-    bfree_guest_thread_save_parent_ctx();
-
-    if ((flags & 0x00080000UL) != 0UL && tls != 0) {
-        if (!bfree_user_ptr_mapped(tls)) {
-            return -14;
-        }
-        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, (uint64_t)(uintptr_t)tls);
-    }
-
-    if ((flags & 0x00100000UL) != 0UL && ptid != 0 && bfree_user_ptr_mapped(ptid)) {
-        *(int *)(uintptr_t)ptid = tid;
-    }
-    if ((flags & 0x00200000UL) != 0UL && ctid != 0 && bfree_user_ptr_mapped(ctid)) {
-        g_guest_clear_child_tid = (uintptr_t)ctid;
-        *(int *)(uintptr_t)ctid = tid;
-    } else {
-        g_guest_clear_child_tid = 0;
-    }
-
-    g_guest_thread_active = 1;
-    g_guest_thread_tid = tid;
-    g_guest_thread_slots_used++;
-
-    g_bfree_sysret_exec_rsp = child_rsp;
-    return BFREE_SYSRET_THREAD_CHILD;
-}
-
-static long bfree_guest_thread_exit(long status)
-{
-    int tid;
-    int *cleartid;
-
-    (void)status;
-    if (!g_guest_thread_active) {
-        return -1;
-    }
-    tid = g_guest_thread_tid;
-
-    if (g_guest_clear_child_tid != 0 &&
-        bfree_user_ptr_mapped((long)g_guest_clear_child_tid)) {
-        cleartid = (int *)(uintptr_t)g_guest_clear_child_tid;
-        *cleartid = 0;
-        g_guest_clear_child_tid = 0;
-    }
-
-    g_guest_thread_active = 0;
-    g_guest_thread_tid = 0;
-    if (g_guest_thread_slots_used > 0) {
-        g_guest_thread_slots_used--;
-    }
-
-    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);
-    g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
-    g_bfree_fork_parent_ret = (uint64_t)(long)tid;
-    return BFREE_SYSRET_FORK_PARENT;
-}
 
 void bfree_sysret_exec_globals_init(void)
 {
@@ -529,7 +173,6 @@ void bfree_sysret_exec_globals_init(void)
     g_bfree_fork_saved_rcx = 0;
     g_bfree_fork_saved_r11 = 0;
     g_bfree_fork_saved_rsp = 0;
-    g_guest_fork_saved_fsbase = 0;
     g_bfree_fork_saved_rbx = 0;
     g_bfree_fork_saved_rbp = 0;
     g_bfree_fork_saved_r12 = 0;
@@ -587,7 +230,6 @@ static long bfree_guest_fork_enter(void)
     g_guest_fork_pid = child_pid;
     g_guest_fork_active = 1;
     g_guest_fork_status_ready = 0;
-    bfree_coop_fd_snap_init();
     return 0; /* cooperative: continue as child; parent resumes on child exit */
 }
 
@@ -595,49 +237,30 @@ static long bfree_guest_exit_from_fork(long status)
 {
     int *cleartid;
     size_t i;
-    /* Use enter-time AS-copy flag — NOT has_private_as (vfork+exec sets that). */
-    int as_copy = g_guest_fork_was_as_copy;
 
     bfree_process_exit_child((int)status);
     g_guest_fork_active = 0;
-    g_guest_fork_was_as_copy = 0;
     g_guest_fork_status = (int)(status & 0xff);
     g_guest_fork_status_ready = 1;
-    /* B-Free: SIGCHLD on child exit */
-    bfree_guest_sig_raise(17);
-    bfree_coop_fd_switch_to(0);
-    g_coop_child_blocked = 0;
     /* Shared fd table: a pipeline child may leave stdin/stdout wired to a
      * pipe. Restore the shell's console before the parent resumes. */
     bfree_guest_stdio_heal_pipes();
-    /*
-     * vfork: parent was frozen — restore cwd/heap/brk/stack snapshot.
-     * AS-copy: parent kept running (and may have brk/mmap'd) — rewind would
-     * desync musl vs kernel heap and cause later #GP (2nd pipeline).
-     */
-    if (!as_copy) {
-        for (i = 0; i < sizeof(g_guest_cwd); ++i) {
-            g_guest_cwd[i] = g_guest_fork_saved_cwd[i];
-            if (g_guest_fork_saved_cwd[i] == '\0') {
-                break;
-            }
+    for (i = 0; i < sizeof(g_guest_cwd); ++i) {
+        g_guest_cwd[i] = g_guest_fork_saved_cwd[i];
+        if (g_guest_fork_saved_cwd[i] == '\0') {
+            break;
         }
-        g_guest_cwd[sizeof(g_guest_cwd) - 1U] = '\0';
-        g_guest_heap_next = g_guest_fork_saved_heap_next;
-        g_guest_brk = g_guest_fork_saved_brk;
-        bfree_guest_vfork_stack_restore();
     }
+    g_guest_cwd[sizeof(g_guest_cwd) - 1U] = '\0';
+    g_guest_heap_next = g_guest_fork_saved_heap_next;
+    g_guest_brk = g_guest_fork_saved_brk;
+    bfree_guest_vfork_stack_restore();
     /* Child execve cleared FS/TLS; restore the frozen parent's TLS base. */
     if (knl_current_task != 0) {
         knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;
     }
     bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);
-    /* Ensure we resume on the parent page table (exit_restore_as already did). */
-    if (knl_current_task != 0 && knl_current_task->page_table_base != 0) {
-        g_bfree_sysret_exec_cr3 = (uint64_t)(uintptr_t)knl_current_task->page_table_base;
-    } else {
-        g_bfree_sysret_exec_cr3 = 0;
-    }
+    g_bfree_sysret_exec_cr3 = 0;
     if (g_guest_clear_child_tid != 0 &&
         bfree_user_ptr_mapped((long)g_guest_clear_child_tid)) {
         cleartid = (int *)(uintptr_t)g_guest_clear_child_tid;
@@ -646,17 +269,8 @@ static long bfree_guest_exit_from_fork(long status)
     g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
     g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
     g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
-    if (g_guest_wait_status_ptr != 0 &&
-        bfree_user_ptr_mapped(g_guest_wait_status_ptr)) {
-        /* WEXITSTATUS / WTERMSIG encoding for waitpid resumed after child exit */
-        *(int *)(uintptr_t)g_guest_wait_status_ptr =
-            (g_guest_fork_status & 0xff) << 8;
-        if (g_guest_fork_status >= 128) {
-            /* signaled path stores signal in low bits via exit_from_fork_signal */
-        }
-        g_guest_wait_status_ptr = 0;
-    }
     g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+    uart_puts("[VFORK] parent resume rip=");
     uart_puthex64(g_bfree_fork_saved_rcx);
     uart_puts(" rsp=");
     uart_puthex64(g_bfree_fork_saved_rsp);
@@ -668,151 +282,22 @@ static long bfree_guest_exit_from_fork(long status)
     return BFREE_SYSRET_FORK_PARENT;
 }
 
-/* H06: job-control stop — keep child AS/session, yield parent with WIFSTOPPED. */
-static long bfree_guest_stop_from_fork(int sig)
-{
-    int as_copy = g_guest_fork_was_as_copy;
-    int pid = g_guest_fork_pid;
-    int sess = g_coop_session;
-    uint64_t parent_fs = g_guest_fork_saved_fsbase;
-    int stsig = sig & 0x7f;
-
-    if (stsig == 0) {
-        stsig = 20;
-    }
-    if (g_coop_side == 1 && sess >= 0) {
-        bfree_coop_session_park_globals(sess);
-    }
-    (void)bfree_process_stop_pid(pid, stsig);
-    bfree_guest_sig_raise(17); /* SIGCHLD */
-    bfree_coop_fd_switch_to(0);
-    if (as_copy) {
-        bfree_coop_as_switch_to(0);
-        if (g_guest_parent_parked_heap_valid) {
-            bfree_guest_load_heap_cwd(g_guest_parent_parked_cwd,
-                                      g_guest_parent_parked_heap_next,
-                                      g_guest_parent_parked_brk);
-        }
-    } else {
-        /* Shared-AS vfork stop: restore frozen parent stack like exit. */
-        bfree_guest_vfork_stack_restore();
-        bfree_guest_load_heap_cwd(g_guest_fork_saved_cwd,
-                                  g_guest_fork_saved_heap_next,
-                                  g_guest_fork_saved_brk);
-    }
-    g_coop_side = 0;
-    g_coop_child_blocked = 1;
-    g_coop_parent_started = 1;
-    g_guest_fork_active = 1;
-    g_guest_fork_pid = pid;
-    if (knl_current_task != 0) {
-        knl_current_task->user_fsbase = parent_fs;
-    }
-    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, parent_fs);
-    g_bfree_sysret_exec_cr3 = 0;
-    bfree_coop_publish_parent_resume();
-    if (g_guest_wait_status_ptr != 0 &&
-        bfree_user_ptr_mapped(g_guest_wait_status_ptr)) {
-        *(int *)(uintptr_t)g_guest_wait_status_ptr = (stsig << 8) | 0x7f;
-        g_guest_wait_status_ptr = 0;
-        bfree_process_clear_stop_pending(pid);
-    }
-    if (g_guest_waitid_active) {
-        long infop = g_guest_waitid_infop;
-        g_guest_waitid_active = 0;
-        g_guest_waitid_infop = 0;
-        if (infop != 0 && bfree_user_ptr_mapped(infop)) {
-            bfree_siginfo_wait_t *si = (bfree_siginfo_wait_t *)(uintptr_t)infop;
-            si->si_signo = BFREE_SIGCHLD;
-            si->si_errno = 0;
-            si->si_code = 5; /* CLD_STOPPED */
-            si->si_pid = pid;
-            si->si_uid = 0;
-            si->si_status = stsig;
-            si->si_utime = 0;
-            si->si_stime = 0;
-        }
-    }
-    /* Parent rax = stopped child pid when this was a wait yield. */
-    if (g_bfree_fork_parent_ret == 0) {
-        g_bfree_fork_parent_ret = (uint64_t)(long)pid;
-    }
-    return BFREE_SYSRET_FORK_PARENT;
-}
-
-/* Blocking wait with a live coop child: always schedule it. Never fall through
- * to sti;hlt while a VFORK/RUNNING child exists — that left AS-copy pipe stage1
- * parked forever and stage2 fork got EAGAIN (pid still RUNNING). */
-static long bfree_coop_wait_yield_if_live_child(long status_ptr, long waitid_infop,
-                                               int is_waitid)
-{
-    if (!bfree_process_child_active()) {
-        return 0;
-    }
-    g_guest_fork_active = 1;
-    g_coop_parent_started = 1;
-    g_coop_child_blocked = 1;
-    if (g_coop_side != 0) {
-        bfree_coop_fd_switch_to(0);
-        bfree_coop_as_switch_to(0);
-    }
-    if (is_waitid) {
-        g_guest_wait_status_ptr = 0;
-        g_guest_waitid_infop = waitid_infop;
-        g_guest_waitid_active = 1;
-    } else {
-        g_guest_wait_status_ptr = status_ptr;
-        g_guest_waitid_active = 0;
-    }
-    return bfree_coop_yield_to_child();
-}
-
 static long sys_linux_waitpid(long pid, long status_ptr, long options)
 {
     int status = 0;
     long rc;
-    long yr;
 
-    for (;;) {
-        rc = bfree_process_wait4(pid,
-            (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) ? &status : 0,
-            (int)options);
-        if (rc > 0) {
-            g_guest_fork_status_ready = 0;
-            if (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) {
-                *(int *)(uintptr_t)status_ptr = status;
-            }
-            return rc;
+    rc = bfree_process_wait4(pid,
+        (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) ? &status : 0,
+        (int)options);
+    if (rc > 0) {
+        g_guest_fork_status_ready = 0;
+        if (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) {
+            *(int *)(uintptr_t)status_ptr = status;
         }
-        if (rc < 0) {
-            /* Heal: do not return ECHILD while a live coop child exists. */
-            if (((unsigned)options & 1U) == 0U) {
-                yr = bfree_coop_wait_yield_if_live_child(status_ptr, 0, 0);
-                if (yr != 0) {
-                    return yr;
-                }
-            }
-            return rc;
-        }
-        if (((unsigned)options & 1U) != 0U) { /* WNOHANG */
-            return 0;
-        }
-        yr = bfree_coop_wait_yield_if_live_child(status_ptr, 0, 0);
-        if (yr != 0) {
-            return yr;
-        }
-        {
-            int er = bfree_guest_sig_take_eintr();
-            if (er < 0) {
-                return er;
-            }
-        }
-        /* No live child and nothing to reap — brief idle then retry. */
-        __asm__ volatile("sti; hlt" ::: "memory");
     }
+    return rc;
 }
-
-/* Minimal Linux waitid → wait4 bridge (siginfo filled for WEXITED). */
 
 /* Minimal Linux waitid → wait4 bridge (siginfo filled for WEXITED). */
 #define BFREE_P_ALL  0
@@ -823,6 +308,17 @@ static long sys_linux_waitpid(long pid, long status_ptr, long options)
 #define BFREE_SIGCHLD    17
 #define BFREE_CLD_EXITED 1
 
+typedef struct {
+    int si_signo;
+    int si_errno;
+    int si_code;
+    int __pad0;
+    int si_pid;
+    unsigned int si_uid;
+    int si_status;
+    long si_utime;
+    long si_stime;
+} bfree_siginfo_wait_t;
 
 static long sys_linux_waitid(long idtype, long id, long infop, long options)
 {
@@ -870,6 +366,7 @@ static long sys_linux_waitid(long idtype, long id, long infop, long options)
 
 /* exec_initrd path in kernel .bss — load_elf_image switches to kernel_page_table
  * and must not read a path string that still lives on the ring3 stack (would #GP). */
+static char g_bfree_exec_initrd_kpath[64];
 
 #ifdef BFREE_RUNTIME_BUILD
 extern void timer_process_events(void);
@@ -951,7 +448,6 @@ typedef struct {
 #define BFREE_ISIG   0x00000001U
 #define BFREE_ICANON 0x00000002U
 #define BFREE_ECHO   0x00000008U
-#define BFREE_TOSTOP 0x00000100U
 #define BFREE_IEXTEN 0x00008000U
 
 #define BFREE_VINTR  0
@@ -974,9 +470,6 @@ static void bfree_guest_tty_defaults(bfree_termios_t *t)
     t->c_line = 0;
     t->__ispeed = 0;
     t->__ospeed = 0;
-    t->c_line = 0;
-    t->__ispeed = 0;
-    t->__ospeed = 0;
     t->c_cc[BFREE_VINTR] = 0x03;
     t->c_cc[BFREE_VQUIT] = 0x1c;
     t->c_cc[BFREE_VERASE] = 0x7f;
@@ -991,40 +484,6 @@ static void bfree_guest_tty_ensure_init(void)
         bfree_guest_tty_defaults(&g_guest_tty_termios);
         g_guest_tty_termios_inited = 1;
     }
-}
-
-/* H07: controlling-tty job-control helpers (soft — no true process stop). */
-static int bfree_guest_tty_self_pgid(void)
-{
-    if (g_guest_fork_active) {
-        int pg = bfree_process_getpgid(g_guest_fork_pid);
-
-        if (pg > 0) {
-            return pg;
-        }
-    }
-    return g_guest_pgid;
-}
-
-static int bfree_guest_tty_is_background(void)
-{
-    int self_pg;
-
-    /* Interactive shell (!coop child): never soft-job-stop. H25 shell
-     * setpgid(0) may move g_guest_pgid while tty_pgrp stays put; treating
-     * that as bg silenced the prompt via soft SIGTTIN/TTOU. */
-    if (!g_guest_fork_active) {
-        return 0;
-    }
-    self_pg = bfree_guest_tty_self_pgid();
-    return self_pg > 0 && g_guest_tty_pgrp > 0 && self_pg != g_guest_tty_pgrp;
-}
-
-/* Soft raise for bg tty access; returns EINTR when delivery paths fire. */
-static long bfree_guest_tty_soft_job_sig(int sig)
-{
-    bfree_guest_sig_raise(sig);
-    return bfree_guest_sig_take_eintr();
 }
 
 static long bfree_guest_tty_set_termios(long termios_ptr)
@@ -1060,37 +519,6 @@ static void bfree_copy_cstr(char *dst, uint32_t dst_size, const char *src)
         dst[i] = src[i];
     }
     dst[i] = '\0';
-}
-
-/* Copy a NUL-terminated string from the current user task (ring3). */
-static int bfree_copy_user_cstr(long name_ptr, char *dst, uint32_t dst_size)
-{
-    page_table_t *pt;
-    uint32_t i;
-    uintptr_t kva;
-
-    if (name_ptr == 0 || dst == 0 || dst_size == 0) {
-        return -14;
-    }
-    pt = bfree_linux_user_pt();
-    if (!pt) {
-        return -14;
-    }
-    for (i = 0; i + 1 < dst_size; ++i) {
-        uint64_t uva = (uint64_t)(uintptr_t)name_ptr + (uint64_t)i;
-        kva = bfree_linux_user_kva(pt, uva);
-        if (kva) {
-            dst[i] = *(const char *)kva;
-        } else {
-            /* Syscall runs with the user CR3 still active — use the user VA directly. */
-            dst[i] = *(const char *)(uintptr_t)uva;
-        }
-        if (dst[i] == '\0') {
-            return 0;
-        }
-    }
-    dst[dst_size - 1U] = '\0';
-    return 0;
 }
 
 static uint32_t __attribute__((unused)) bfree_count_timerfd_entries(void)
@@ -1193,8 +621,6 @@ long sys_pipe(long pipefd_ptr)
 
 #define BFREE_GUEST_MEMFD_FD        0x3718
 
-#define BFREE_GUEST_MEMFD_FD        0x3718
-
 // case 26: sys_mmap
 // wl_shm バッファ共有に必要。/dev/fb0 はユーザ CR3 へ物理 VRAM を固定 VA にマップする。
 // MAP_ANONYMOUS は BFREE_GUEST_HEAP_* に PMM ページを割り当て（musl malloc/Qt 用）。
@@ -1236,8 +662,6 @@ static int bfree_map_guest_heap_range(page_table_t *pt, uint64_t lo, uint64_t hi
             bfree_kernel_phys_io_end();
             return -1;
         }
-        vmm_drop_identity_alias(pt, (uint64_t)(uintptr_t)page);
-        vmm_drop_identity_alias(&kernel_page_table, (uint64_t)(uintptr_t)page);
     }
     bfree_kernel_phys_io_end();
     return 0;
@@ -1394,12 +818,10 @@ long sys_mmap(long addr, long length, long prot, long flags, long fd)
         /* framebuffer path below */
     } else if (fd == (long)BFREE_GUEST_MEMFD_FD) {
         return sys_mmap_anonymous_heap(addr, length, flags | MAP_ANONYMOUS);
-    } else if (fd == (long)BFREE_GUEST_MEMFD_FD) {
-        return sys_mmap_anonymous_heap(addr, length, flags | MAP_ANONYMOUS);
     } else if (fd < 0 || (flags & MAP_ANONYMOUS)) {
         return sys_mmap_anonymous_heap(addr, length, flags);
     } else {
-        return -38; // -ENOSYS (file mmap handled in linux dispatch via vfile helper)
+        return -38; // -ENOSYS
     }
 
     (void)addr;
@@ -1468,19 +890,21 @@ long sys_mmap(long addr, long length, long prot, long flags, long fd)
     return (long)(uintptr_t)BFREE_FB0_USER_MMAP_BASE;
 }
 
-// case 27: sys_shm_open — implemented later via vfile (shm/<name>)
-static long bfree_guest_shm_open(long name_ptr, long oflag, long mode);
-static long bfree_guest_shm_unlink(long name_ptr);
-
+// case 27: sys_shm_open
+// POSIX shm_open はカーネル内では未実装。
 long sys_shm_open(long name_ptr, long oflag, long mode)
 {
-    return bfree_guest_shm_open(name_ptr, oflag, mode);
+    (void)name_ptr;
+    (void)oflag;
+    (void)mode;
+    return -38; // -ENOSYS
 }
 
 // case 28: sys_shm_unlink
 long sys_shm_unlink(long name_ptr)
 {
-    return bfree_guest_shm_unlink(name_ptr);
+    (void)name_ptr;
+    return -38; // -ENOSYS
 }
 
 // case 29 / Linux 228: sys_clock_gettime
@@ -1637,8 +1061,6 @@ long sys_mprotect(long addr, long length, long prot)
 }
 
 // Linux 28: madvise — QV4 PageReservation::decommit guard pages; noop on guest arena.
-
-// Linux 28: madvise — QV4 PageReservation::decommit guard pages; noop on guest arena.
 static long sys_linux_madvise(long addr, long length, long advice)
 {
     (void)addr;
@@ -1716,9 +1138,6 @@ static long sys_linux_get_robust_list(long head_ptr, long len_ptr, long pid)
 long sys_set_tid_address(long tid_ptr)
 {
     g_guest_clear_child_tid = (uintptr_t)tid_ptr;
-    if (g_guest_thread_active) {
-        return (long)g_guest_thread_tid;
-    }
     if (g_guest_fork_active) {
         return (long)g_guest_fork_pid;
     }
@@ -1727,12 +1146,7 @@ long sys_set_tid_address(long tid_ptr)
 
 static unsigned g_guest_futex_log_count;
 
-/*
- * Linux 202: futex — single-threaded guest.
- * H20: real blocking / timeout-bounded coop yield left partial: clearing *uaddr
- * on WAIT is required for Qt (else fastTryLock spins forever). A timeout+yield
- * path that leaves *uaddr locked regresses the desktop; keep clear-on-WAIT.
- */
+// Linux 202: futex — single-threaded guest; never block, satisfy musl/Qt mutex init.
 long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, long val3)
 {
     int cmd = (int)(op & 0x7f);
@@ -1908,130 +1322,8 @@ static int bfree_guest_eventfd_index(int fd)
     return fd - (int)BFREE_GUEST_EVENTFD_BASE;
 }
 
-#define BFREE_GUEST_DEV_TTY_FD     0x3707
 #define BFREE_GUEST_DEV_NULL_FD     0x3700
 #define BFREE_GUEST_DEV_URANDOM_FD  0x3701
-#define BFREE_GUEST_PROC_MAPS_FD    0x3702
-#define BFREE_GUEST_PASSWD_FD       0x3703
-#define BFREE_GUEST_GROUP_FD        0x3704
-#define BFREE_GUEST_PROFILE_FD      0x3705
-#define BFREE_GUEST_BUSYBOX_FD      0x3706
-#define BFREE_GUEST_VFILE_SLOTS     8
-#define BFREE_GUEST_VFILE_SIZE      4096
-#define BFREE_GUEST_VFILE_FD_BASE   0x3710
-#define BFREE_GUEST_ROOT_DIR_FD     0x3720
-#define BFREE_GUEST_TMP_DIR_FD      0x3721
-#define BFREE_GUEST_HOME_DIR_FD      0x3720
-
-#define BFREE_LINUX_O_ACCMODE       3
-#define BFREE_LINUX_O_CREAT         0100
-#define BFREE_LINUX_O_TRUNC         01000
-#define BFREE_LINUX_O_APPEND        02000
-#define BFREE_LINUX_O_DIRECTORY     040000
-
-typedef struct {
-    int used;
-    int is_symlink; /* data[] holds the link target instead of file contents */
-    int is_dir;     /* directory vnode under /tmp (name may contain '/') */
-    int orphaned;   /* unlinked from namespace but still open */
-    int open_refs;  /* live OFDs pointing at this vnode */
-    int nlink;      /* directory entries pointing at this vnode */
-    uint32_t mode;  /* permission bits (07777); type comes from is_dir/symlink */
-    uint32_t uid;   /* owner; used for basic DAC on open/access */
-    uint32_t gid;
-    char name[48];  /* primary path relative to /tmp; aliases may add more */
-    unsigned char data[BFREE_GUEST_VFILE_SIZE];
-    size_t len;
-    /* Legacy fallback for internal magic fds. Published Linux fds use an
-     * open-file description, so separate open() calls do not share this. */
-    size_t pos;
-} bfree_guest_vfile_t;
-
-
-static bfree_guest_vfile_t g_guest_vfiles[BFREE_GUEST_VFILE_SLOTS];
-static unsigned g_guest_root_dirent_idx;
-static unsigned g_guest_tmp_dirent_idx;
-static uint64_t g_guest_root_dirent_cookie;
-static uint64_t g_guest_tmp_dirent_cookie;
-
-#define BFREE_GUEST_FD_TABLE_SIZE 64
-static int g_guest_fd_target[BFREE_GUEST_FD_TABLE_SIZE];
-/* Resolved target captured at dup(); survives close() until dup2() consumes it. */
-static int g_guest_fd_dup_save[BFREE_GUEST_FD_TABLE_SIZE];
-static int g_guest_fd_inited;
-
-/* Return a small Linux-like fd (3..63) that resolves to target (may be magic guest fd). */
-
-static bfree_guest_vfile_t *bfree_guest_vfile_from_fd(int fd)
-{
-    int idx;
-
-    if (!bfree_guest_is_vfile_fd(fd)) {
-        return 0;
-    }
-    idx = fd - (int)BFREE_GUEST_VFILE_FD_BASE;
-    if (idx < 0 || idx >= BFREE_GUEST_VFILE_SLOTS || !g_guest_vfiles[idx].used) {
-        return 0;
-    }
-    return &g_guest_vfiles[idx];
-}
-
-static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
-{
-    int i;
-
-    for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
-        if (g_guest_vfiles[i].used && strcmp(g_guest_vfiles[i].name, name) == 0) {
-            return &g_guest_vfiles[i];
-        }
-    }
-    return 0;
-}
-
-/* Accept /tmp and /tmp/<rel> where <rel> may contain '/' for nested paths.
- * Reject empty components, trailing '/', and "." / ".." segments. */
-
-/* Return 1 if every parent directory of /tmp/<rel> exists (or rel is top-level). */
-
-/* Emit the basename of an immediate child of parent_rel ("" for /tmp). */
-
-/* Rewrite a relative path in place as <cwd>/<path> so applets run after
- * chdir (e.g. `tar -C /tmp b2f`) resolve names the same way absolute paths
- * do. "." and "./" collapse to the cwd itself. */
-
-#define BFREE_LINUX_AT_FDCWD (-100)
-
-/* Resolve path relative to dirfd (or AT_FDCWD) into an absolute path in-place.
- * Absolute paths are left unchanged. Returns 0 or a negated errno. */
-
-static const char g_guest_busybox_exe_path[] = "/busybox.elf";
-static const char g_guest_p8test_exe_path[] = "/p8test.elf";
-static size_t g_guest_busybox_off;
-
-static size_t g_guest_memfd_size;
-
-static const char g_guest_proc_maps_desktop[] =
-    /* QV4 stackProperties() parses the first region containing stackAddr. */
-    "08000000-10000000 rw-p 00000000 00:00 0                  [stack]\n"
-    "00100000-02000000 rw-p 00000000 00:00 0                  [stack]\n"
-    "08000000-14000000 r-xp 00000000 00:00 0                  /desktop\n"
-    "19000000-21000000 rw-p 00000000 00:00 0                  [heap]\n";
-static const char g_guest_proc_maps_busybox[] =
-    "05000000-05380000 r-xp 00000000 00:00 0                  /busybox.elf\n"
-    "05380000-05400000 rw-p 00000000 00:00 0                  /busybox.elf\n"
-    "03c00000-2a000000 rw-p 00000000 00:00 0                  [heap]\n"
-    "01380000-01400000 rw-p 00000000 00:00 0                  [stack]\n";
-static const char *g_guest_proc_maps = g_guest_proc_maps_desktop;
-static size_t g_guest_proc_maps_off;
-
-static const char g_guest_etc_passwd[] = "root:x:0:0:root:/root:/bin/sh\n";
-static size_t g_guest_etc_passwd_off;
-
-static const char g_guest_etc_group[] = "root:x:0:\n";
-static size_t g_guest_etc_group_off;
-
-static const char g_guest_etc_profile[] = "";
-static size_t g_guest_etc_profile_off;
 #define BFREE_GUEST_PROC_MAPS_FD    0x3702
 #define BFREE_GUEST_PASSWD_FD       0x3703
 #define BFREE_GUEST_GROUP_FD        0x3704
@@ -2044,10 +1336,6 @@ static size_t g_guest_etc_profile_off;
 #define BFREE_GUEST_TMP_DIR_FD      0x3721
 #define BFREE_GUEST_BIN_DIR_FD      0x3722
 #define BFREE_GUEST_MOTD_FD         0x3723
-#define BFREE_GUEST_HOSTS_FD        0x3734
-#define BFREE_GUEST_RESOLV_FD       0x3735
-#define BFREE_GUEST_USR_DIR_FD      0x3724
-#define BFREE_GUEST_VAR_DIR_FD      0x3725
 #define BFREE_GUEST_USR_DIR_FD      0x3724
 #define BFREE_GUEST_VAR_DIR_FD      0x3725
 #define BFREE_GUEST_PROC_DIR_FD     0x3726
@@ -2069,25 +1357,21 @@ static size_t g_guest_etc_profile_off;
 #define BFREE_LINUX_O_APPEND        02000
 #define BFREE_LINUX_O_DIRECTORY     040000
 
-
-static uint32_t g_guest_umask = 0022U;
-
-static long bfree_guest_vfile_check_access(const bfree_guest_vfile_t *vf, long mode);
-
-/* Extra hard-link names (primary name stays on the vnode). */
-#define BFREE_GUEST_ALIAS_SLOTS 32
 typedef struct {
     int used;
-    int vnode; /* index into g_guest_vfiles */
-    char name[48];
-} bfree_guest_alias_t;
-static bfree_guest_alias_t g_guest_aliases[BFREE_GUEST_ALIAS_SLOTS];
+    int is_symlink; /* data[] holds the link target instead of file contents */
+    int is_dir;     /* directory vnode under /tmp (name may contain '/') */
+    int orphaned;   /* unlinked from namespace but still open */
+    int open_refs;  /* live OFDs pointing at this vnode */
+    char name[48];  /* path relative to /tmp, e.g. "a" or "a/b.txt" */
+    unsigned char data[BFREE_GUEST_VFILE_SIZE];
+    size_t len;
+    /* Legacy fallback for internal magic fds. Published Linux fds use an
+     * open-file description, so separate open() calls do not share this. */
+    size_t pos;
+} bfree_guest_vfile_t;
 
-/* Signal dispositions: 0=DFL, 1=IGN (custom handlers treated as IGN for now). */
-#define BFREE_SIG_DFL 0
-#define BFREE_SIG_IGN 1
-#define BFREE_NSIG    64
-static uint8_t g_guest_sig_disp[BFREE_NSIG];
+static bfree_guest_vfile_t g_guest_vfiles[BFREE_GUEST_VFILE_SLOTS];
 
 #define BFREE_GUEST_OFD_SLOTS       64
 #define BFREE_GUEST_OFD_FD_BASE     0x3800
@@ -2103,7 +1387,10 @@ typedef struct {
 static bfree_guest_ofd_t g_guest_ofds[BFREE_GUEST_OFD_SLOTS];
 
 #define BFREE_GUEST_FD_TABLE_SIZE 64
+static int g_guest_fd_target[BFREE_GUEST_FD_TABLE_SIZE];
 /* Resolved target captured at dup(); survives close() until dup2() consumes it. */
+static int g_guest_fd_dup_save[BFREE_GUEST_FD_TABLE_SIZE];
+static int g_guest_fd_inited;
 
 static void bfree_guest_fd_ensure_init(void)
 {
@@ -2286,28 +1573,14 @@ static bfree_guest_vfile_t *bfree_guest_vfile_from_open_fd(
 
 static void bfree_guest_vfile_clear_slot(bfree_guest_vfile_t *vf)
 {
-    int i;
-    int vidx;
-
     if (!vf) {
         return;
-    }
-    vidx = (int)(vf - g_guest_vfiles);
-    for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
-        if (g_guest_aliases[i].used && g_guest_aliases[i].vnode == vidx) {
-            g_guest_aliases[i].used = 0;
-            g_guest_aliases[i].name[0] = '\0';
-        }
     }
     vf->used = 0;
     vf->is_symlink = 0;
     vf->is_dir = 0;
     vf->orphaned = 0;
     vf->open_refs = 0;
-    vf->nlink = 0;
-    vf->mode = 0;
-    vf->uid = 0;
-    vf->gid = 0;
     vf->name[0] = '\0';
     vf->len = 0;
     vf->pos = 0;
@@ -2339,11 +1612,6 @@ static void bfree_guest_ofd_maybe_release(int fd)
     }
     for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
         if (g_guest_fd_target[i] == fd || g_guest_fd_dup_save[i] == fd) {
-            return;
-        }
-        /* Parked coop side still holds this OFD — do not free under the child. */
-        if (g_fd_snap_parent[i] == fd || g_fd_dup_save_snap_parent[i] == fd ||
-            g_fd_snap_child[i] == fd || g_fd_dup_save_snap_child[i] == fd) {
             return;
         }
     }
@@ -2439,65 +1707,6 @@ static int bfree_guest_path_is_under_tmp(const char *path, char *name_out, size_
         name_out[0] = '\0';
         return 1;
     }
-    /* B-Free: /var writable namespace */
-    if (strcmp(path, "/var") == 0) {
-        if (name_cap < 4) {
-            return 0;
-        }
-        name_out[0] = 'v';
-        name_out[1] = 'a';
-        name_out[2] = 'r';
-        name_out[3] = '\0';
-        return 1;
-    }
-    if (strncmp(path, "/var/", 5) == 0 && path[5] != '\0') {
-        size_t n = 4;
-        name_out[0] = 'v';
-        name_out[1] = 'a';
-        name_out[2] = 'r';
-        name_out[3] = '/';
-        while (path[5 + (n - 4)] != '\0' && n + 1U < name_cap) {
-            name_out[n] = path[5 + (n - 4)];
-            ++n;
-        }
-        if (path[5 + (n - 4)] != '\0') {
-            return 0;
-        }
-        name_out[n] = '\0';
-        rel = name_out + 4;
-        seg_start = 0;
-        for (i = 0; rel[i] != '\0'; ++i) {
-            if (rel[i] == '/') {
-                size_t seglen = i - seg_start;
-                if (seglen == 0) {
-                    return 0;
-                }
-                if (seglen == 1 && rel[seg_start] == '.') {
-                    return 0;
-                }
-                if (seglen == 2 && rel[seg_start] == '.' && rel[seg_start + 1] == '.') {
-                    return 0;
-                }
-                seg_start = i + 1U;
-            }
-        }
-        if (i == 0 || rel[i - 1] == '/') {
-            return 0;
-        }
-        {
-            size_t seglen = i - seg_start;
-            if (seglen == 0) {
-                return 0;
-            }
-            if (seglen == 1 && rel[seg_start] == '.') {
-                return 0;
-            }
-            if (seglen == 2 && rel[seg_start] == '.' && rel[seg_start + 1] == '.') {
-                return 0;
-            }
-        }
-        return 1;
-    }
     if (strncmp(path, "/tmp/", 5) != 0) {
         return 0;
     }
@@ -2566,10 +1775,6 @@ static int bfree_guest_tmp_parents_exist(const char *rel)
     }
     memcpy(parent, rel, last_slash);
     parent[last_slash] = '\0';
-    /* B-Free: var parent always exists */
-    if (strcmp(parent, "var") == 0) {
-        return 1;
-    }
     for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
         if (g_guest_vfiles[i].used &&
             !g_guest_vfiles[i].orphaned &&
@@ -2848,7 +2053,10 @@ static long sys_linux_dup2(long oldfd, long newfd)
     return newfd;
 }
 
+static const char g_guest_busybox_exe_path[] = "/busybox.elf";
+static size_t g_guest_busybox_off;
 
+static size_t g_guest_memfd_size;
 
 static long sys_linux_memfd_create(long name_ptr, long flags)
 {
@@ -2896,6 +2104,19 @@ static long sys_linux_ftruncate(long fd, long length)
     return 0;
 }
 
+static const char g_guest_proc_maps_desktop[] =
+    /* QV4 stackProperties() parses the first region containing stackAddr. */
+    "08000000-10000000 rw-p 00000000 00:00 0                  [stack]\n"
+    "00100000-02000000 rw-p 00000000 00:00 0                  [stack]\n"
+    "08000000-14000000 r-xp 00000000 00:00 0                  /desktop\n"
+    "19000000-21000000 rw-p 00000000 00:00 0                  [heap]\n";
+static const char g_guest_proc_maps_busybox[] =
+    "05000000-05380000 r-xp 00000000 00:00 0                  /busybox.elf\n"
+    "05380000-05400000 rw-p 00000000 00:00 0                  /busybox.elf\n"
+    "03c00000-2a000000 rw-p 00000000 00:00 0                  [heap]\n"
+    "01380000-01400000 rw-p 00000000 00:00 0                  [stack]\n";
+static const char *g_guest_proc_maps = g_guest_proc_maps_desktop;
+static size_t g_guest_proc_maps_off;
 
 /* Minimal /proc content for BusyBox ps / free / uptime. */
 static const char g_guest_proc_pid_stat[] =
@@ -2936,10 +2157,7 @@ static size_t g_guest_proc_status_off;
 static const char g_guest_proc_mounts[] =
     "rootfs / rootfs rw 0 0\n"
     "proc /proc proc rw,relatime 0 0\n"
-    "tmpfs /tmp tmpfs rw,relatime 0 0\n"
-    "vfile /persist vfile rw,relatime 0 0\n"
-    "vfile /home vfile rw,relatime 0 0\n"
-    "vfile /var vfile rw,relatime 0 0\n";
+    "tmpfs /tmp tmpfs rw,relatime 0 0\n";
 static size_t g_guest_proc_mounts_off;
 /* Synthetic PID 2 so ps shows more than one task without a live fork child. */
 static const char g_guest_proc_pid2_stat[] =
@@ -2991,25 +2209,20 @@ static long bfree_guest_read_blob(long buf, long count, const char *src, size_t 
     return (long)n;
 }
 
+static const char g_guest_etc_passwd[] = "root:x:0:0:root:/root:/bin/sh\n";
+static size_t g_guest_etc_passwd_off;
 
+static const char g_guest_etc_group[] = "root:x:0:\n";
+static size_t g_guest_etc_group_off;
 
+static const char g_guest_etc_profile[] =
+    "# B-Free guest profile\n"
+    "export PATH=/bin:/usr/bin:.\n"
+    "export PS1='root@bfree:# '\n";
+static size_t g_guest_etc_profile_off;
 
 static const char g_guest_etc_motd[] = "";
 static size_t g_guest_etc_motd_off;
-
-/* H32: musl getaddrinfo reads /etc/hosts before DNS; QEMU slirp-style guest IPs. */
-static const char g_guest_etc_hosts[] =
-    "127.0.0.1\tlocalhost\n"
-    "::1\tlocalhost\n"
-    "10.0.2.15\tbfree guest\n"
-    "10.0.2.2\tgateway\n";
-static size_t g_guest_etc_hosts_off;
-
-/* Stub resolver config (UDP DNS not wired; documents guest gateway DNS). */
-static const char g_guest_etc_resolv[] =
-    "nameserver 10.0.2.3\n"
-    "search local\n";
-static size_t g_guest_etc_resolv_off;
 
 static void bfree_guest_exec_reset_subsystems(int is_busybox)
 {
@@ -3042,26 +2255,9 @@ static void bfree_guest_exec_reset_subsystems(int is_busybox)
     g_guest_etc_group_off = 0;
     g_guest_etc_profile_off = 0;
     g_guest_etc_motd_off = 0;
-    g_guest_etc_hosts_off = 0;
-    g_guest_etc_resolv_off = 0;
     bfree_guest_proc_maps_select_busybox(is_busybox);
     bfree_guest_pipe_reset_all();
     bfree_guest_fd_ensure_init();
-    /* Drop stale fork/coop only — full process_init here races AS-copy
-     * fork PT readiness and faulted the first applet (wc) on heap PTEs. */
-    g_guest_fork_active = 0;
-    g_guest_fork_pid = 0;
-    g_guest_fork_status_ready = 0;
-    g_guest_fork_was_as_copy = 0;
-    g_coop_side = 0;
-    g_coop_child_blocked = 0;
-    g_coop_parent_started = 0;
-    g_guest_waitid_active = 0;
-    g_guest_waitid_infop = 0;
-    g_guest_wait_status_ptr = 0;
-    g_guest_pgid = 1;
-    g_guest_tty_pgrp = 1;
-    g_guest_sid = 1;
     for (i = 3; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
         g_guest_fd_target[i] = -1;
         g_guest_fd_dup_save[i] = -1;
@@ -3098,8 +2294,6 @@ static void bfree_guest_execve_reset_subsystems(int is_busybox)
     g_guest_etc_group_off = 0;
     g_guest_etc_profile_off = 0;
     g_guest_etc_motd_off = 0;
-    g_guest_etc_hosts_off = 0;
-    g_guest_etc_resolv_off = 0;
     bfree_guest_proc_maps_select_busybox(is_busybox);
 }
 
@@ -3170,108 +2364,19 @@ static long sys_linux_gettid(void)
     return 1;
 }
 
-static int bfree_guest_sig_is_fatal_default(int sig)
-{
-    /* Fatal by default (subset that ash/BusyBox routinely use). */
-    switch (sig) {
-    case 1:  /* SIGHUP */
-    case 2:  /* SIGINT */
-    case 3:  /* SIGQUIT */
-    case 6:  /* SIGABRT */
-    case 9:  /* SIGKILL */
-    case 15: /* SIGTERM */
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-static int bfree_guest_sig_ignored(int sig)
-{
-    if (sig <= 0 || sig >= BFREE_NSIG) {
-        return 0;
-    }
-    if (sig == 9) {
-        return 0; /* SIGKILL cannot be ignored */
-    }
-    return g_guest_sig_disp[sig] == BFREE_SIG_IGN;
-}
-
 static long sys_linux_kill(long pid, long sig)
 {
-    int self_pid;
-    int target_is_self;
-    int target_is_child;
-
-    if (sig < 0 || sig >= BFREE_NSIG) {
-        return -22; /* EINVAL */
+    (void)sig;
+    if (pid == 1 || pid == 2 || pid == -1 ||
+        (g_guest_fork_active && pid == (long)g_guest_fork_pid) ||
+        (g_guest_fork_status_ready && pid == (long)g_guest_fork_pid)) {
+        /* Signals are ignored in this single-task guest; succeed for known pids. */
+        return 0;
     }
-    self_pid = g_guest_fork_active ? g_guest_fork_pid : 1;
     if (pid == 0) {
-        pid = (long)g_guest_pgid; /* process group of caller → treat as self group */
-        /* Fall through as group signal via negative convention below. */
-        pid = -(long)g_guest_pgid;
-    }
-    if (pid < -1) {
-        /* Process-group signal: deliver to self if our pgid matches. */
-        int pg = (int)(-pid);
-
-        if (pg == g_guest_pgid ||
-            (g_guest_fork_active &&
-             bfree_process_getpgid(g_guest_fork_pid) == pg)) {
-            pid = (long)self_pid;
-        } else {
-            return 0; /* no matching live member */
-        }
-    }
-    if (pid == -1) {
-        /* Broadcast: hit the running context. */
-        pid = (long)self_pid;
-    }
-
-    target_is_self = (pid == (long)self_pid);
-    target_is_child = (g_guest_fork_active && pid == (long)g_guest_fork_pid);
-
-    if (!target_is_self && pid != 1 && pid != 2 &&
-        !(g_guest_fork_status_ready && pid == (long)g_guest_fork_pid)) {
-        /* Allow kill of known shell/init and current/last child only. */
-        if (bfree_process_getpgid((int)pid) < 0 && pid != 1) {
-            return -3; /* ESRCH */
-        }
-    }
-
-    if (sig == 0) {
-        /* Existence check only. */
-        if (pid == 1 || pid == 2 || target_is_self || target_is_child ||
-            (g_guest_fork_status_ready && pid == (long)g_guest_fork_pid) ||
-            bfree_process_getpgid((int)pid) > 0) {
-            return 0;
-        }
-        return -3;
-    }
-
-    if (bfree_guest_sig_ignored((int)sig) && (int)sig != 9) {
         return 0;
     }
-
-    if (target_is_child || (g_guest_fork_active && target_is_self)) {
-        if (bfree_guest_sig_is_fatal_default((int)sig) || (int)sig == 9) {
-            bfree_guest_fork_child_pipe_close_writers();
-            return bfree_guest_exit_from_fork_signal((int)sig);
-        }
-        return 0;
-    }
-
-    /* Parent/shell self-signal: ignore non-fatal; SIGKILL/TERM re-enter ash
-     * like _exit so the serial session stays usable. */
-    if (pid == 1 && !g_guest_fork_active) {
-        if ((int)sig == 9 || (int)sig == 15) {
-            /* Fall through to the exit/re-enter busybox path via exit_group. */
-            return sys_linux_syscall_dispatch_exit_reenter();
-        }
-        return 0;
-    }
-    return 0;
+    return -3; /* ESRCH */
 }
 
 static long sys_linux_statfs(long path_ptr, long buf)
@@ -3363,28 +2468,6 @@ static long sys_linux_read(long fd, long buf, long count)
         for (i = 0; i < n; ++i) {
             dst[i] = (uint8_t)(0x5A ^ (uint8_t)i);
         }
-        return (long)n;
-    }
-    if (fd == (long)BFREE_GUEST_PROC_MAPS_FD) {
-        const char *src = g_guest_proc_maps;
-        size_t total = sizeof(g_guest_proc_maps) - 1U;
-        size_t off = g_guest_proc_maps_off;
-
-        if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf)) {
-            return -14;
-        }
-        if (off >= total) {
-            return 0;
-        }
-        dst = (uint8_t *)(uintptr_t)buf;
-        n = (size_t)count;
-        if (n > total - off) {
-            n = total - off;
-        }
-        for (i = 0; i < n; ++i) {
-            dst[i] = (uint8_t)src[off + i];
-        }
-        g_guest_proc_maps_off = off + n;
         return (long)n;
     }
     if (fd == (long)BFREE_GUEST_PROC_MAPS_FD) {
@@ -3498,42 +2581,6 @@ static long sys_linux_read(long fd, long buf, long count)
         g_guest_etc_profile_off = off + n;
         return (long)n;
     }
-    if (fd == (long)BFREE_GUEST_BUSYBOX_FD) {
-        int rc;
-
-        if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf)) {
-            return -14;
-        }
-        rc = bfree_initrd_read("busybox.elf", g_guest_busybox_off, (void *)(uintptr_t)buf,
-                               (uint64_t)count);
-        if (rc < 0) {
-            return rc;
-        }
-        g_guest_busybox_off += (size_t)rc;
-        return (long)rc;
-    }
-    if (fd == (long)BFREE_GUEST_PROFILE_FD) {
-        const char *src = g_guest_etc_profile;
-        size_t total = sizeof(g_guest_etc_profile) - 1U;
-        size_t off = g_guest_etc_profile_off;
-
-        if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf)) {
-            return -14;
-        }
-        if (off >= total) {
-            return 0;
-        }
-        dst = (uint8_t *)(uintptr_t)buf;
-        n = (size_t)count;
-        if (n > total - off) {
-            n = total - off;
-        }
-        for (i = 0; i < n; ++i) {
-            dst[i] = (uint8_t)src[off + i];
-        }
-        g_guest_etc_profile_off = off + n;
-        return (long)n;
-    }
     if (fd == (long)BFREE_GUEST_MOTD_FD) {
         const char *src = g_guest_etc_motd;
         size_t total = sizeof(g_guest_etc_motd) - 1U;
@@ -3556,14 +2603,6 @@ static long sys_linux_read(long fd, long buf, long count)
         g_guest_etc_motd_off = off + n;
         return (long)n;
     }
-    if (fd == (long)BFREE_GUEST_HOSTS_FD) {
-        return bfree_guest_read_blob(buf, count, g_guest_etc_hosts,
-            sizeof(g_guest_etc_hosts) - 1U, &g_guest_etc_hosts_off);
-    }
-    if (fd == (long)BFREE_GUEST_RESOLV_FD) {
-        return bfree_guest_read_blob(buf, count, g_guest_etc_resolv,
-            sizeof(g_guest_etc_resolv) - 1U, &g_guest_etc_resolv_off);
-    }
     if (fd == (long)BFREE_GUEST_BUSYBOX_FD) {
         int rc;
 
@@ -3584,11 +2623,6 @@ static long sys_linux_read(long fd, long buf, long count)
         if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf) || !ps) {
             return -14;
         }
-        /* Resync open counts (live + inactive coop snap) before EOF/block. */
-        bfree_guest_pipe_reclaim_dead_slots();
-        if (!ps->used) {
-            return 0;
-        }
         if (ps->len == 0) {
             if (ps->wr_open <= 0) {
                 /* Always EOF. Do not "heal" fd0 to the console here: ash's
@@ -3600,16 +2634,6 @@ static long sys_linux_read(long fd, long buf, long count)
                 return -11; /* EAGAIN */
             }
             while (ps->len == 0 && ps->wr_open > 0) {
-                if (g_guest_fork_active && g_coop_side == 1) {
-                    return bfree_coop_yield_to_parent();
-                }
-                bfree_guest_alarm_poll();
-                {
-                    int er = bfree_guest_sig_take_eintr();
-                    if (er < 0) {
-                        return er;
-                    }
-                }
                 __asm__ volatile("sti; hlt" ::: "memory");
             }
             if (ps->len == 0) {
@@ -3630,16 +2654,6 @@ static long sys_linux_read(long fd, long buf, long count)
             }
         }
         ps->len -= n;
-        /* H02: after drain, hand off (AS-copy parent-first only). */
-        if (g_guest_fork_active && n > 0 && g_coop_parent_started &&
-            bfree_process_child_has_private_as()) {
-            if (g_coop_side == 0 && g_coop_child_blocked) {
-                return bfree_coop_yield_to_child_done((long)n);
-            }
-            if (g_coop_side == 1) {
-                return bfree_coop_yield_to_parent_done((long)n);
-            }
-        }
         return (long)n;
     }
     if (bfree_guest_is_eventfd(fd)) {
@@ -3775,73 +2789,26 @@ static long sys_linux_write(long fd, long buf, long count)
         if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf) || !ps) {
             return -14;
         }
-        /* Resync open counts (live + inactive coop snap) before EPIPE/block.
-         * Writer-stage close(read_end) must not see rd_open==0 while the
-         * parent's snap still holds the reader (seq-fork echo|cat). */
-        bfree_guest_pipe_reclaim_dead_slots();
-        if (!ps->used) {
-            bfree_guest_sig_raise(13);
-            return -32;
-        }
-        if (ps->rd_open <= 0) {
-            /* No readers: POSIX EPIPE. Broken pipe left on the shell's stdout:
-             * heal to console so subsequent prompts still print. Do NOT heal
-             * while a reader is still open — ash inproc pipelines redirect
+        if (ps->wr_open <= 0) {
+            /* Broken pipe left on the shell's stdout: heal to console.
+             * Do NOT heal while wr_open>0 — ash inproc pipelines redirect
              * fd1 to a live pipe with fork_active==0. */
             if ((orig_fd == 1 || orig_fd == 2) && !g_guest_fork_active) {
                 g_guest_fd_target[orig_fd] = -1;
                 bfree_guest_console_write((const uint8_t *)(uintptr_t)buf, (size_t)count);
                 return (long)count;
             }
-            /* B-Free: SIGPIPE on EPIPE */
-            bfree_guest_sig_raise(13);
-            if (g_guest_fork_active && !bfree_guest_sig_is_blocked(13) &&
-                g_guest_sig_disp[13] != BFREE_SIG_IGN) {
-                bfree_guest_fork_child_pipe_close_writers();
-                return bfree_guest_exit_from_fork_signal(13);
-            }
             return -32; /* EPIPE */
-        }
-        /* Blocking write: wait for buffer space (full pipe must not return 0). */
-        while (ps->len >= BFREE_GUEST_PIPE_BUF_SIZE && ps->rd_open > 0) {
-            if (ps->nonblock) {
-                return -11; /* EAGAIN */
-            }
-            if (g_guest_fork_active && g_coop_side == 1) {
-                return bfree_coop_yield_to_parent();
-            }
-            if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {
-                return bfree_coop_yield_to_child();
-            }
-            bfree_guest_alarm_poll();
-            {
-                int er = bfree_guest_sig_take_eintr();
-                if (er < 0) {
-                    return er;
-                }
-            }
-            __asm__ volatile("sti; hlt" ::: "memory");
-        }
-        if (ps->rd_open <= 0) {
-            bfree_guest_sig_raise(13);
-            return -32;
         }
         src = (const uint8_t *)(uintptr_t)buf;
         n = (size_t)count;
         if (n > BFREE_GUEST_PIPE_BUF_SIZE - ps->len) {
             n = BFREE_GUEST_PIPE_BUF_SIZE - ps->len;
         }
-        if (n == 0) {
-            return ps->nonblock ? -11L : 0L;
-        }
         for (i = 0; i < n; ++i) {
             ps->buf[ps->len + i] = src[i];
         }
         ps->len += n;
-        /* B-Free: coop yield after pipe write so the reader side can drain. */
-        if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked && n > 0) {
-            return bfree_coop_yield_to_child();
-        }
         return (long)n;
     }
     if (bfree_guest_is_eventfd(fd)) {
@@ -3865,6 +2832,23 @@ static long sys_linux_write(long fd, long buf, long count)
         return count > 0 ? count : 0;
     }
     return -9;
+}
+
+static int bfree_linux_path_is_dot_or_slash(const char *path)
+{
+    if (!path) {
+        return 0;
+    }
+    if (path[0] == '/' && path[1] == '\0') {
+        return 1;
+    }
+    if (path[0] == '.' && path[1] == '\0') {
+        return 1;
+    }
+    if (path[0] == '.' && path[1] == '/' && path[2] == '\0') {
+        return 1;
+    }
+    return 0;
 }
 
 static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
@@ -3926,10 +2910,6 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
         g_guest_busybox_off = 0;
         return bfree_guest_fd_publish(BFREE_GUEST_BUSYBOX_FD);
     }
-    if (strncmp(path, "/usr/bin/", 9) == 0 && path[9] != '\0') {
-        g_guest_busybox_off = 0;
-        return bfree_guest_fd_publish(BFREE_GUEST_BUSYBOX_FD);
-    }
     if (bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) && vname[0] != '\0') {
         vf = bfree_guest_vfile_find_by_name(vname);
         if (vf && vf->is_symlink) {
@@ -3963,7 +2943,6 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
         }
         if (accmode == 1 || accmode == 2) { /* write or read-write */
             int truncate = want_trunc || (want_create && vf == 0);
-            int created = (vf == 0) && want_create;
             int target;
             size_t initial_pos = 0;
 
@@ -3981,21 +2960,6 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
             if (vf && vf->is_dir) {
                 return -21;
             }
-            if (created && vf) {
-                vf->mode = ((uint32_t)mode & 07777U) & ~g_guest_umask;
-                if (vf->mode == 0U) {
-                    vf->mode = 0644U & ~g_guest_umask;
-                }
-                vf->uid = g_guest_euid;
-                vf->gid = g_guest_egid;
-            }
-            if (vf && !created) {
-                long acc = bfree_guest_vfile_check_access(vf,
-                    (accmode == 1) ? 2 : 6);
-                if (acc < 0) {
-                    return acc;
-                }
-            }
             if (vf && ((unsigned long)flags &
                        (unsigned long)BFREE_LINUX_O_APPEND) != 0UL) {
                 initial_pos = vf->len;
@@ -4003,14 +2967,9 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
             return bfree_guest_vfile_publish_open(target, (int)flags, initial_pos);
         }
         if (vf) {
-            long acc;
             int target = (int)BFREE_GUEST_VFILE_FD_BASE +
                 (int)(vf - g_guest_vfiles);
 
-            acc = bfree_guest_vfile_check_access(vf, 4);
-            if (acc < 0) {
-                return acc;
-            }
             return bfree_guest_vfile_publish_open(target, (int)flags, 0);
         }
         return -2;
@@ -4130,21 +3089,9 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
         g_guest_etc_motd_off = 0;
         return bfree_guest_fd_publish(BFREE_GUEST_MOTD_FD);
     }
-    if (strcmp(path, "/etc/hosts") == 0) {
-        g_guest_etc_hosts_off = 0;
-        return bfree_guest_fd_publish(BFREE_GUEST_HOSTS_FD);
-    }
-    if (strcmp(path, "/etc/resolv.conf") == 0) {
-        g_guest_etc_resolv_off = 0;
-        return bfree_guest_fd_publish(BFREE_GUEST_RESOLV_FD);
-    }
     if (strcmp(path, g_guest_busybox_exe_path) == 0) {
         g_guest_busybox_off = 0;
         return BFREE_GUEST_BUSYBOX_FD;
-    }
-    if (strcmp(path, g_guest_p8test_exe_path) == 0) {
-        /* Existence only — image load is via execve initrd basename. */
-        return bfree_guest_fd_publish(BFREE_GUEST_BUSYBOX_FD);
     }
     return -2; /* ENOENT */
 }
@@ -4245,25 +3192,12 @@ static long sys_linux_access(long path_ptr, long mode)
     if (strcmp(path, g_guest_busybox_exe_path) == 0) {
         return 0;
     }
-    if (strcmp(path, g_guest_busybox_exe_path) == 0) {
-        return 0;
-    }
-    if (strcmp(path, g_guest_p8test_exe_path) == 0) {
-        return 0;
-    }
     if (strcmp(path, "/etc") == 0 ||
         strcmp(path, "/etc/passwd") == 0 || strcmp(path, "/etc/group") == 0 ||
-        strcmp(path, "/etc/profile") == 0 || strcmp(path, "/etc/motd") == 0 ||
-        strcmp(path, "/etc/hosts") == 0 || strcmp(path, "/etc/resolv.conf") == 0) {
+        strcmp(path, "/etc/profile") == 0 || strcmp(path, "/etc/motd") == 0) {
         return 0;
     }
     if (strcmp(path, "/bin") == 0 || strncmp(path, "/bin/", 5) == 0) {
-        return 0;
-    }
-    if (strcmp(path, "/usr") == 0 || strncmp(path, "/usr/", 4) == 0) {
-        return 0;
-    }
-    if (strcmp(path, "/var") == 0 || strncmp(path, "/var/", 4) == 0) {
         return 0;
     }
     if (strcmp(path, "/usr") == 0 || strncmp(path, "/usr/", 4) == 0) {
@@ -4292,7 +3226,6 @@ static long sys_linux_close(long fd)
     int resolved;
 
     resolved = bfree_guest_fd_resolve(orig);
-    bfree_inet_sock_release(resolved);
     if (bfree_guest_is_pipe_wr(resolved) || bfree_guest_is_pipe_rd(resolved)) {
         bfree_guest_pipe_ref(resolved, -1);
     }
@@ -4507,351 +3440,21 @@ static long sys_linux_writev(long fd, long iov_ptr, long iovcnt)
     return total;
 }
 
-
-/* B-Free: real POSIX pread/pwrite/readv/select */
-static short bfree_guest_poll_revents(int fd, short events); /* fwd */
-
-static long sys_linux_readv(long fd, long iov_ptr, long iovcnt)
-{
-    long total = 0;
-    long i;
-
-    if (iovcnt <= 0 || iovcnt > 1024) {
-        return -22;
-    }
-    if (iov_ptr == 0 || !bfree_user_ptr_mapped(iov_ptr)) {
-        return -14;
-    }
-    for (i = 0; i < iovcnt; ++i) {
-        bfree_linux_iovec_t vec;
-        uint64_t vec_addr = (uint64_t)(uintptr_t)(iov_ptr + i * (long)sizeof(vec));
-        long chunk;
-
-        if (!bfree_user_buf_mapped(vec_addr, sizeof(vec))) {
-            return -14;
-        }
-        memcpy(&vec, (const void *)(uintptr_t)vec_addr, sizeof(vec));
-        if (vec.iov_len == 0) {
-            continue;
-        }
-        if (!bfree_user_buf_mapped(vec.iov_base, vec.iov_len)) {
-            return -14;
-        }
-        chunk = sys_linux_read(fd, (long)vec.iov_base, (long)vec.iov_len);
-        if (chunk < 0) {
-            return total > 0 ? total : chunk;
-        }
-        total += chunk;
-        if (chunk == 0 || chunk < (long)vec.iov_len) {
-            break;
-        }
-    }
-    return total;
-}
-
-static long sys_linux_pread64(long fd, long buf, long count, long offset)
-{
-    bfree_guest_ofd_t *ofd = 0;
-    bfree_guest_vfile_t *vf;
-    size_t saved;
-    long rc;
-
-    if (offset < 0) {
-        return -22;
-    }
-    fd = bfree_guest_fd_resolve((int)fd);
-    vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
-    if (!vf || !ofd) {
-        return -29;
-    }
-    saved = ofd->pos;
-    ofd->pos = (size_t)offset;
-    rc = sys_linux_read(fd, buf, count);
-    ofd->pos = saved;
-    return rc;
-}
-
-static long sys_linux_pwrite64(long fd, long buf, long count, long offset)
-{
-    bfree_guest_ofd_t *ofd = 0;
-    bfree_guest_vfile_t *vf;
-    size_t saved;
-    long rc;
-
-    if (offset < 0) {
-        return -22;
-    }
-    fd = bfree_guest_fd_resolve((int)fd);
-    vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
-    if (!vf || !ofd) {
-        return -29;
-    }
-    saved = ofd->pos;
-    ofd->pos = (size_t)offset;
-    rc = sys_linux_write(fd, buf, count);
-    ofd->pos = saved;
-    return rc;
-}
-
-static long sys_linux_select_ms(long nfds, long readfds, long writefds, long exceptfds,
-                                long timeout_ms)
-{
-    typedef struct {
-        int fd;
-        short events;
-        short revents;
-    } bfree_sel_pfd_t;
-    bfree_sel_pfd_t pfds[64];
-    int n = 0;
-    int i;
-    long ready = 0;
-    uint64_t *rin = 0;
-    uint64_t *win = 0;
-    uint64_t *ein = 0;
-    uint64_t rout[2] = {0, 0};
-    uint64_t wout[2] = {0, 0};
-    uint64_t eout[2] = {0, 0};
-    uint64_t deadline_us = 0;
-    int finite = 0;
-
-    if (nfds < 0 || nfds > 128) {
-        return -22;
-    }
-    if (readfds != 0) {
-        if (!bfree_user_ptr_mapped(readfds)) {
-            return -14;
-        }
-        rin = (uint64_t *)(uintptr_t)readfds;
-    }
-    if (writefds != 0) {
-        if (!bfree_user_ptr_mapped(writefds)) {
-            return -14;
-        }
-        win = (uint64_t *)(uintptr_t)writefds;
-    }
-    if (exceptfds != 0) {
-        if (!bfree_user_ptr_mapped(exceptfds)) {
-            return -14;
-        }
-        ein = (uint64_t *)(uintptr_t)exceptfds;
-    }
-    for (i = 0; i < (int)nfds && n < 64; ++i) {
-        int word = i / 64;
-        int bit = i % 64;
-        short ev = 0;
-        if (rin && word < 2 && (rin[word] & (1ULL << bit)) != 0ULL) {
-            ev = (short)(ev | 0x001);
-        }
-        if (win && word < 2 && (win[word] & (1ULL << bit)) != 0ULL) {
-            ev = (short)(ev | 0x004);
-        }
-        if (ein && word < 2 && (ein[word] & (1ULL << bit)) != 0ULL) {
-            ev = (short)(ev | 0x008);
-        }
-        if (ev == 0) {
-            continue;
-        }
-        pfds[n].fd = i;
-        pfds[n].events = ev;
-        pfds[n].revents = 0;
-        ++n;
-    }
-    if (timeout_ms > 0) {
-        finite = 1;
-        deadline_us = knl_get_current_time() + (uint64_t)timeout_ms * 1000ULL;
-    }
-    for (;;) {
-        int rcount = 0;
-        int j;
-        int er;
-        bfree_guest_alarm_poll();
-        er = bfree_guest_sig_take_eintr();
-        if (er < 0) {
-            return er;
-        }
-        for (j = 0; j < n; ++j) {
-            short rev = bfree_guest_poll_revents(pfds[j].fd, pfds[j].events);
-            pfds[j].revents = rev;
-            if (rev != 0) {
-                ++rcount;
-            }
-        }
-        if (n == 0) {
-            if (timeout_ms == 0) {
-                break;
-            }
-            if (timeout_ms < 0) {
-                __asm__ volatile("sti; hlt" ::: "memory");
-                continue;
-            }
-        } else if (rcount > 0) {
-            ready = rcount;
-            break;
-        } else if (timeout_ms == 0) {
-            break;
-        }
-        if (finite && knl_get_current_time() >= deadline_us) {
-            break;
-        }
-        if (timeout_ms == 0) {
-            break;
-        }
-        __asm__ volatile("sti; hlt" ::: "memory");
-    }
-    for (i = 0; i < n; ++i) {
-        int fd = pfds[i].fd;
-        int word = fd / 64;
-        int bit = fd % 64;
-        if (pfds[i].revents == 0 || word >= 2) {
-            continue;
-        }
-        if ((pfds[i].revents & 0x001) != 0) {
-            rout[word] |= (1ULL << bit);
-        }
-        if ((pfds[i].revents & 0x004) != 0) {
-            wout[word] |= (1ULL << bit);
-        }
-        if ((pfds[i].revents & 0x008) != 0) {
-            eout[word] |= (1ULL << bit);
-        }
-    }
-    if (rin) {
-        rin[0] = rout[0];
-        if (nfds > 64) {
-            rin[1] = rout[1];
-        }
-    }
-    if (win) {
-        win[0] = wout[0];
-        if (nfds > 64) {
-            win[1] = wout[1];
-        }
-    }
-    if (ein) {
-        ein[0] = eout[0];
-        if (nfds > 64) {
-            ein[1] = eout[1];
-        }
-    }
-    return ready;
-}
-
-static long sys_linux_select(long nfds, long readfds, long writefds, long exceptfds, long timeout)
-{
-    typedef struct {
-        long tv_sec;
-        long tv_usec;
-    } bfree_timeval_t;
-    long timeout_ms = -1;
-
-    if (timeout != 0) {
-        bfree_timeval_t *tv;
-        if (!bfree_user_ptr_mapped(timeout)) {
-            return -14;
-        }
-        tv = (bfree_timeval_t *)(uintptr_t)timeout;
-        if (tv->tv_sec < 0 || tv->tv_usec < 0) {
-            return -22;
-        }
-        timeout_ms = (long)(tv->tv_sec * 1000L + tv->tv_usec / 1000L);
-    }
-    return sys_linux_select_ms(nfds, readfds, writefds, exceptfds, timeout_ms);
-}
-
-static long sys_linux_pselect6(long nfds, long readfds, long writefds, long exceptfds,
-                               long timeout, long sigmask_ptr)
-{
-    long timeout_ms = -1;
-
-    (void)sigmask_ptr;
-    if (timeout != 0) {
-        struct timespec *ts;
-        if (!bfree_user_ptr_mapped(timeout)) {
-            return -14;
-        }
-        ts = (struct timespec *)(uintptr_t)timeout;
-        if (ts->tv_sec < 0 || ts->tv_nsec < 0) {
-            return -22;
-        }
-        timeout_ms = (long)(ts->tv_sec * 1000L + ts->tv_nsec / 1000000L);
-    }
-    return sys_linux_select_ms(nfds, readfds, writefds, exceptfds, timeout_ms);
-}
-
 static long sys_linux_rt_sigaction(long signum, long act, long oldact, long sigsetsize)
 {
-    typedef struct {
-        void *sa_handler;
-        unsigned long sa_flags;
-        void *sa_restorer;
-        unsigned long sa_mask[16];
-    } bfree_k_sigaction_t;
-    bfree_k_sigaction_t *ka;
-    int sig = (int)signum;
-    uint8_t old_disp;
-
+    (void)signum;
+    (void)act;
+    (void)oldact;
     (void)sigsetsize;
-    if (sig <= 0 || sig >= BFREE_NSIG) {
-        return -22;
-    }
-    old_disp = g_guest_sig_disp[sig];
-    if (oldact != 0 && bfree_user_ptr_mapped(oldact)) {
-        ka = (bfree_k_sigaction_t *)(uintptr_t)oldact;
-        ka->sa_handler = (old_disp == BFREE_SIG_IGN) ? (void *)(uintptr_t)1 : (void *)0;
-        ka->sa_flags = 0;
-        ka->sa_restorer = 0;
-    }
-    if (act != 0 && bfree_user_ptr_mapped(act)) {
-        void *handler;
-
-        ka = (bfree_k_sigaction_t *)(uintptr_t)act;
-        handler = ka->sa_handler;
-        if (sig == 9) {
-            return -22; /* cannot catch SIGKILL */
-        }
-        if (handler == (void *)0) {
-            g_guest_sig_disp[sig] = BFREE_SIG_DFL;
-        } else if (handler == (void *)(uintptr_t)1) {
-            g_guest_sig_disp[sig] = BFREE_SIG_IGN;
-        } else {
-            /* Custom handlers: record as IGN for delivery (no sigreturn yet). */
-            g_guest_sig_disp[sig] = BFREE_SIG_IGN;
-        }
-    }
     return 0;
 }
 
 static long sys_linux_rt_sigprocmask(long how, long set, long oldset, long sigsetsize)
 {
-    /* B-Free: real rt_sigprocmask */
-    uint64_t newmask;
-    uint64_t old;
-
+    (void)how;
+    (void)set;
+    (void)oldset;
     (void)sigsetsize;
-    old = g_guest_sig_mask;
-    if (oldset != 0) {
-        if (!bfree_user_ptr_mapped(oldset)) {
-            return -14;
-        }
-        *(uint64_t *)(uintptr_t)oldset = old;
-    }
-    if (set == 0) {
-        return 0;
-    }
-    if (!bfree_user_ptr_mapped(set)) {
-        return -14;
-    }
-    newmask = *(uint64_t *)(uintptr_t)set;
-    newmask &= ~((1ULL << 8) | (1ULL << 18));
-    if (how == 0) {
-        g_guest_sig_mask |= newmask;
-    } else if (how == 1) {
-        g_guest_sig_mask &= ~newmask;
-    } else if (how == 2) {
-        g_guest_sig_mask = newmask;
-    } else {
-        return -22;
-    }
     return 0;
 }
 
@@ -4859,19 +3462,6 @@ static long sys_linux_rt_sigprocmask(long how, long set, long oldset, long sigse
 #define BFREE_LINUX_TCGETS   0x5401
 #define BFREE_LINUX_TCSETS   0x5402
 #define BFREE_LINUX_TIOCGWINSZ 0x5413
-#define BFREE_LINUX_TIOCGPGRP  0x540F
-#define BFREE_LINUX_TIOCSPGRP  0x5410
-
-static int bfree_guest_tty_pgrp_get(void)
-{
-    if (g_guest_tty_pgrp > 0) {
-        return g_guest_tty_pgrp;
-    }
-    if (g_guest_pgid > 0) {
-        return g_guest_pgid;
-    }
-    return 1;
-}
 
 static long bfree_guest_fill_termios(long fd, long termios_ptr)
 {
@@ -4927,27 +3517,6 @@ static long sys_linux_ioctl(long fd, long request, long arg)
             }
             return 0;
         }
-        if (request == BFREE_LINUX_TIOCGPGRP) {
-            if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
-                return -14;
-            }
-            *(int *)(uintptr_t)arg = g_guest_tty_pgrp;
-            return 0;
-        }
-        if (request == BFREE_LINUX_TIOCSPGRP) {
-            if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
-                return -14;
-            }
-            {
-                int pgrp = *(int *)(uintptr_t)arg;
-
-                if (pgrp <= 0) {
-                    return -22;
-                }
-                g_guest_tty_pgrp = pgrp;
-            }
-            return 0;
-        }
     }
     (void)fd;
     (void)request;
@@ -4981,6 +3550,8 @@ typedef struct {
     int64_t __unused[3];
 } bfree_linux_stat_t;
 
+typedef char bfree_linux_stat_size_ok[(sizeof(bfree_linux_stat_t) == 144U) ? 1 : -1];
+
 static long bfree_linux_stat_fill(long statbuf, uint32_t mode, int64_t size)
 {
     bfree_linux_stat_t *st;
@@ -4989,7 +3560,7 @@ static long bfree_linux_stat_fill(long statbuf, uint32_t mode, int64_t size)
         return -14;
     }
     st = (bfree_linux_stat_t *)(uintptr_t)statbuf;
-    memset(st, 0, 144U);
+    memset(st, 0, sizeof(*st));
     st->st_dev = 1ULL;
     st->st_ino = 1ULL;
     st->st_mode = mode;
@@ -5002,44 +3573,30 @@ static long bfree_linux_stat_fill(long statbuf, uint32_t mode, int64_t size)
     return 0;
 }
 
-
-
-typedef char bfree_linux_stat_size_ok[(sizeof(bfree_linux_stat_t) == 144U) ? 1 : -1];
-
-typedef char bfree_linux_stat_size_ok[(sizeof(bfree_linux_stat_t) == 144U) ? 1 : -1];
-
 /* /tmp vfiles need distinct inodes: tar compares (st_dev, st_ino) of the
  * archive against each input file and skips "the archive itself" when every
  * vfile reports ino 1 (observed: "tar: b2f: file is the archive; skipping",
  * producing an empty archive). */
 static long bfree_linux_stat_fill_vfile(long statbuf, const bfree_guest_vfile_t *vf)
 {
-    uint32_t perm = vf->mode & 07777U;
     uint32_t mode;
     int64_t size;
     long ret;
 
-    if (perm == 0U) {
-        perm = vf->is_dir ? 0755U : 0644U;
-    }
     if (vf->is_dir) {
-        mode = BFREE_LINUX_S_IFDIR | perm;
+        mode = BFREE_LINUX_S_IFDIR | 0755U;
         size = 4096;
     } else if (vf->is_symlink) {
         mode = BFREE_LINUX_S_IFLNK | 0777U;
         size = (int64_t)vf->len;
     } else {
-        mode = BFREE_LINUX_S_IFREG | perm;
+        mode = BFREE_LINUX_S_IFREG | 0644U;
         size = (int64_t)vf->len;
     }
     ret = bfree_linux_stat_fill(statbuf, mode, size);
     if (ret == 0) {
-        bfree_linux_stat_t *st = (bfree_linux_stat_t *)(uintptr_t)statbuf;
-
-        st->st_ino = 100ULL + (uint64_t)(vf - g_guest_vfiles);
-        st->st_nlink = (vf->nlink > 0) ? (uint64_t)vf->nlink : 1ULL;
-        st->st_uid = vf->uid;
-        st->st_gid = vf->gid;
+        ((bfree_linux_stat_t *)(uintptr_t)statbuf)->st_ino =
+            100ULL + (uint64_t)(vf - g_guest_vfiles);
     }
     return ret;
 }
@@ -5151,28 +3708,6 @@ static long bfree_linux_stat_for_path(const char *path, long statbuf)
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
             (int64_t)(sizeof(g_guest_etc_motd) - 1U));
     }
-    if (strcmp(path, "/etc/hosts") == 0) {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
-            (int64_t)(sizeof(g_guest_etc_hosts) - 1U));
-    }
-    if (strcmp(path, "/usr") == 0) {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
-    }
-    if (strcmp(path, "/usr/bin") == 0) {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
-    }
-    if (path[0] == '/' && path[1] == 'u' && path[2] == 's' && path[3] == 'r' &&
-        path[4] == '/' && path[5] == 'b' && path[6] == 'i' && path[7] == 'n' &&
-        path[8] == '/' && path[9] != '\0') {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
-    }
-    if (strcmp(path, "/var") == 0) {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
-    }
-    if (strcmp(path, "/etc/motd") == 0) {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
-            (int64_t)(sizeof(g_guest_etc_motd) - 1U));
-    }
     if (strcmp(path, "/usr") == 0) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
     }
@@ -5189,9 +3724,6 @@ static long bfree_linux_stat_for_path(const char *path, long statbuf)
     }
     if (strcmp(path, g_guest_busybox_exe_path) == 0) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 167424);
-    }
-    if (strcmp(path, g_guest_p8test_exe_path) == 0) {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 8192);
     }
     if (strcmp(path, "/tmp") == 0) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 01777U, 4096);
@@ -5270,59 +3802,97 @@ static long sys_linux_statx(long dfd, long path_ptr, long flags, long mask, long
     return 0;
 }
 
-#define BFREE_LINUX_S_IFDIR 0040000U
-#define BFREE_LINUX_S_IFCHR 0020000U
-#define BFREE_LINUX_S_IFREG 0100000U
-
-
-static int bfree_linux_path_is_dot_or_slash(const char *path)
-{
-    if (!path) {
-        return 0;
-    }
-    if (path[0] == '/' && path[1] == '\0') {
-        return 1;
-    }
-    if (path[0] == '.' && path[1] == '\0') {
-        return 1;
-    }
-    if (path[0] == '.' && path[1] == '/' && path[2] == '\0') {
-        return 1;
-    }
-    return 0;
-}
-
-
-
 static long sys_linux_stat(long path_ptr, long statbuf)
 {
     char path[256];
-    long rc;
 
     if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
         return -14;
     }
-    uart_puts("[STAT] ");
-    uart_puts(path);
-    uart_puts("\n");
-    rc = bfree_linux_stat_for_path(path, statbuf);
-    uart_puts("[STAT] rc=");
-    uart_puthex64((uint64_t)(int64_t)rc);
-    uart_puts("\n");
-    return rc;
+    bfree_guest_path_absolutize(path, sizeof(path));
+    return bfree_linux_stat_for_path(path, statbuf);
 }
 
 static long sys_linux_fstat(long fd, long statbuf)
 {
     bfree_guest_vfile_t *vf;
+    int target;
 
     fd = bfree_guest_fd_resolve((int)fd);
-    vf = bfree_guest_vfile_from_fd((int)fd);
+    vf = bfree_guest_vfile_from_open_fd((int)fd, 0);
     if (vf) {
         return bfree_linux_stat_fill_vfile(statbuf, vf);
     }
-    if (fd == (long)BFREE_GUEST_ROOT_DIR_FD || fd == (long)BFREE_GUEST_TMP_DIR_FD) {
+    target = bfree_guest_open_target((int)fd, 0);
+    if (target == (int)BFREE_GUEST_ROOT_DIR_FD || target == (int)BFREE_GUEST_TMP_DIR_FD ||
+        target == (int)BFREE_GUEST_BIN_DIR_FD || target == (int)BFREE_GUEST_USR_DIR_FD ||
+        target == (int)BFREE_GUEST_VAR_DIR_FD || target == (int)BFREE_GUEST_PROC_DIR_FD ||
+        target == (int)BFREE_GUEST_PROC_PID_DIR_FD) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+    }
+    fd = (long)target;
+    if (fd == (long)BFREE_GUEST_BUSYBOX_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+    }
+    if (fd == (long)BFREE_GUEST_PASSWD_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+            (int64_t)(sizeof(g_guest_etc_passwd) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_GROUP_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+            (int64_t)(sizeof(g_guest_etc_group) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROFILE_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+            (int64_t)(sizeof(g_guest_etc_profile) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_MOTD_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+            (int64_t)(sizeof(g_guest_etc_motd) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_MAPS_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)bfree_guest_cstr_len(g_guest_proc_maps));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_PIDSTAT_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_pid_stat) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_CMDLINE_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_cmdline) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_STATUS_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_status) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_MEMINFO_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_meminfo) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_UPTIME_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_uptime_file) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_LOADAVG_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_loadavg) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_CPUSTAT_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_cpustat) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_MOUNTS_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_mounts) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_PID2STAT_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_pid2_stat) - 1U));
+    }
+    if (fd == (long)BFREE_GUEST_PROC_PID2CMDLINE_FD) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+            (int64_t)(sizeof(g_guest_proc_pid2_cmdline) - 1U));
     }
     if (fd >= 0 && fd <= 2) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFCHR | 0666U, 0);
@@ -5376,8 +3946,7 @@ static long sys_linux_newfstatat(long dirfd, long path_ptr, long statbuf, long f
 static long sys_linux_getdents64(long fd, long dirp, long count)
 {
     static const char *const k_root_names[] = {
-        ".", "..", "bin", "dev", "etc", "proc", "root", "tmp", "usr", "var",
-        "busybox.elf", "p8test.elf"
+        ".", "..", "bin", "dev", "etc", "proc", "root", "tmp", "usr", "var", "busybox.elf"
     };
     static const char *const k_bin_names[] = {
         ".", "..", "sh", "busybox", "echo", "cat", "ls", "grep", "mkdir", "rm", "cp", "mv"
@@ -5386,9 +3955,6 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
         ".", "..", "bin"
     };
     static const char *const k_var_names[] = {
-        ".", ".."
-    };
-            static const char *const k_home_names[] = {
         ".", ".."
     };
     static const char *const k_proc_names[] = {
@@ -5464,13 +4030,6 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
         }
         name = k_var_names[dir_idx];
         dtype = (unsigned char)((strcmp(name, ".") == 0 || strcmp(name, "..") == 0) ? 4U : 8U);
-    } else if (target == (int)BFREE_GUEST_HOME_DIR_FD) {
-        name_count = (unsigned)(sizeof(k_home_names) / sizeof(k_home_names[0]));
-        if (dir_idx >= name_count) {
-            return 0;
-        }
-        name = k_home_names[dir_idx];
-        dtype = (unsigned char)((strcmp(name, ".") == 0 || strcmp(name, "..") == 0) ? 4U : 8U);
     } else if (target == (int)BFREE_GUEST_PROC_DIR_FD) {
         name_count = (unsigned)(sizeof(k_proc_names) / sizeof(k_proc_names[0]));
         if (dir_idx >= name_count) {
@@ -5503,15 +4062,7 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
         name_count = 2U;
         for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
             if (g_guest_vfiles[i].used &&
-                g_guest_vfiles[i].name[0] != '\0' &&
                 bfree_guest_tmp_child_basename(g_guest_vfiles[i].name, tmp_parent,
-                    tmp_child, sizeof(tmp_child))) {
-                ++name_count;
-            }
-        }
-        for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
-            if (g_guest_aliases[i].used &&
-                bfree_guest_tmp_child_basename(g_guest_aliases[i].name, tmp_parent,
                     tmp_child, sizeof(tmp_child))) {
                 ++name_count;
             }
@@ -5528,12 +4079,11 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
         } else {
             unsigned want = dir_idx - 2U;
             unsigned seen = 0;
-            int vidx = -1;
 
             name = 0;
             dtype = 8U;
             for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
-                if (!g_guest_vfiles[i].used || g_guest_vfiles[i].name[0] == '\0') {
+                if (!g_guest_vfiles[i].used) {
                     continue;
                 }
                 if (!bfree_guest_tmp_child_basename(g_guest_vfiles[i].name, tmp_parent,
@@ -5542,37 +4092,19 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
                 }
                 if (seen == want) {
                     name = tmp_child;
-                    vidx = (int)i;
+                    if (g_guest_vfiles[i].is_dir) {
+                        dtype = 4U;
+                    } else if (g_guest_vfiles[i].is_symlink) {
+                        dtype = 10U;
+                    } else {
+                        dtype = 8U;
+                    }
                     break;
                 }
                 ++seen;
             }
             if (!name) {
-                for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
-                    if (!g_guest_aliases[i].used) {
-                        continue;
-                    }
-                    if (!bfree_guest_tmp_child_basename(g_guest_aliases[i].name, tmp_parent,
-                            tmp_child, sizeof(tmp_child))) {
-                        continue;
-                    }
-                    if (seen == want) {
-                        name = tmp_child;
-                        vidx = g_guest_aliases[i].vnode;
-                        break;
-                    }
-                    ++seen;
-                }
-            }
-            if (!name || vidx < 0 || vidx >= BFREE_GUEST_VFILE_SLOTS) {
                 return 0;
-            }
-            if (g_guest_vfiles[vidx].is_dir) {
-                dtype = 4U;
-            } else if (g_guest_vfiles[vidx].is_symlink) {
-                dtype = 10U;
-            } else {
-                dtype = 8U;
             }
         }
     } else {
@@ -5707,12 +4239,6 @@ static long sys_linux_lseek(long fd, long offset, long whence)
     } else if (fd == (long)BFREE_GUEST_MOTD_FD) {
         offp = &g_guest_etc_motd_off;
         total = sizeof(g_guest_etc_motd) - 1U;
-    } else if (fd == (long)BFREE_GUEST_HOSTS_FD) {
-        offp = &g_guest_etc_hosts_off;
-        total = sizeof(g_guest_etc_hosts) - 1U;
-    } else if (fd == (long)BFREE_GUEST_RESOLV_FD) {
-        offp = &g_guest_etc_resolv_off;
-        total = sizeof(g_guest_etc_resolv) - 1U;
     } else if (fd == (long)BFREE_GUEST_PROC_MAPS_FD) {
         offp = &g_guest_proc_maps_off;
         total = bfree_guest_cstr_len(g_guest_proc_maps);
@@ -5778,6 +4304,7 @@ static long sys_linux_mkdir(long dirfd, long path_ptr, long mode)
     bfree_guest_vfile_t *vf;
     long path_err;
 
+    (void)mode;
     if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
         return -14;
     }
@@ -5808,12 +4335,6 @@ static long sys_linux_mkdir(long dirfd, long path_ptr, long mode)
     }
     vf->is_dir = 1;
     vf->is_symlink = 0;
-    vf->mode = ((uint32_t)mode & 07777U) & ~g_guest_umask;
-    if (vf->mode == 0U) {
-        vf->mode = 0755U & ~g_guest_umask;
-    }
-    vf->uid = g_guest_euid;
-    vf->gid = g_guest_egid;
     vf->len = 0;
     vf->pos = 0;
     return 0;
@@ -5863,6 +4384,7 @@ static long sys_linux_unlink(long dirfd, long path_ptr)
 {
     char path[256];
     char vname[64];
+    bfree_guest_vfile_t *vf;
     long path_err;
 
     if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
@@ -5875,7 +4397,21 @@ static long sys_linux_unlink(long dirfd, long path_ptr)
     if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) || vname[0] == '\0') {
         return -30;
     }
-    return bfree_guest_vfile_unlink_name(vname);
+    vf = bfree_guest_vfile_find_by_name(vname);
+    if (!vf) {
+        return -2;
+    }
+    if (vf->is_dir) {
+        return -21; /* EISDIR */
+    }
+    /* Drop from the namespace immediately; keep storage while OFDs remain. */
+    vf->name[0] = '\0';
+    if (vf->open_refs > 0) {
+        vf->orphaned = 1;
+        return 0;
+    }
+    bfree_guest_vfile_clear_slot(vf);
+    return 0;
 }
 
 static int bfree_guest_tmp_rename_descendants(const char *oldname, const char *newname)
@@ -5892,7 +4428,7 @@ static int bfree_guest_tmp_rename_descendants(const char *oldname, const char *n
         size_t restn;
         size_t j;
 
-        if (!g_guest_vfiles[i].used || g_guest_vfiles[i].name[0] == '\0') {
+        if (!g_guest_vfiles[i].used) {
             continue;
         }
         if (strncmp(g_guest_vfiles[i].name, oldname, oldn) != 0 ||
@@ -5911,43 +4447,8 @@ static int bfree_guest_tmp_rename_descendants(const char *oldname, const char *n
             rebuilt[newn + j] = rest[j];
         }
         rebuilt[newn + restn] = '\0';
-        for (j = 0; j < sizeof(g_guest_vfiles[i].name); ++j) {
+        for (j = 0; j <= newn + restn; ++j) {
             g_guest_vfiles[i].name[j] = rebuilt[j];
-            if (rebuilt[j] == '\0') {
-                break;
-            }
-        }
-    }
-    for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
-        char rebuilt[48];
-        const char *rest;
-        size_t restn;
-        size_t j;
-
-        if (!g_guest_aliases[i].used) {
-            continue;
-        }
-        if (strncmp(g_guest_aliases[i].name, oldname, oldn) != 0 ||
-            g_guest_aliases[i].name[oldn] != '/') {
-            continue;
-        }
-        rest = g_guest_aliases[i].name + oldn;
-        restn = strlen(rest);
-        if (newn + restn + 1U > sizeof(rebuilt)) {
-            return -36;
-        }
-        for (j = 0; j < newn; ++j) {
-            rebuilt[j] = newname[j];
-        }
-        for (j = 0; j < restn; ++j) {
-            rebuilt[newn + j] = rest[j];
-        }
-        rebuilt[newn + restn] = '\0';
-        for (j = 0; j < sizeof(g_guest_aliases[i].name); ++j) {
-            g_guest_aliases[i].name[j] = rebuilt[j];
-            if (rebuilt[j] == '\0') {
-                break;
-            }
         }
     }
     return 0;
@@ -5996,18 +4497,12 @@ static long sys_linux_rename(long olddirfd, long old_ptr, long newdirfd, long ne
             if (bfree_guest_tmp_has_children(newname)) {
                 return -39; /* ENOTEMPTY */
             }
+        }
+        if (dst->open_refs > 0) {
             dst->name[0] = '\0';
-            dst->nlink = 0;
-            if (dst->open_refs > 0) {
-                dst->orphaned = 1;
-            } else {
-                bfree_guest_vfile_clear_slot(dst);
-            }
+            dst->orphaned = 1;
         } else {
-            rc = (int)bfree_guest_vfile_unlink_name(newname);
-            if (rc < 0) {
-                return rc;
-            }
+            bfree_guest_vfile_clear_slot(dst);
         }
     }
     if (src->is_dir) {
@@ -6016,30 +4511,12 @@ static long sys_linux_rename(long olddirfd, long old_ptr, long newdirfd, long ne
             return rc;
         }
     }
-    if (strcmp(src->name, oldname) == 0) {
-        n = 0;
-        while (newname[n] != '\0' && n + 1U < sizeof(src->name)) {
-            src->name[n] = newname[n];
-            ++n;
-        }
-        src->name[n] = '\0';
-    } else {
-        int i;
-
-        for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
-            if (g_guest_aliases[i].used &&
-                strcmp(g_guest_aliases[i].name, oldname) == 0) {
-                n = 0;
-                while (newname[n] != '\0' &&
-                       n + 1U < sizeof(g_guest_aliases[i].name)) {
-                    g_guest_aliases[i].name[n] = newname[n];
-                    ++n;
-                }
-                g_guest_aliases[i].name[n] = '\0';
-                break;
-            }
-        }
+    n = 0;
+    while (newname[n] != '\0' && n + 1U < sizeof(src->name)) {
+        src->name[n] = newname[n];
+        ++n;
     }
+    src->name[n] = '\0';
     return 0;
 }
 
@@ -6084,402 +4561,7 @@ static long sys_linux_symlink(long target_ptr, long newdirfd, long linkpath_ptr)
     vf->data[n] = '\0';
     vf->len = n;
     vf->is_symlink = 1;
-    vf->mode = 0777U;
     return 0;
-}
-
-static long sys_linux_umask(long mask)
-{
-    uint32_t old = g_guest_umask;
-
-    g_guest_umask = (uint32_t)mask & 0777U;
-    return (long)old;
-}
-
-static long sys_linux_chmod(long dirfd, long path_ptr, long mode)
-{
-    char path[256];
-    char vname[64];
-    bfree_guest_vfile_t *vf;
-    long path_err;
-
-    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
-        return -14;
-    }
-    path_err = bfree_guest_path_at(dirfd, path, sizeof(path));
-    if (path_err != 0) {
-        return path_err;
-    }
-    if (strcmp(path, "/tmp") == 0 || bfree_linux_path_is_dot_or_slash(path) ||
-        strcmp(path, "/bin") == 0 || strcmp(path, "/usr") == 0 ||
-        strcmp(path, "/var") == 0 || strcmp(path, "/etc") == 0 ||
-        strcmp(path, "/root") == 0 ||
-        (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v')) {
-        return 0; /* pretend success on read-only namespace roots */
-    }
-    if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) ||
-        vname[0] == '\0') {
-        return -30; /* EROFS */
-    }
-    vf = bfree_guest_vfile_find_by_name(vname);
-    if (!vf) {
-        return -2;
-    }
-    vf->mode = (uint32_t)mode & 07777U;
-    return 0;
-}
-
-static long sys_linux_fchmod(long fd, long mode)
-{
-    bfree_guest_ofd_t *ofd = 0;
-    bfree_guest_vfile_t *vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
-
-    (void)ofd;
-    if (!vf) {
-        /* Known non-vfile fds: accept like the old stub. */
-        if (bfree_guest_fd_resolve((int)fd) >= 0) {
-            return 0;
-        }
-        return -9; /* EBADF */
-    }
-    vf->mode = (uint32_t)mode & 07777U;
-    return 0;
-}
-
-static long bfree_guest_vfile_chown(bfree_guest_vfile_t *vf, long uid, long gid)
-{
-    if (!vf) {
-        return -2;
-    }
-    /* Non-root may only chown files they own, and only to their own uid. */
-    if (g_guest_euid != 0U) {
-        if (vf->uid != g_guest_euid) {
-            return -1; /* EPERM */
-        }
-        if (uid != (long)-1 && (uint32_t)uid != g_guest_euid) {
-            return -1;
-        }
-    }
-    if (uid != (long)-1) {
-        vf->uid = (uint32_t)uid;
-    }
-    if (gid != (long)-1) {
-        vf->gid = (uint32_t)gid;
-    }
-    return 0;
-}
-
-static long sys_linux_chown(long dirfd, long path_ptr, long uid, long gid)
-{
-    char path[256];
-    char vname[64];
-    bfree_guest_vfile_t *vf;
-    long path_err;
-
-    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
-        return -14;
-    }
-    path_err = bfree_guest_path_at(dirfd, path, sizeof(path));
-    if (path_err != 0) {
-        return path_err;
-    }
-    if (strcmp(path, "/tmp") == 0 || bfree_linux_path_is_dot_or_slash(path) ||
-        (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v')) {
-        return 0;
-    }
-    if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) ||
-        vname[0] == '\0') {
-        return -30; /* EROFS */
-    }
-    vf = bfree_guest_vfile_find_by_name(vname);
-    if (!vf) {
-        return -2;
-    }
-    return bfree_guest_vfile_chown(vf, uid, gid);
-}
-
-/* POSIX shm_open/shm_unlink: vfile under synthetic name shm/<name>. */
-
-static long sys_linux_fchown(long fd, long uid, long gid)
-{
-    bfree_guest_ofd_t *ofd = 0;
-    bfree_guest_vfile_t *vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
-
-    (void)ofd;
-    if (!vf) {
-        if (bfree_guest_fd_resolve((int)fd) >= 0) {
-            return 0;
-        }
-        return -9;
-    }
-    return bfree_guest_vfile_chown(vf, uid, gid);
-}
-
-/* POSIX shm_open/shm_unlink: vfile under synthetic name shm/<name>. */
-static long bfree_guest_shm_open(long name_ptr, long oflag, long mode)
-{
-    char name[48];
-    char vname[64];
-    const char *p;
-    size_t n = 0;
-    int want_create;
-    int want_excl;
-    int truncate;
-    int accmode;
-    bfree_guest_vfile_t *vf;
-    int target;
-    long path_err;
-
-    if (copy_user_cstr(name_ptr, name, sizeof(name)) != 0) {
-        return -14;
-    }
-    p = name;
-    if (p[0] == '/') {
-        ++p;
-    }
-    if (p[0] == '\0') {
-        return -22;
-    }
-    vname[0] = 's';
-    vname[1] = 'h';
-    vname[2] = 'm';
-    vname[3] = '/';
-    while (p[n] != '\0' && n + 5U < sizeof(vname)) {
-        vname[4 + n] = p[n];
-        ++n;
-    }
-    if (p[n] != '\0') {
-        return -36; /* ENAMETOOLONG */
-    }
-    vname[4 + n] = '\0';
-
-    want_create = ((unsigned long)oflag & (unsigned long)BFREE_LINUX_O_CREAT) != 0UL;
-    want_excl = ((unsigned long)oflag & 0200UL) != 0UL; /* O_EXCL */
-    truncate = ((unsigned long)oflag & (unsigned long)BFREE_LINUX_O_TRUNC) != 0UL;
-    accmode = (int)((unsigned long)oflag & (unsigned long)BFREE_LINUX_O_ACCMODE);
-
-    vf = bfree_guest_vfile_find_by_name(vname);
-    if (vf && want_create && want_excl) {
-        return -17; /* EEXIST */
-    }
-    if (!vf && !want_create) {
-        return -2;
-    }
-    if (!vf) {
-        bfree_guest_vfile_t *dir = bfree_guest_vfile_find_by_name("shm");
-        if (!dir) {
-            int dfd = bfree_guest_vfile_alloc_slot("shm", 1);
-            if (dfd < 0) {
-                return dfd;
-            }
-            dir = bfree_guest_vfile_from_fd(dfd);
-            if (dir) {
-                dir->is_dir = 1;
-                dir->mode = 0755U;
-                dir->uid = g_guest_euid;
-                dir->gid = g_guest_egid;
-            }
-        }
-        target = bfree_guest_vfile_alloc_slot(vname, 1);
-        if (target < 0) {
-            return target;
-        }
-        vf = bfree_guest_vfile_from_fd(target);
-        if (!vf) {
-            return -5;
-        }
-        vf->mode = ((uint32_t)mode & 07777U) & ~g_guest_umask;
-        if (vf->mode == 0U) {
-            vf->mode = 0600U;
-        }
-        vf->uid = g_guest_euid;
-        vf->gid = g_guest_egid;
-    } else {
-        target = (int)BFREE_GUEST_VFILE_FD_BASE + (int)(vf - g_guest_vfiles);
-        if (truncate) {
-            vf->len = 0;
-            vf->pos = 0;
-        }
-        path_err = bfree_guest_vfile_check_access(vf,
-            (accmode == 0) ? 4 : ((accmode == 1) ? 2 : 6));
-        if (path_err < 0) {
-            return path_err;
-        }
-    }
-    return bfree_guest_vfile_publish_open(target, (int)oflag, 0);
-}
-
-static long bfree_guest_shm_unlink(long name_ptr)
-{
-    char name[48];
-    char vname[64];
-    const char *p;
-    size_t n = 0;
-    bfree_guest_vfile_t *vf;
-
-    if (copy_user_cstr(name_ptr, name, sizeof(name)) != 0) {
-        return -14;
-    }
-    p = name;
-    if (p[0] == '/') {
-        ++p;
-    }
-    if (p[0] == '\0') {
-        return -22;
-    }
-    vname[0] = 's';
-    vname[1] = 'h';
-    vname[2] = 'm';
-    vname[3] = '/';
-    while (p[n] != '\0' && n + 5U < sizeof(vname)) {
-        vname[4 + n] = p[n];
-        ++n;
-    }
-    if (p[n] != '\0') {
-        return -36;
-    }
-    vname[4 + n] = '\0';
-    vf = bfree_guest_vfile_find_by_name(vname);
-    if (!vf) {
-        return -2;
-    }
-    if (g_guest_euid != 0U && vf->uid != g_guest_euid) {
-        return -1; /* EPERM */
-    }
-    return bfree_guest_vfile_unlink_name(vname);
-}
-
-static long sys_linux_mremap(long old_addr, long old_size, long new_size, long flags, long new_addr)
-{
-    (void)old_addr;
-    (void)old_size;
-    (void)new_size;
-    (void)flags;
-    (void)new_addr;
-    /* Intentional stub: consistent EINVAL (not ENOSYS) so musl realloc falls back. */
-    return -22;
-}
-
-static long sys_linux_rt_sigsuspend(long mask_ptr, long sigsetsize)
-{
-    uint64_t old_mask;
-    uint64_t new_mask;
-
-    (void)sigsetsize;
-    if (mask_ptr == 0 || !bfree_user_ptr_mapped(mask_ptr)) {
-        return -14;
-    }
-    new_mask = *(uint64_t *)(uintptr_t)mask_ptr;
-    new_mask &= ~((1ULL << 8) | (1ULL << 18)); /* never block KILL/STOP */
-    old_mask = g_guest_sig_mask;
-    g_guest_sig_mask = new_mask;
-    for (;;) {
-        bfree_guest_alarm_poll();
-        {
-            int er = bfree_guest_sig_take_eintr();
-            if (er < 0) {
-                g_guest_sig_mask = old_mask;
-                return er;
-            }
-        }
-        __asm__ volatile("sti; hlt" ::: "memory");
-    }
-}
-
-static long sys_linux_sigaltstack(long uss, long uoss)
-{
-    /* Soft success: alternate stacks are not used by the guest delivery path. */
-    (void)uss;
-    (void)uoss;
-    return 0;
-}
-
-/* Hard link under /tmp: shared vnode (alias name + nlink). */
-static long sys_linux_link(long olddirfd, long oldpath_ptr, long newdirfd, long newpath_ptr)
-{
-    char oldp[256];
-    char newp[256];
-    char oname[64];
-    char nname[64];
-    bfree_guest_vfile_t *src;
-    int vidx;
-    int rc;
-    long path_err;
-
-    if (copy_user_cstr(oldpath_ptr, oldp, sizeof(oldp)) != 0 ||
-        copy_user_cstr(newpath_ptr, newp, sizeof(newp)) != 0) {
-        return -14;
-    }
-    path_err = bfree_guest_path_at(olddirfd, oldp, sizeof(oldp));
-    if (path_err != 0) {
-        return path_err;
-    }
-    path_err = bfree_guest_path_at(newdirfd, newp, sizeof(newp));
-    if (path_err != 0) {
-        return path_err;
-    }
-    if (!bfree_guest_path_is_under_tmp(oldp, oname, sizeof(oname)) ||
-        oname[0] == '\0' ||
-        !bfree_guest_path_is_under_tmp(newp, nname, sizeof(nname)) ||
-        nname[0] == '\0') {
-        return -30; /* EROFS */
-    }
-    src = bfree_guest_vfile_find_by_name(oname);
-    if (!src) {
-        return -2;
-    }
-    if (src->is_dir) {
-        return -1; /* EPERM: hardlink directories not allowed */
-    }
-    if (bfree_guest_vfile_find_by_name(nname)) {
-        return -17; /* EEXIST */
-    }
-    if (!bfree_guest_tmp_parents_exist(nname)) {
-        return -2;
-    }
-    vidx = (int)(src - g_guest_vfiles);
-    rc = bfree_guest_alias_add(nname, vidx);
-    if (rc < 0) {
-        return rc;
-    }
-    src->nlink++;
-    return 0;
-}
-
-static long sys_linux_faccessat(long dirfd, long path_ptr, long mode, long flags)
-{
-    char path[256];
-    char vname[64];
-    bfree_guest_vfile_t *vf;
-    long path_err;
-
-    (void)flags;
-    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
-        return -14;
-    }
-    path_err = bfree_guest_path_at(dirfd, path, sizeof(path));
-    if (path_err != 0) {
-        return path_err;
-    }
-    if (bfree_linux_path_is_dot_or_slash(path) || strcmp(path, "/tmp") == 0 ||
-        strcmp(path, "/bin") == 0 || strncmp(path, "/bin/", 5) == 0 ||
-        strcmp(path, "/usr") == 0 || strncmp(path, "/usr/", 4) == 0 ||
-        strcmp(path, "/var") == 0 || strncmp(path, "/var/", 4) == 0 ||
-        strcmp(path, "/etc") == 0 || strncmp(path, "/etc/", 5) == 0 ||
-        strcmp(path, "/root") == 0 ||
-        (path[0] == '/' && path[1] == 'd' && path[2] == 'e' && path[3] == 'v') ||
-        (path[0] == '/' && path[1] == 'p' && path[2] == 'r' && path[3] == 'o' &&
-         path[4] == 'c')) {
-        return 0;
-    }
-    if (bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) && vname[0] != '\0') {
-        vf = bfree_guest_vfile_find_by_name(vname);
-        if (vf) {
-            return bfree_guest_vfile_check_access(vf, mode);
-        }
-        return -2;
-    }
-    return -2;
 }
 
 // case 30: sys_clock_getres
@@ -6633,25 +4715,11 @@ long sys_sched_yield(void)
 // ファイルディスクリプタが端末かどうかを判定
 long sys_isatty(long fd)
 {
-    int resolved;
-
+    // fd 0, 1, 2 は端末（シリアルコンソール）とみなす
     if (fd >= 0 && fd <= 2) {
-        return 1;
+        return 1; // 端末
     }
-    resolved = bfree_guest_fd_resolve((int)fd);
-    if (resolved == (int)BFREE_GUEST_DEV_TTY_FD) {
-        return 1;
-    }
-    {
-        bfree_guest_ofd_t *ofd = bfree_guest_ofd_from_fd(resolved);
-        if (ofd && ofd->target == (int)BFREE_GUEST_DEV_TTY_FD) {
-            return 1;
-        }
-    }
-    if (bfree_pty_slot_from_fd(resolved) >= 0) {
-        return 1;
-    }
-    return 0;
+    return 0; // 端末ではない
 }
 
 // case 39: sys_tcgetattr
@@ -6886,41 +4954,10 @@ static long bfree_stdin_read_user(long buf, long count)
         uint8_t ch;
 
         while (!bfree_stdin_byte_ready()) {
-            /* Background AS-copy child parked: run it while shell blocks on tty. */
-            if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {
-                return bfree_coop_yield_to_child();
-            }
-            /* B-Free: stdin EINTR */
-            bfree_guest_alarm_poll();
-            {
-                int er = bfree_guest_sig_take_eintr();
-                if (er < 0) {
-                    return got > 0 ? got : er;
-                }
-            }
             __asm__ volatile("sti; hlt" ::: "memory");
         }
         if (!bfree_stdin_pop_byte(&ch)) {
             break;
-        }
-        /* ISIG: VINTR (typically Ctrl+C) → SIGINT, do not inject into the line. */
-        if ((lflag & BFREE_ISIG) != 0U &&
-            g_guest_tty_termios.c_cc[BFREE_VINTR] != 0 &&
-            ch == g_guest_tty_termios.c_cc[BFREE_VINTR]) {
-            /* H05: DFL SIGINT terminates the coop child (WIFSIGNALED), not EINTR. */
-            if (g_guest_fork_active &&
-                g_guest_sig_disp[2] == BFREE_SIG_DFL) {
-                bfree_guest_fork_child_pipe_close_writers();
-                return bfree_guest_exit_from_fork_signal(2);
-            }
-            bfree_guest_sig_raise(2);
-            {
-                int er = bfree_guest_sig_take_eintr();
-                if (er < 0) {
-                    return got > 0 ? got : er;
-                }
-            }
-            continue;
         }
         if (ch == '\r') {
             ch = '\n';
@@ -7253,8 +5290,7 @@ long sys_get_tk2_snapshot(long out_ptr, long out_size)
 
     memset(out, 0, sizeof(*out));
     out->abi_version = 1U;
-    /* flags: initrd presence bitmask (see BFREE_INITRD_PRES_* in bfree_epoll.h). */
-    out->flags = initrd_presence_mask();
+    out->flags = 0U;
     out->tick_us = knl_get_current_time();
     out->task_count = 2U;      /* Stage1 test tasks (A/B) */
     out->semaphore_count = 1U; /* mutex path validated */
@@ -7327,18 +5363,7 @@ static int validate_initrd_basename(const char *s)
 #define BFREE_USER_STACK_TOP_DEFAULT 0x01400000ULL
 /* Qt desktop.elf: __init_tls + static ctors; 6144 pages overflows (top too low) — use full span below FB. */
 #define BFREE_USER_STACK_PAGES_EXEC 4608
-#define BFREE_USER_STACK_PAGES_BUSYBOX 128
 #define BFREE_USER_STACK_PAGES_BUSYBOX 512
-
-/* Real user stack page: User|RW|Present and not identity VA==PA (clone artifact). */
-
-/* Stack must stay above cloned kernel identity text in the task PT (syscall runs on user CR3).
- * 2048 pages (~8 MiB) from 0x01400000 → floor 0x00C00000 (12 MiB). */
-#define BFREE_USER_STACK_MIN_VADDR   0x00C00000ULL
-#define BFREE_USER_STACK_TOP_DEFAULT 0x01400000ULL
-/* Qt desktop.elf needs deep stack (QGuiApplication #PF CR2~0x403000 with 1024 pages / 4 MiB).
- * 2048 pages (~8 MiB): exec_initrd may pause tens of seconds while mapping — not a hang. */
-#define BFREE_USER_STACK_PAGES_EXEC 2048
 
 /* Real user stack page: User|RW|Present and not identity VA==PA (clone artifact). */
 static int bfree_user_stack_page_user_mapped(page_table_t *pt, uint64_t vaddr)
@@ -7669,7 +5694,7 @@ static int bfree_user_exec_prepare_musl_stack(uint64_t stack_top, const char *pa
         "PATH=/bin:/usr/bin:.",
         "SHELL=/bin/sh",
         "TERM=linux",
-        "PS1=\nroot@bfree:# "
+        "PS1=root@bfree:# "
     };
     const char *const *argv = 0;
     const char *const *envp = 0;
@@ -7901,135 +5926,96 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     if (bfree_copy_user_strarray(argv_ptr, argv_buf, 16, &argc) != 0 || argc <= 0) {
         return -14;
     }
-    {
-        int is_p8 = (strcmp(path, g_guest_p8test_exe_path) == 0) ||
-                    (strcmp(path, "p8test.elf") == 0);
-        const char *elf_mod = is_p8 ? "p8test.elf" : "busybox.elf";
+    /* musl busybox expects argv[0]=/busybox.elf when re-entering from execve. */
+    if (argc + 1 <= 16) {
+        int j;
+        for (j = argc; j >= 1; --j) {
+            memcpy(argv_buf[j], argv_buf[j - 1], sizeof(argv_buf[j]));
+        }
+        memcpy(argv_buf[0], g_guest_busybox_exe_path, sizeof(argv_buf[0]));
+        argv_buf[0][sizeof(argv_buf[0]) - 1] = '\0';
+        ++argc;
+    }
+    for (i = 0; i < argc; ++i) {
+        argv_ptrs[i] = argv_buf[i];
+    }
+    if (envp_ptr != 0 &&
+        bfree_copy_user_strarray(envp_ptr, env_buf, 16, &envc) != 0) {
+        return -14;
+    }
+    if (envc <= 0) {
+        envc = 8;
+        for (i = 0; i < envc; ++i) {
+            env_ptrs[i] = k_default_env[i];
+        }
+    } else {
+        for (i = 0; i < envc; ++i) {
+            env_ptrs[i] = env_buf[i];
+        }
+    }
 
-        /* musl busybox expects argv[0]=/busybox.elf when re-entering from execve. */
-        if (!is_p8 && argc + 1 <= 16) {
-            int j;
-            for (j = argc; j >= 1; --j) {
-                memcpy(argv_buf[j], argv_buf[j - 1], sizeof(argv_buf[j]));
-            }
-            memcpy(argv_buf[0], g_guest_busybox_exe_path, sizeof(argv_buf[0]));
-            argv_buf[0][sizeof(argv_buf[0]) - 1] = '\0';
-            ++argc;
-        }
-        for (i = 0; i < argc; ++i) {
-            argv_ptrs[i] = argv_buf[i];
-        }
-        if (envp_ptr != 0 &&
-            bfree_copy_user_strarray(envp_ptr, env_buf, 16, &envc) != 0) {
-            return -14;
-        }
-        if (envc <= 0) {
-            envc = 8;
-            for (i = 0; i < envc; ++i) {
-                env_ptrs[i] = k_default_env[i];
-            }
-        } else {
-            for (i = 0; i < envc; ++i) {
-                env_ptrs[i] = env_buf[i];
-            }
-        }
+    if (!knl_current_task || !knl_current_task->page_table_base) {
+        return -1;
+    }
+    /* After vfork the task may already be on child_pt — prefer saved parent. */
+    parent_pt = bfree_process_parent_pt();
+    if (!parent_pt) {
+        parent_pt = (page_table_t *)knl_current_task->page_table_base;
+    }
 
-        if (!knl_current_task || !knl_current_task->page_table_base) {
-            return -1;
-        }
-        /* After vfork the task may already be on child_pt — prefer saved parent. */
-        parent_pt = bfree_process_parent_pt();
-        if (!parent_pt) {
-            parent_pt = (page_table_t *)knl_current_task->page_table_base;
-        }
+    /* Kernel-only bookkeeping is safe for both paths. */
+    g_guest_proc_maps_off = 0;
+    g_guest_proc_pid_stat_off = 0;
+    g_guest_proc_cmdline_off = 0;
+    g_guest_proc_meminfo_off = 0;
+    g_guest_proc_uptime_off = 0;
+    g_guest_proc_loadavg_off = 0;
+    g_guest_proc_cpustat_off = 0;
+    g_guest_proc_status_off = 0;
+    g_guest_proc_mounts_off = 0;
+    g_guest_proc_pid2_stat_off = 0;
+    g_guest_proc_pid2_cmdline_off = 0;
+    g_guest_etc_passwd_off = 0;
+    g_guest_etc_group_off = 0;
+    g_guest_etc_profile_off = 0;
+    g_guest_etc_motd_off = 0;
+    bfree_guest_proc_maps_select_busybox(1);
 
-        /* Kernel-only bookkeeping is safe for both paths. */
-        g_guest_proc_maps_off = 0;
-        g_guest_proc_pid_stat_off = 0;
-        g_guest_proc_cmdline_off = 0;
-        g_guest_proc_meminfo_off = 0;
-        g_guest_proc_uptime_off = 0;
-        g_guest_proc_loadavg_off = 0;
-        g_guest_proc_cpustat_off = 0;
-        g_guest_proc_status_off = 0;
-        g_guest_proc_mounts_off = 0;
-        g_guest_proc_pid2_stat_off = 0;
-        g_guest_proc_pid2_cmdline_off = 0;
-        g_guest_etc_passwd_off = 0;
-        g_guest_etc_group_off = 0;
-        g_guest_etc_profile_off = 0;
-        g_guest_etc_motd_off = 0;
-        g_guest_etc_hosts_off = 0;
-        bfree_guest_proc_maps_select_busybox(is_p8 ? 0 : 1);
-
-        if (is_child) {
-            if (bfree_process_exec_commit_as(&child_pt) != 0 || child_pt == 0) {
-                return -12; /* ENOMEM */
-            }
-            use_private_as = 1;
-            load_pt = child_pt;
-            ld = load_elf_image(elf_mod, &entry, load_pt);
-            if (ld != 0 || entry == 0) {
-                bfree_process_exit_restore_as();
+    if (is_child) {
+        /*
+         * Private AS for the new image: map ELF into child_pt while CR3 stays
+         * on the parent (intact stack). Do NOT call execve_reset_subsystems —
+         * that unmaps the parent heap. syscall_entry.S switches CR3 with RSP.
+         */
+        if (bfree_process_exec_commit_as(&child_pt) != 0 || child_pt == 0) {
+            return -12; /* ENOMEM */
+        }
+        use_private_as = 1;
+        load_pt = child_pt;
+        ld = load_elf_image("busybox.elf", &entry, load_pt);
+        if (ld != 0 || entry == 0) {
+            bfree_process_exit_restore_as();
+            return -2;
+        }
+        bfree_loaded_elf_info_get(&elf);
+        knl_current_task->page_table_base = child_pt;
+        bfree_guest_heap_reset();
+    } else {
+        /* Standalone: replace current image (no parent to preserve). */
+        bfree_guest_heap_reset();
+        timer_purge_all();
+        bfree_timerfd_purge_all();
+        bfree_guest_execve_reset_subsystems(1);
+        load_pt = parent_pt;
+        ld = load_elf_image("busybox.elf", &entry, load_pt);
+        if (ld != 0 || entry == 0) {
+            bfree_loaded_elf_info_get(&elf);
+            if (!elf.valid || elf.entry == 0) {
                 return -2;
             }
-            bfree_loaded_elf_info_get(&elf);
-            knl_current_task->page_table_base = child_pt;
-            /* Install child CR3 before stack poke/SYSRET (page_table_base alone
-             * is enough for phys poke, but live CR3 must match for any CR3-VA
-             * path and for a clean EXEC_TRANSFER). */
-            bfree_process_exec_activate_as();
-            bfree_guest_heap_reset();
-            if (g_bfree_elf_watch_phys != 0) {
-                uint8_t wchk[4];
-                bfree_kernel_phys_io_begin();
-                if (bfree_kernel_peek_phys(g_bfree_elf_watch_phys + 0xFA0ULL, wchk, 4ULL) == 0) {
-                    uart_puts("[ELF] post-load watch bytes=");
-                    uart_puthex64((uint64_t)wchk[0]);
-                    uart_puts(" ");
-                    uart_puthex64((uint64_t)wchk[1]);
-                    uart_puts(" ");
-                    uart_puthex64((uint64_t)wchk[2]);
-                    uart_puts(" ");
-                    uart_puthex64((uint64_t)wchk[3]);
-                    uart_puts("\n");
-                }
-                bfree_kernel_phys_io_end();
-            }
+            entry = (void *)(uintptr_t)elf.entry;
         } else {
-            bfree_guest_heap_reset();
-            timer_purge_all();
-            bfree_timerfd_purge_all();
-            if (is_p8) {
-                /* Standalone p8test from shell: clear stale coop/fork globals
-                 * (leftover from pipelines) but keep tty pgid/session. */
-                g_guest_fork_active = 0;
-                g_guest_fork_pid = 0;
-                g_guest_fork_status_ready = 0;
-                g_guest_fork_was_as_copy = 0;
-                g_coop_side = 0;
-                g_coop_child_blocked = 0;
-                g_coop_parent_started = 0;
-                g_coop_session = -1;
-                bfree_coop_sessions_init();
-                if (g_guest_tty_pgrp <= 0) {
-                    g_guest_tty_pgrp = g_guest_pgid > 0 ? g_guest_pgid : 1;
-                }
-                bfree_guest_execve_reset_subsystems(0);
-            } else {
-                bfree_guest_execve_reset_subsystems(1);
-            }
-            load_pt = parent_pt;
-            ld = load_elf_image(elf_mod, &entry, load_pt);
-            if (ld != 0 || entry == 0) {
-                bfree_loaded_elf_info_get(&elf);
-                if (!elf.valid || elf.entry == 0) {
-                    return -2;
-                }
-                entry = (void *)(uintptr_t)elf.entry;
-            } else {
-                bfree_loaded_elf_info_get(&elf);
-            }
+            bfree_loaded_elf_info_get(&elf);
         }
     }
 
@@ -8058,22 +6044,6 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
             }
             return -1;
         }
-        if (g_bfree_elf_watch_phys != 0) {
-            uint8_t wchk[4];
-            bfree_kernel_phys_io_begin();
-            if (bfree_kernel_peek_phys(g_bfree_elf_watch_phys + 0xFA0ULL, wchk, 4ULL) == 0) {
-                uart_puts("[ELF] post-stack watch bytes=");
-                uart_puthex64((uint64_t)wchk[0]);
-                uart_puts(" ");
-                uart_puthex64((uint64_t)wchk[1]);
-                uart_puts(" ");
-                uart_puthex64((uint64_t)wchk[2]);
-                uart_puts(" ");
-                uart_puthex64((uint64_t)wchk[3]);
-                uart_puts("\n");
-            }
-            bfree_kernel_phys_io_end();
-        }
         if (bfree_user_exec_prepare_musl_stack_argv(exec_stack_top, argc, argv_ptrs, envc,
                                                     env_ptrs, &elf, &user_rsp) != 0) {
             if (use_private_as) {
@@ -8081,22 +6051,6 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
                 bfree_process_exit_restore_as();
             }
             return -1;
-        }
-        if (g_bfree_elf_watch_phys != 0) {
-            uint8_t wchk[4];
-            bfree_kernel_phys_io_begin();
-            if (bfree_kernel_peek_phys(g_bfree_elf_watch_phys + 0xFA0ULL, wchk, 4ULL) == 0) {
-                uart_puts("[ELF] post-argv watch bytes=");
-                uart_puthex64((uint64_t)wchk[0]);
-                uart_puts(" ");
-                uart_puthex64((uint64_t)wchk[1]);
-                uart_puts(" ");
-                uart_puthex64((uint64_t)wchk[2]);
-                uart_puts(" ");
-                uart_puthex64((uint64_t)wchk[3]);
-                uart_puts("\n");
-            }
-            bfree_kernel_phys_io_end();
         }
     }
 
@@ -8107,37 +6061,10 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     }
     bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, 0);
     g_bfree_sysret_exec_rsp = user_rsp;
-    g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
-    g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
+    g_bfree_sysret_exec_rcx = (uint64_t)(uintptr_t)entry;
     g_bfree_sysret_exec_r11 = 0x202ULL;
     /* Child: switch CR3 with RSP in assembly. Standalone: already on task CR3. */
     g_bfree_sysret_exec_cr3 = use_private_as ? (uint64_t)(uintptr_t)child_pt : 0;
-    if (g_bfree_exec_transfer_rip == 0ULL) {
-        uart_puts("[ELF] FATAL: exec_transfer_rip=0\n");
-        if (use_private_as) {
-            knl_current_task->page_table_base = parent_pt;
-            bfree_process_exit_restore_as();
-        }
-        return -2;
-    }
-    if (g_bfree_elf_watch_phys != 0) {
-        uint8_t wchk[4];
-        bfree_kernel_phys_io_begin();
-        if (bfree_kernel_peek_phys(g_bfree_elf_watch_phys + 0xFA0ULL, wchk, 4ULL) == 0) {
-            uart_puts("[ELF] pre-transfer watch bytes=");
-            uart_puthex64((uint64_t)wchk[0]);
-            uart_puts(" ");
-            uart_puthex64((uint64_t)wchk[1]);
-            uart_puts(" ");
-            uart_puthex64((uint64_t)wchk[2]);
-            uart_puts(" ");
-            uart_puthex64((uint64_t)wchk[3]);
-            uart_puts(" phys=");
-            uart_puthex64(g_bfree_elf_watch_phys);
-            uart_puts("\n");
-        }
-        bfree_kernel_phys_io_end();
-    }
     return BFREE_SYSRET_EXEC_TRANSFER;
 }
 
@@ -8146,21 +6073,16 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
 
 static long sys_linux_clone(long flags, long newsp, long ptid, long ctid, long tls)
 {
-    unsigned long f = (unsigned long)flags;
-
     (void)newsp;
     (void)ptid;
     (void)ctid;
     (void)tls;
-    /* CLONE_VFORK: share AS (cooperative vfork). Else: eager AS-copy fork
-     * (same as SYS_fork). CLONE_VM without VFORK is rejected. */
-    if ((f & (unsigned long)BFREE_LINUX_CLONE_VFORK) != 0UL) {
-        return bfree_guest_fork_enter(0);
+    /* Only the cooperative vfork-like subset is supported. Real fork/threads
+     * need address-space copy and a scheduler. */
+    if (((unsigned long)flags & (unsigned long)BFREE_LINUX_CLONE_VFORK) != 0UL) {
+        return bfree_guest_fork_enter();
     }
-    if ((f & (unsigned long)BFREE_LINUX_CLONE_VM) != 0UL) {
-        return -22; /* EINVAL */
-    }
-    return bfree_guest_fork_enter(1);
+    return -38; /* ENOSYS */
 }
 
 static int bfree_user_exec_prepare_stack(uint64_t stack_top, void *entry, uint64_t *out_rsp)
@@ -8258,9 +6180,6 @@ long sys_exec_initrd(long user_path_ptr)
     /* Replace init User PT_LOAD at 0x400000 with identity (busybox is at 0x500000). */
     bfree_exec_unmap_init_legacy((page_table_t *)knl_current_task->page_table_base);
     ld = load_elf_image(g_bfree_exec_initrd_kpath, &entry, knl_current_task->page_table_base);
-    if (ld == 0) {
-        bfree_exec_unmap_init_legacy((page_table_t *)knl_current_task->page_table_base);
-    }
     if (ld != 0) {
         uart_puts("[SYSCALL] exec_initrd: load_elf_image failed code=");
         uart_puthex64((uint64_t)(int64_t)ld);
@@ -8294,13 +6213,6 @@ long sys_exec_initrd(long user_path_ptr)
         uart_puts("[SYSCALL] exec_initrd: stack ensure failed\n");
         return -1;
     }
-    if (bfree_user_stack_ensure_pages(stack_top,
-        bfree_guest_basename_eq(g_bfree_exec_initrd_kpath, "busybox.elf")
-            ? BFREE_USER_STACK_PAGES_BUSYBOX
-            : BFREE_USER_STACK_PAGES_EXEC) != 0) {
-        uart_puts("[SYSCALL] exec_initrd: stack ensure failed\n");
-        return -1;
-    }
     if (bfree_user_exec_prepare_stack(stack_top, entry, &user_rsp) != 0) {
         uart_puts("[SYSCALL] exec_initrd: prepare stack failed\n");
         return -1;
@@ -8316,8 +6228,7 @@ long sys_exec_initrd(long user_path_ptr)
     bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, 0);
 
     g_bfree_sysret_exec_rsp = user_rsp;
-    g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
-    g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
+    g_bfree_sysret_exec_rcx = (uint64_t)(uintptr_t)entry;
     g_bfree_sysret_exec_r11 = 0x202ULL;
     g_bfree_sysret_exec_cr3 = 0;
 
@@ -8334,7 +6245,6 @@ long sys_exec_initrd(long user_path_ptr)
     uart_puts(" rsp=");
     uart_puthex64(user_rsp);
     uart_puts("\n");
-    g_guest_sys_trace = 0;
 
     return BFREE_SYSRET_EXEC_TRANSFER;
 }
@@ -8450,7 +6360,55 @@ static int bfree_guest_pipe_readable(int fd)
     return ps != 0 && ps->len > 0;
 }
 
-/* bfree_guest_pipe_reclaim_dead_slots: defined with coop fd snaps below. */
+/* Pipe slots are never explicitly destroyed (refcounts just decay to 0 when a
+ * pipeline finishes), so reclaim dead slots here or pipelines exhaust them. */
+static void bfree_guest_pipe_reclaim_dead_slots(void)
+{
+    int i;
+    int t;
+
+    for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
+        int rd_refs = 0;
+        int wr_refs = 0;
+        int rd_magic;
+        int wr_magic;
+
+        if (!g_guest_pipes[i].used) {
+            continue;
+        }
+        rd_magic = bfree_guest_pipe_magic_fd(i, 0);
+        wr_magic = bfree_guest_pipe_magic_fd(i, 1);
+        /* Authoritative open counts from the shared fd table (vfork-safe). */
+        for (t = 0; t < BFREE_GUEST_FD_TABLE_SIZE; ++t) {
+            int tgt = g_guest_fd_target[t];
+            int saved = g_guest_fd_dup_save[t];
+
+            if (tgt == rd_magic || saved == rd_magic) {
+                rd_refs++;
+            }
+            if (tgt == wr_magic || saved == wr_magic) {
+                wr_refs++;
+            }
+        }
+        g_guest_pipes[i].rd_open = rd_refs;
+        g_guest_pipes[i].wr_open = wr_refs;
+        if (rd_refs > 0 || wr_refs > 0) {
+            continue;
+        }
+        /* No live fds: drop unread bytes (pipeline finished) and free slot. */
+        for (t = 0; t < BFREE_GUEST_FD_TABLE_SIZE; ++t) {
+            if (bfree_guest_pipe_slot_from_magic(g_guest_fd_target[t]) == i) {
+                g_guest_fd_target[t] = -1;
+            }
+            if (bfree_guest_pipe_slot_from_magic(g_guest_fd_dup_save[t]) == i) {
+                g_guest_fd_dup_save[t] = -1;
+            }
+        }
+        g_guest_pipes[i].used = 0;
+        g_guest_pipes[i].nonblock = 0;
+        g_guest_pipes[i].len = 0;
+    }
+}
 
 static long sys_linux_pipe2(long pipefd_ptr, long flags)
 {
@@ -8484,677 +6442,6 @@ static long sys_linux_pipe2(long pipefd_ptr, long flags)
     return -24;
 }
 
-#define BFREE_SYSRET_COOP_SWITCH ((long)-4092)
-#define BFREE_LINUX_AF_UNIX 1
-#define BFREE_UNIX_SLOTS 8
-#define BFREE_UNIX_FD_BASE 0x3900
-
-typedef struct {
-    int used;
-    int listening;
-    int connected;
-    int accept_rd;
-    int pipe_magic;
-    char path[96];
-} bfree_unix_sock_t;
-
-static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];
-static int g_fd_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];
-static int g_fd_snap_child[BFREE_GUEST_FD_TABLE_SIZE];
-static uint64_t g_coop_child_rcx, g_coop_child_r11, g_coop_child_rsp;
-static uint64_t g_coop_child_rbx, g_coop_child_rbp, g_coop_child_r12;
-static uint64_t g_coop_child_r13, g_coop_child_r14, g_coop_child_r15, g_coop_child_rdx;
-
-static void bfree_coop_fd_snap_init(void)
-{
-    int i;
-    bfree_guest_fd_ensure_init();
-    for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
-        g_fd_snap_parent[i] = g_guest_fd_target[i];
-        g_fd_snap_child[i] = g_guest_fd_target[i];
-    }
-    g_coop_side = 1;
-    g_coop_child_blocked = 0;
-    g_coop_parent_started = 0;
-}
-
-static void bfree_coop_fd_switch_to(int side)
-{
-    int i;
-    if (side == g_coop_side) {
-        return;
-    }
-    if (g_coop_side == 1) {
-        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
-            g_fd_snap_child[i] = g_guest_fd_target[i];
-        }
-        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
-            g_guest_fd_target[i] = g_fd_snap_parent[i];
-        }
-    } else {
-        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
-            g_fd_snap_parent[i] = g_guest_fd_target[i];
-        }
-        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
-            g_guest_fd_target[i] = g_fd_snap_child[i];
-        }
-    }
-    g_coop_side = side;
-}
-
-static void bfree_coop_save_child_user(void)
-{
-    g_coop_child_rcx = g_bfree_user_sysret_rcx;
-    g_coop_child_r11 = g_bfree_user_sysret_r11;
-    g_coop_child_rsp = g_bfree_user_sysret_rsp;
-    g_coop_child_rbx = g_bfree_user_sysret_rbx;
-    g_coop_child_rbp = g_bfree_user_sysret_rbp;
-    g_coop_child_r12 = g_bfree_user_sysret_r12;
-    g_coop_child_r13 = g_bfree_user_sysret_r13;
-    g_coop_child_r14 = g_bfree_user_sysret_r14;
-    g_coop_child_r15 = g_bfree_user_sysret_r15;
-    g_coop_child_rdx = g_bfree_user_sysret_rdx;
-}
-
-/* H02: AS-copy coop must flip CR3 with the logical parent/child side. */
-
-static void bfree_coop_publish_parent_resume(void)
-{
-    g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
-    g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
-    g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
-    if (g_bfree_fork_parent_ret == 0) {
-        g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
-    }
-}
-
-static void bfree_coop_publish_child_resume(void)
-{
-    g_bfree_sysret_exec_rsp = g_coop_child_rsp;
-    g_bfree_sysret_exec_rcx = g_coop_child_rcx;
-    g_bfree_sysret_exec_r11 = g_coop_child_r11;
-}
-
-static void bfree_coop_as_switch_to(int side)
-{
-    page_table_t *pt;
-
-    if (!knl_current_task) {
-        return;
-    }
-    if (!bfree_process_child_has_private_as()) {
-        return; /* vfork / shared AS — nothing to flip */
-    }
-    pt = (side == 0) ? bfree_process_parent_pt() : bfree_process_child_pt();
-    if (!pt) {
-        return;
-    }
-    if ((page_table_t *)knl_current_task->page_table_base == pt) {
-        return;
-    }
-    knl_current_task->page_table_base = pt;
-    __asm__ volatile("mov %0, %%cr3" :: "r"(pt) : "memory");
-}
-
-static void bfree_coop_arm_parent_resume(void)
-{
-    if (!g_coop_parent_started) {
-        g_coop_parent_started = 1;
-        g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
-        return;
-    }
-    if (g_coop_parent_resume_mode == 2) {
-        /* Completed syscall: resume after syscall with RAX=ret. */
-        g_bfree_fork_saved_rcx = g_coop_parent_rcx;
-        g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
-        g_coop_parent_resume_mode = 0;
-        return;
-    }
-    if (g_coop_parent_rcx >= 2) {
-        g_bfree_fork_saved_rcx = g_coop_parent_rcx - 2;
-    }
-    if (g_coop_parent_resume_mode == 1) {
-        g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
-        g_coop_parent_resume_mode = 0;
-    } else {
-        /* Legacy: RAX=0 re-exec works for read (NR 0). */
-        g_bfree_fork_parent_ret = 0;
-    }
-}
-
-static void bfree_coop_arm_child_resume(void)
-{
-    if (g_coop_child_resume_mode == 1 || g_coop_child_resume_mode == 2) {
-        g_bfree_fork_parent_ret = g_coop_child_resume_rax;
-        g_coop_child_resume_mode = 0;
-    } else {
-        g_bfree_fork_parent_ret = 0;
-    }
-}
-
-static long bfree_coop_yield_to_parent(void)
-{
-    bfree_coop_save_child_user();
-    if (g_coop_child_rcx >= 2) {
-        g_coop_child_rcx -= 2;
-    }
-    /* Park child for re-exec of the in-flight Linux NR (write=1, wait=61, …). */
-    g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;
-    g_coop_child_resume_mode = 1;
-    g_coop_child_blocked = 1;
-    bfree_coop_fd_switch_to(0);
-    bfree_coop_as_switch_to(0);
-    g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
-    g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
-    g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
-    bfree_coop_arm_parent_resume();
-    return BFREE_SYSRET_COOP_SWITCH;
-}
-
-static long bfree_coop_yield_to_child(void)
-{
-    g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;
-    g_bfree_fork_saved_r11 = g_bfree_user_sysret_r11;
-    g_bfree_fork_saved_rsp = g_bfree_user_sysret_rsp;
-    g_bfree_fork_saved_rbx = g_bfree_user_sysret_rbx;
-    g_bfree_fork_saved_rbp = g_bfree_user_sysret_rbp;
-    g_bfree_fork_saved_r12 = g_bfree_user_sysret_r12;
-    g_bfree_fork_saved_r13 = g_bfree_user_sysret_r13;
-    g_bfree_fork_saved_r14 = g_bfree_user_sysret_r14;
-    g_bfree_fork_saved_r15 = g_bfree_user_sysret_r15;
-    g_bfree_fork_saved_rdx = g_bfree_user_sysret_rdx;
-    g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;
-    g_coop_parent_resume_mode = 1;
-    bfree_coop_fd_switch_to(1);
-    bfree_coop_as_switch_to(1);
-    g_coop_child_blocked = 0;
-    g_bfree_sysret_exec_rsp = g_coop_child_rsp;
-    g_bfree_sysret_exec_rcx = g_coop_child_rcx;
-    g_bfree_sysret_exec_r11 = g_coop_child_r11;
-    g_bfree_fork_saved_rbx = g_coop_child_rbx;
-    g_bfree_fork_saved_rbp = g_coop_child_rbp;
-    g_bfree_fork_saved_r12 = g_coop_child_r12;
-    g_bfree_fork_saved_r13 = g_coop_child_r13;
-    g_bfree_fork_saved_r14 = g_coop_child_r14;
-    g_bfree_fork_saved_r15 = g_coop_child_r15;
-    g_bfree_fork_saved_rdx = g_coop_child_rdx;
-    bfree_coop_arm_child_resume();
-    return BFREE_SYSRET_COOP_SWITCH;
-}
-
-/* After a successful syscall that already mutated state: switch peer, resume
- * this side later with RAX=ret and RIP past syscall (no duplicate I/O). */
-static long bfree_coop_yield_to_parent_done(long ret)
-{
-    bfree_coop_save_child_user();
-    g_coop_child_resume_rax = (uint64_t)(long)ret;
-    g_coop_child_resume_mode = 2;
-    g_coop_child_blocked = 1;
-    bfree_coop_fd_switch_to(0);
-    bfree_coop_as_switch_to(0);
-    g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
-    g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
-    g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
-    bfree_coop_arm_parent_resume();
-    return BFREE_SYSRET_COOP_SWITCH;
-}
-
-static long bfree_coop_yield_to_child_done(long ret)
-{
-    g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;
-    g_bfree_fork_saved_r11 = g_bfree_user_sysret_r11;
-    g_bfree_fork_saved_rsp = g_bfree_user_sysret_rsp;
-    g_bfree_fork_saved_rbx = g_bfree_user_sysret_rbx;
-    g_bfree_fork_saved_rbp = g_bfree_user_sysret_rbp;
-    g_bfree_fork_saved_r12 = g_bfree_user_sysret_r12;
-    g_bfree_fork_saved_r13 = g_bfree_user_sysret_r13;
-    g_bfree_fork_saved_r14 = g_bfree_user_sysret_r14;
-    g_bfree_fork_saved_r15 = g_bfree_user_sysret_r15;
-    g_bfree_fork_saved_rdx = g_bfree_user_sysret_rdx;
-    g_coop_parent_resume_rax = (uint64_t)(long)ret;
-    g_coop_parent_resume_mode = 2;
-    bfree_coop_fd_switch_to(1);
-    bfree_coop_as_switch_to(1);
-    g_coop_child_blocked = 0;
-    g_bfree_sysret_exec_rsp = g_coop_child_rsp;
-    g_bfree_sysret_exec_rcx = g_coop_child_rcx;
-    g_bfree_sysret_exec_r11 = g_coop_child_r11;
-    g_bfree_fork_saved_rbx = g_coop_child_rbx;
-    g_bfree_fork_saved_rbp = g_coop_child_rbp;
-    g_bfree_fork_saved_r12 = g_coop_child_r12;
-    g_bfree_fork_saved_r13 = g_coop_child_r13;
-    g_bfree_fork_saved_r14 = g_coop_child_r14;
-    g_bfree_fork_saved_r15 = g_coop_child_r15;
-    g_bfree_fork_saved_rdx = g_coop_child_rdx;
-    bfree_coop_arm_child_resume();
-    return BFREE_SYSRET_COOP_SWITCH;
-}
-
-static int bfree_unix_from_fd(int fd)
-{
-    int idx;
-    if (fd < (int)BFREE_UNIX_FD_BASE || fd >= (int)BFREE_UNIX_FD_BASE + BFREE_UNIX_SLOTS) {
-        return -1;
-    }
-    idx = fd - (int)BFREE_UNIX_FD_BASE;
-    return g_unix_socks[idx].used ? idx : -1;
-}
-
-static int bfree_inet_from_fd(int fd)
-{
-    int idx;
-    if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
-        return -1;
-    }
-    idx = fd - (int)BFREE_INET_FD_BASE;
-    return g_inet_socks[idx].used ? idx : -1;
-}
-
-static void bfree_inet_sock_release(int resolved)
-{
-    int iidx = bfree_inet_from_fd(resolved);
-    if (iidx < 0) {
-        return;
-    }
-    g_inet_socks[iidx].used = 0;
-    g_inet_socks[iidx].listening = 0;
-    g_inet_socks[iidx].connected = 0;
-    g_inet_socks[iidx].bound = 0;
-    g_inet_socks[iidx].accept_rd = -1;
-    g_inet_socks[iidx].pipe_magic = -1;
-}
-
-static uint16_t bfree_inet_ntohs(uint16_t x)
-{
-    return (uint16_t)(((x & 0xffU) << 8) | ((x >> 8) & 0xffU));
-}
-
-static uint32_t bfree_inet_ntohl(uint32_t x)
-{
-    return ((x & 0xffU) << 24) | ((x & 0xff00U) << 8) |
-           ((x >> 8) & 0xff00U) | ((x >> 24) & 0xffU);
-}
-
-static int bfree_inet_parse_sockaddr(long addr, long addrlen, uint32_t *out_addr, uint16_t *out_port)
-{
-    const uint8_t *raw;
-    uint16_t family;
-    uint16_t port_be;
-    uint32_t addr_be;
-
-    if (addrlen < 8 || addr == 0 || !bfree_user_ptr_mapped(addr)) {
-        return -14;
-    }
-    raw = (const uint8_t *)(uintptr_t)addr;
-    family = (uint16_t)(raw[0] | (raw[1] << 8));
-    if (family != (uint16_t)BFREE_LINUX_AF_INET) {
-        return -97; /* EAFNOSUPPORT */
-    }
-    port_be = (uint16_t)(raw[2] | (raw[3] << 8));
-    addr_be = (uint32_t)raw[4] | ((uint32_t)raw[5] << 8) |
-              ((uint32_t)raw[6] << 16) | ((uint32_t)raw[7] << 24);
-    if (out_port) {
-        *out_port = bfree_inet_ntohs(port_be);
-    }
-    if (out_addr) {
-        *out_addr = bfree_inet_ntohl(addr_be);
-    }
-    return 0;
-}
-
-static int bfree_inet_is_guest_routable(uint32_t addr)
-{
-    if (addr == BFREE_INADDR_ANY) {
-        return 1;
-    }
-    if ((addr & 0xFF000000u) == 0x7F000000u) {
-        return 1; /* 127.0.0.0/8 */
-    }
-    if ((addr & 0xFFFFFF00u) == 0x0A000200u) {
-        return 1; /* 10.0.2.0/24 — QEMU user/slirp guest LAN */
-    }
-    return 0;
-}
-
-/* Collapse guest-local binds/connects onto loopback pipe listeners. */
-static uint32_t bfree_inet_match_addr(uint32_t addr)
-{
-    if (addr == BFREE_INADDR_ANY) {
-        return BFREE_INADDR_LOOPBACK;
-    }
-    if ((addr & 0xFF000000u) == 0x7F000000u) {
-        return BFREE_INADDR_LOOPBACK;
-    }
-    if ((addr & 0xFFFFFF00u) == 0x0A000200u) {
-        return BFREE_INADDR_LOOPBACK;
-    }
-    return addr;
-}
-
-static int bfree_inet_listener_matches(uint32_t bound_addr, uint32_t peer_addr)
-{
-    uint32_t b = bfree_inet_match_addr(bound_addr);
-    uint32_t p = bfree_inet_match_addr(peer_addr);
-
-    if (bound_addr == BFREE_INADDR_ANY) {
-        return 1;
-    }
-    return b == p;
-}
-
-static int bfree_inet_is_loopback(uint32_t addr)
-{
-    return bfree_inet_is_guest_routable(addr);
-}
-
-static long sys_linux_socket(long domain, long type, long protocol)
-{
-    int i;
-    (void)type;
-    (void)protocol;
-    if (domain == BFREE_LINUX_AF_INET) {
-        for (i = 0; i < BFREE_INET_SLOTS; ++i) {
-            if (!g_inet_socks[i].used) {
-                g_inet_socks[i].used = 1;
-                g_inet_socks[i].listening = 0;
-                g_inet_socks[i].connected = 0;
-                g_inet_socks[i].bound = 0;
-                g_inet_socks[i].addr = BFREE_INADDR_ANY;
-                g_inet_socks[i].port = 0;
-                g_inet_socks[i].accept_rd = -1;
-                g_inet_socks[i].pipe_magic = -1;
-                return bfree_guest_fd_publish((int)BFREE_INET_FD_BASE + i);
-            }
-        }
-        return -24;
-    }
-    if (domain != BFREE_LINUX_AF_UNIX) {
-        return -97;
-    }
-    for (i = 0; i < BFREE_UNIX_SLOTS; ++i) {
-        if (!g_unix_socks[i].used) {
-            g_unix_socks[i].used = 1;
-            g_unix_socks[i].listening = 0;
-            g_unix_socks[i].connected = 0;
-            g_unix_socks[i].accept_rd = -1;
-            g_unix_socks[i].pipe_magic = -1;
-            g_unix_socks[i].path[0] = '\0';
-            return bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + i);
-        }
-    }
-    return -24;
-}
-
-static long sys_linux_bind(long sockfd, long addr, long addrlen)
-{
-    int idx, i;
-    const uint8_t *raw;
-    size_t n;
-    uint32_t in_addr;
-    uint16_t in_port;
-    long perr;
-
-    sockfd = bfree_guest_fd_resolve((int)sockfd);
-    idx = bfree_inet_from_fd((int)sockfd);
-    if (idx >= 0) {
-        perr = bfree_inet_parse_sockaddr(addr, addrlen, &in_addr, &in_port);
-        if (perr != 0) {
-            return perr;
-        }
-        if (!bfree_inet_is_loopback(in_addr)) {
-            return -101; /* ENETUNREACH — only loopback without NIC */
-        }
-        if (in_port == 0) {
-            /* Ephemeral: pick unused 40000+idx */
-            in_port = (uint16_t)(40000 + idx);
-        }
-        for (i = 0; i < BFREE_INET_SLOTS; ++i) {
-            if (i != idx && g_inet_socks[i].used && g_inet_socks[i].bound &&
-                g_inet_socks[i].port == in_port &&
-                (g_inet_socks[i].addr == in_addr ||
-                 g_inet_socks[i].addr == BFREE_INADDR_ANY ||
-                 in_addr == BFREE_INADDR_ANY)) {
-                return -98; /* EADDRINUSE */
-            }
-        }
-        g_inet_socks[idx].addr = in_addr;
-        g_inet_socks[idx].port = in_port;
-        g_inet_socks[idx].bound = 1;
-        return 0;
-    }
-    idx = bfree_unix_from_fd((int)sockfd);
-    if (idx < 0) {
-        return -88;
-    }
-    if (addrlen < 4 || addr == 0 || !bfree_user_ptr_mapped(addr)) {
-        return -14;
-    }
-    raw = (const uint8_t *)(uintptr_t)addr;
-    n = 0;
-    while (n + 2U < (size_t)addrlen && n + 1U < sizeof(g_unix_socks[idx].path) &&
-           raw[2 + n] != 0) {
-        g_unix_socks[idx].path[n] = (char)raw[2 + n];
-        ++n;
-    }
-    g_unix_socks[idx].path[n] = '\0';
-    if (n == 0) {
-        return -22;
-    }
-    for (i = 0; i < BFREE_UNIX_SLOTS; ++i) {
-        if (i != idx && g_unix_socks[i].used && g_unix_socks[i].path[0] &&
-            strcmp(g_unix_socks[i].path, g_unix_socks[idx].path) == 0) {
-            return -98;
-        }
-    }
-    return 0;
-}
-
-static long sys_linux_listen(long sockfd, long backlog)
-{
-    int idx;
-    (void)backlog;
-    sockfd = bfree_guest_fd_resolve((int)sockfd);
-    idx = bfree_inet_from_fd((int)sockfd);
-    if (idx >= 0) {
-        if (!g_inet_socks[idx].bound) {
-            return -22;
-        }
-        g_inet_socks[idx].listening = 1;
-        return 0;
-    }
-    idx = bfree_unix_from_fd((int)sockfd);
-    if (idx < 0) {
-        return -88;
-    }
-    if (g_unix_socks[idx].path[0] == '\0') {
-        return -22;
-    }
-    g_unix_socks[idx].listening = 1;
-    return 0;
-}
-
-static long sys_linux_connect(long sockfd, long addr, long addrlen)
-{
-    int idx, li, i, slot = -1, rd, wr;
-    const uint8_t *raw;
-    char path[96];
-    size_t n;
-    uint32_t in_addr;
-    uint16_t in_port;
-    long perr;
-
-    sockfd = bfree_guest_fd_resolve((int)sockfd);
-    idx = bfree_inet_from_fd((int)sockfd);
-    if (idx >= 0) {
-        perr = bfree_inet_parse_sockaddr(addr, addrlen, &in_addr, &in_port);
-        if (perr != 0) {
-            return perr;
-        }
-        if (!bfree_inet_is_loopback(in_addr)) {
-            return -101; /* ENETUNREACH — no NIC / non-loopback */
-        }
-        for (li = 0; li < BFREE_INET_SLOTS; ++li) {
-            if (g_inet_socks[li].used && g_inet_socks[li].listening &&
-                g_inet_socks[li].port == in_port &&
-                bfree_inet_listener_matches(g_inet_socks[li].addr, in_addr)) {
-                break;
-            }
-        }
-        if (li >= BFREE_INET_SLOTS) {
-            return -111; /* ECONNREFUSED — no loopback listener */
-        }
-        if (g_inet_socks[li].accept_rd >= 0) {
-            return -11; /* EAGAIN — one pending accept */
-        }
-        for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
-            if (!g_guest_pipes[i].used) {
-                slot = i;
-                break;
-            }
-        }
-        if (slot < 0) {
-            return -24;
-        }
-        g_guest_pipes[slot].used = 1;
-        g_guest_pipes[slot].rd_open = 1;
-        g_guest_pipes[slot].wr_open = 1;
-        g_guest_pipes[slot].len = 0;
-        g_guest_pipes[slot].nonblock = 0;
-        rd = bfree_guest_pipe_magic_fd(slot, 0);
-        wr = bfree_guest_pipe_magic_fd(slot, 1);
-        g_inet_socks[idx].connected = 1;
-        g_inet_socks[idx].pipe_magic = wr;
-        g_inet_socks[idx].addr = in_addr;
-        g_inet_socks[idx].port = in_port;
-        g_inet_socks[li].accept_rd = rd;
-        return 0;
-    }
-    idx = bfree_unix_from_fd((int)sockfd);
-    if (idx < 0) {
-        return -88;
-    }
-    if (addrlen < 4 || addr == 0 || !bfree_user_ptr_mapped(addr)) {
-        return -14;
-    }
-    raw = (const uint8_t *)(uintptr_t)addr;
-    n = 0;
-    while (n + 2U < (size_t)addrlen && n + 1U < sizeof(path) && raw[2 + n] != 0) {
-        path[n] = (char)raw[2 + n];
-        ++n;
-    }
-    path[n] = '\0';
-    for (li = 0; li < BFREE_UNIX_SLOTS; ++li) {
-        if (g_unix_socks[li].used && g_unix_socks[li].listening &&
-            strcmp(g_unix_socks[li].path, path) == 0) {
-            break;
-        }
-    }
-    if (li >= BFREE_UNIX_SLOTS) {
-        return -111;
-    }
-    if (g_unix_socks[li].accept_rd >= 0) {
-        return -11;
-    }
-    for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
-        if (!g_guest_pipes[i].used) {
-            slot = i;
-            break;
-        }
-    }
-    if (slot < 0) {
-        return -24;
-    }
-    g_guest_pipes[slot].used = 1;
-    g_guest_pipes[slot].rd_open = 1;
-    g_guest_pipes[slot].wr_open = 1;
-    g_guest_pipes[slot].len = 0;
-    g_guest_pipes[slot].nonblock = 0;
-    rd = bfree_guest_pipe_magic_fd(slot, 0);
-    wr = bfree_guest_pipe_magic_fd(slot, 1);
-    g_unix_socks[idx].connected = 1;
-    g_unix_socks[idx].pipe_magic = wr;
-    g_unix_socks[li].accept_rd = rd;
-    return 0;
-}
-
-static long sys_linux_accept(long sockfd, long addr, long addrlen)
-{
-    int idx, rd;
-    (void)addr;
-    (void)addrlen;
-    sockfd = bfree_guest_fd_resolve((int)sockfd);
-    idx = bfree_inet_from_fd((int)sockfd);
-    if (idx >= 0) {
-        if (!g_inet_socks[idx].listening) {
-            return -22;
-        }
-        if (g_inet_socks[idx].accept_rd < 0) {
-            return -11;
-        }
-        rd = g_inet_socks[idx].accept_rd;
-        g_inet_socks[idx].accept_rd = -1;
-        return bfree_guest_fd_publish(rd);
-    }
-    idx = bfree_unix_from_fd((int)sockfd);
-    if (idx < 0) {
-        return -88;
-    }
-    if (!g_unix_socks[idx].listening) {
-        return -22;
-    }
-    if (g_unix_socks[idx].accept_rd < 0) {
-        return -11;
-    }
-    rd = g_unix_socks[idx].accept_rd;
-    g_unix_socks[idx].accept_rd = -1;
-    return bfree_guest_fd_publish(rd);
-}
-
-static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr, long addrlen)
-{
-    int idx;
-    (void)flags;
-    (void)addr;
-    (void)addrlen;
-    fd = bfree_guest_fd_resolve((int)fd);
-    idx = bfree_inet_from_fd((int)fd);
-    if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
-        return sys_linux_write(g_inet_socks[idx].pipe_magic, buf, len);
-    }
-    idx = bfree_unix_from_fd((int)fd);
-    if (idx >= 0 && g_unix_socks[idx].connected && g_unix_socks[idx].pipe_magic >= 0) {
-        return sys_linux_write(g_unix_socks[idx].pipe_magic, buf, len);
-    }
-    return sys_linux_write(fd, buf, len);
-}
-
-static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long addr, long addrlen)
-{
-    int idx;
-    (void)flags;
-    (void)addr;
-    (void)addrlen;
-    fd = bfree_guest_fd_resolve((int)fd);
-    idx = bfree_inet_from_fd((int)fd);
-    if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
-        int mag = g_inet_socks[idx].pipe_magic;
-        if (bfree_guest_pipe_is_wr_magic(mag)) {
-            mag = mag - 1;
-        }
-        return sys_linux_read(mag, buf, len);
-    }
-    idx = bfree_unix_from_fd((int)fd);
-    if (idx >= 0 && g_unix_socks[idx].connected && g_unix_socks[idx].pipe_magic >= 0) {
-        /* Client sendto uses wr; client recv should use rd of same slot. */
-        int mag = g_unix_socks[idx].pipe_magic;
-        if (bfree_guest_pipe_is_wr_magic(mag)) {
-            mag = mag - 1;
-        }
-        return sys_linux_read(mag, buf, len);
-    }
-    return sys_linux_read(fd, buf, len);
-}
-
 static long sys_linux_socketpair(long domain, long type, long protocol, long sv_ptr)
 {
     (void)domain;
@@ -9174,189 +6461,6 @@ static long sys_linux_eventfd2(long count, long flags)
     }
     g_guest_eventfd_val[next_eventfd] = (count != 0) ? (uint64_t)count : 0ULL;
     return (int)BFREE_GUEST_EVENTFD_BASE + next_eventfd++;
-}
-
-/* S3-02: readiness for pipe-backed AF_INET/AF_UNIX (fd bases 0x3A00/0x3900). */
-
-/* Soft-0 for apps that ignore sockopt failure; no NIC option store. */
-
-/* Real bind/connect addr for loopback inet; soft-0 length clamp. */
-
-/* S3-02: readiness for pipe-backed AF_INET/AF_UNIX (fd bases 0x3A00/0x3900). */
-static uint32_t bfree_guest_sock_ready_mask(int fd)
-{
-    int resolved = bfree_guest_fd_resolve(fd);
-    int iidx;
-    int uidx;
-    int mag;
-    int slot;
-    uint32_t mask = 0;
-
-    iidx = bfree_inet_from_fd(resolved);
-    if (iidx >= 0) {
-        if (g_inet_socks[iidx].listening) {
-            if (g_inet_socks[iidx].accept_rd >= 0) {
-                mask |= (uint32_t)EPOLLIN;
-            }
-            return mask;
-        }
-        if (g_inet_socks[iidx].connected && g_inet_socks[iidx].pipe_magic >= 0) {
-            mag = g_inet_socks[iidx].pipe_magic;
-            slot = bfree_guest_pipe_slot_from_magic(mag);
-            if (slot >= 0 && g_guest_pipes[slot].used) {
-                if (g_guest_pipes[slot].len < BFREE_GUEST_PIPE_BUF_SIZE) {
-                    mask |= (uint32_t)EPOLLOUT;
-                }
-                if (g_guest_pipes[slot].len > 0) {
-                    mask |= (uint32_t)EPOLLIN;
-                }
-            }
-        }
-        return mask;
-    }
-
-    uidx = bfree_unix_from_fd(resolved);
-    if (uidx >= 0) {
-        if (g_unix_socks[uidx].listening) {
-            if (g_unix_socks[uidx].accept_rd >= 0) {
-                mask |= (uint32_t)EPOLLIN;
-            }
-            return mask;
-        }
-        if (g_unix_socks[uidx].connected && g_unix_socks[uidx].pipe_magic >= 0) {
-            mag = g_unix_socks[uidx].pipe_magic;
-            slot = bfree_guest_pipe_slot_from_magic(mag);
-            if (slot >= 0 && g_guest_pipes[slot].used) {
-                if (g_guest_pipes[slot].len < BFREE_GUEST_PIPE_BUF_SIZE) {
-                    mask |= (uint32_t)EPOLLOUT;
-                }
-                if (g_guest_pipes[slot].len > 0) {
-                    mask |= (uint32_t)EPOLLIN;
-                }
-            }
-        }
-    }
-    return mask;
-}
-
-/* Soft-0 for apps that ignore sockopt failure; no NIC option store. */
-static long sys_linux_setsockopt(long fd, long level, long optname, long optval, long optlen)
-{
-    (void)fd;
-    (void)level;
-    (void)optname;
-    (void)optval;
-    (void)optlen;
-    return 0;
-}
-
-static long sys_linux_getsockopt(long fd, long level, long optname, long optval, long optlen_ptr)
-{
-    (void)fd;
-    (void)level;
-    (void)optname;
-    (void)optval;
-    if (optlen_ptr != 0 && bfree_user_ptr_mapped(optlen_ptr)) {
-        *(int *)(uintptr_t)optlen_ptr = 0;
-    }
-    return 0;
-}
-
-static long sys_linux_shutdown(long fd, long how)
-{
-    (void)fd;
-    (void)how;
-    return 0;
-}
-
-/* Real bind/connect addr for loopback inet; soft-0 length clamp. */
-static long sys_linux_getsockname(long sockfd, long addr, long addrlen_ptr)
-{
-    int idx;
-    int *alen;
-    uint8_t *raw;
-    uint16_t port_be;
-    uint32_t addr_be;
-    uint32_t a;
-    int want;
-
-    if (addr == 0 || addrlen_ptr == 0 || !bfree_user_ptr_mapped(addrlen_ptr)) {
-        return -14;
-    }
-    alen = (int *)(uintptr_t)addrlen_ptr;
-    want = *alen;
-    if (want < 0) {
-        return -22;
-    }
-    sockfd = bfree_guest_fd_resolve((int)sockfd);
-    idx = bfree_inet_from_fd((int)sockfd);
-    if (idx < 0) {
-        return -88; /* ENOTSOCK */
-    }
-    if (want < 8 || !bfree_user_ptr_mapped(addr)) {
-        return -14;
-    }
-    a = g_inet_socks[idx].addr;
-    if (!g_inet_socks[idx].bound && !g_inet_socks[idx].connected) {
-        a = BFREE_INADDR_ANY;
-    } else if (a == BFREE_INADDR_ANY && g_inet_socks[idx].connected) {
-        a = BFREE_INADDR_LOOPBACK;
-    }
-    port_be = bfree_inet_ntohs(g_inet_socks[idx].port); /* host↔be swap */
-    addr_be = bfree_inet_ntohl(a);
-    raw = (uint8_t *)(uintptr_t)addr;
-    raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);
-    raw[1] = (uint8_t)((BFREE_LINUX_AF_INET >> 8) & 0xff);
-    raw[2] = (uint8_t)(port_be & 0xff);
-    raw[3] = (uint8_t)((port_be >> 8) & 0xff);
-    raw[4] = (uint8_t)(addr_be & 0xff);
-    raw[5] = (uint8_t)((addr_be >> 8) & 0xff);
-    raw[6] = (uint8_t)((addr_be >> 16) & 0xff);
-    raw[7] = (uint8_t)((addr_be >> 24) & 0xff);
-    *alen = 16;
-    return 0;
-}
-
-static long sys_linux_getpeername(long sockfd, long addr, long addrlen_ptr)
-{
-    int idx;
-    int *alen;
-    uint8_t *raw;
-    uint16_t port_be;
-    uint32_t addr_be;
-    int want;
-
-    if (addr == 0 || addrlen_ptr == 0 || !bfree_user_ptr_mapped(addrlen_ptr)) {
-        return -14;
-    }
-    alen = (int *)(uintptr_t)addrlen_ptr;
-    want = *alen;
-    if (want < 0) {
-        return -22;
-    }
-    sockfd = bfree_guest_fd_resolve((int)sockfd);
-    idx = bfree_inet_from_fd((int)sockfd);
-    if (idx < 0 || !g_inet_socks[idx].connected) {
-        return -107; /* ENOTCONN */
-    }
-    if (want < 8 || !bfree_user_ptr_mapped(addr)) {
-        return -14;
-    }
-    port_be = bfree_inet_ntohs(g_inet_socks[idx].port);
-    addr_be = bfree_inet_ntohl(g_inet_socks[idx].addr == BFREE_INADDR_ANY
-                                   ? BFREE_INADDR_LOOPBACK
-                                   : g_inet_socks[idx].addr);
-    raw = (uint8_t *)(uintptr_t)addr;
-    raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);
-    raw[1] = (uint8_t)((BFREE_LINUX_AF_INET >> 8) & 0xff);
-    raw[2] = (uint8_t)(port_be & 0xff);
-    raw[3] = (uint8_t)((port_be >> 8) & 0xff);
-    raw[4] = (uint8_t)(addr_be & 0xff);
-    raw[5] = (uint8_t)((addr_be >> 8) & 0xff);
-    raw[6] = (uint8_t)((addr_be >> 16) & 0xff);
-    raw[7] = (uint8_t)((addr_be >> 24) & 0xff);
-    *alen = 16;
-    return 0;
 }
 
 static long sys_linux_epoll_create1(long flags)
@@ -9416,7 +6520,6 @@ static long sys_linux_epoll_ctl(long epfd, long op, long fd, long event_ptr)
 
 static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, long timeout_ms)
 {
-    (void)timeout_ms;
     bfree_guest_epoll_inst_t *inst = bfree_guest_find_epoll(epfd);
     struct epoll_event *out = (struct epoll_event *)(uintptr_t)events_ptr;
     int ready = 0;
@@ -9440,11 +6543,9 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
         } else if (bfree_guest_is_eventfd(w->fd)
                    && g_guest_eventfd_val[bfree_guest_eventfd_index(w->fd)] != 0) {
             revents = EPOLLIN;
-        } else {
-            revents = bfree_guest_sock_ready_mask(w->fd);
         }
         if ((revents & w->events) != 0) {
-            out[ready].events = revents & w->events;
+            out[ready].events = revents;
             out[ready].data = w->data;
             ++ready;
         }
@@ -9482,11 +6583,9 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
                 } else if (bfree_guest_is_eventfd(w->fd)
                            && g_guest_eventfd_val[bfree_guest_eventfd_index(w->fd)] != 0) {
                     revents = EPOLLIN;
-                } else {
-                    revents = bfree_guest_sock_ready_mask(w->fd);
                 }
                 if ((revents & w->events) != 0) {
-                    out[ready].events = revents & w->events;
+                    out[ready].events = revents;
                     out[ready].data = w->data;
                     ++ready;
                 }
@@ -9510,7 +6609,6 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
 static short bfree_guest_poll_revents(int fd, short events)
 {
     short revents = 0;
-    uint32_t sock_mask;
 
     if ((events & POLLIN) && bfree_guest_is_pipe_rd(fd) && bfree_guest_pipe_readable(fd)) {
         revents |= POLLIN;
@@ -9528,13 +6626,6 @@ static short bfree_guest_poll_revents(int fd, short events)
         if (idx >= 0 && g_guest_eventfd_val[idx] != 0) {
             revents |= POLLIN;
         }
-    }
-    sock_mask = bfree_guest_sock_ready_mask(fd);
-    if ((events & POLLIN) && (sock_mask & (uint32_t)EPOLLIN) != 0U) {
-        revents |= POLLIN;
-    }
-    if ((events & POLLOUT) && (sock_mask & (uint32_t)EPOLLOUT) != 0U) {
-        revents |= POLLOUT;
     }
     if ((events & POLLIN) && fd == 0 && bfree_stdin_byte_ready()) {
         revents |= POLLIN;
@@ -9594,14 +6685,6 @@ static long sys_linux_poll(long fds_ptr, long nfds, long timeout_ms)
         if (finite && knl_get_current_time() >= deadline_us) {
             return 0;
         }
-        /* B-Free: poll EINTR */
-        bfree_guest_alarm_poll();
-        {
-            int er = bfree_guest_sig_take_eintr();
-            if (er < 0) {
-                return er;
-            }
-        }
         __asm__ volatile("sti; hlt" ::: "memory");
     }
 }
@@ -9659,65 +6742,17 @@ static long sys_linux_prctl(long option, long arg2, long arg3, long arg4, long a
     return 0;
 }
 
-/* Linux guest nanosleep — block until deadline or pending signal (EINTR). */
+/* Linux guest nanosleep — instant return (no IRQ busy-wait in syscall context). */
 static long sys_linux_nanosleep(long req_ptr, long rem_ptr)
 {
-    struct timespec *req = (struct timespec *)(uintptr_t)req_ptr;
-    struct timespec *rem = (struct timespec *)(uintptr_t)rem_ptr;
-    uint64_t deadline_us;
-    uint64_t now;
-    uint64_t total_us = 0;
+    struct timespec *rem = (struct timespec *)rem_ptr;
 
-    if (req_ptr == 0 || !bfree_user_ptr_mapped(req_ptr)) {
-        return -14;
+    (void)req_ptr;
+    if (rem != 0 && bfree_user_ptr_mapped(rem_ptr)) {
+        rem->tv_sec = 0;
+        rem->tv_nsec = 0;
     }
-    if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000L) {
-        return -22;
-    }
-    if (req->tv_sec == 0 && req->tv_nsec == 0) {
-        bfree_guest_alarm_poll();
-        {
-            int er = bfree_guest_sig_take_eintr();
-            if (er < 0) {
-                return er;
-            }
-        }
-        return 0;
-    }
-    total_us = (uint64_t)req->tv_sec * 1000000ULL + (uint64_t)req->tv_nsec / 1000ULL;
-    if (total_us == 0) {
-        total_us = 1;
-    }
-    deadline_us = knl_get_current_time() + total_us;
-    for (;;) {
-        bfree_guest_alarm_poll();
-        {
-            int er = bfree_guest_sig_take_eintr();
-            if (er < 0) {
-                if (rem != 0 && bfree_user_ptr_mapped(rem_ptr)) {
-                    now = knl_get_current_time();
-                    if (deadline_us > now) {
-                        uint64_t left = deadline_us - now;
-                        rem->tv_sec = (long)(left / 1000000ULL);
-                        rem->tv_nsec = (long)((left % 1000000ULL) * 1000ULL);
-                    } else {
-                        rem->tv_sec = 0;
-                        rem->tv_nsec = 0;
-                    }
-                }
-                return er;
-            }
-        }
-        now = knl_get_current_time();
-        if (now >= deadline_us) {
-            if (rem != 0 && bfree_user_ptr_mapped(rem_ptr)) {
-                rem->tv_sec = 0;
-                rem->tv_nsec = 0;
-            }
-            return 0;
-        }
-        __asm__ volatile("sti; hlt" ::: "memory");
-    }
+    return 0;
 }
 
 static long sys_linux_getrandom(long buf, long buflen, long flags)
@@ -9771,7 +6806,6 @@ static void bfree_guest_trace_sc_num(long num)
 
 static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, long arg3, long arg4, long arg5)
 {
-    g_coop_cur_nr = (unsigned long)num;
     bfree_guest_trace_sc_num(num);
     /* Sparse cases past the 0..332 jump table — handle before switch. */
     if (num == 319) {
@@ -9793,70 +6827,6 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_lstat(arg1, arg2);
     case 7:
         return sys_linux_poll(arg1, arg2, arg3);
-    case 271:
-        return sys_linux_ppoll(arg1, arg2, arg3, arg4);
-    case 39:
-        return sys_linux_getpid();
-    case 110:
-        return sys_linux_getppid();
-    case 109: /* setpgid */
-        if ((int)arg1 == 0 && !g_guest_fork_active && !bfree_process_child_active()) {
-            int pgid = (int)arg2;
-
-            if (pgid < 0) {
-                return -22;
-            }
-            if (pgid == 0) {
-                pgid = 1; /* shell pid */
-            }
-            g_guest_pgid = pgid;
-            /* Keep controlling tty fg in sync for the single interactive session
-             * (ash often setpgid's before/without TIOCSPGRP on this guest). */
-            if (g_guest_tty_pgrp > 0) {
-                g_guest_tty_pgrp = pgid;
-            }
-            return 0;
-        }
-        return bfree_process_setpgid((int)arg1, (int)arg2);
-    case 111: /* getpgid */
-        if (arg1 == 0) {
-            return (long)(g_guest_fork_active ? bfree_process_getpgid(g_guest_fork_pid)
-                                             : g_guest_pgid);
-        }
-        {
-            int pg = bfree_process_getpgid((int)arg1);
-
-            if (pg < 0) {
-                if (arg1 == 1) {
-                    return (long)g_guest_pgid;
-                }
-                return pg;
-            }
-            return (long)pg;
-        }
-    case 112: /* setsid */
-        if (g_guest_fork_active) {
-            int pid = g_guest_fork_pid;
-
-            if (bfree_process_getpgid(pid) == pid) {
-                return -1; /* EPERM: already a leader */
-            }
-            (void)bfree_process_setpgid(pid, pid);
-            g_guest_sid = pid;
-            return (long)pid;
-        }
-        /* Shell is already session leader. */
-        if (g_guest_sid == 1 && g_guest_pgid == 1) {
-            return -1; /* EPERM */
-        }
-        g_guest_sid = 1;
-        g_guest_pgid = 1;
-        g_guest_tty_pgrp = 1;
-        return 1;
-    case 186:
-        return sys_linux_gettid();
-    case 302:
-        return sys_linux_prlimit64(arg1, arg2, arg3, arg4);
     case 271:
         return sys_linux_ppoll(arg1, arg2, arg3, arg4);
     case 39:
@@ -9885,51 +6855,11 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_epoll_ctl(arg1, arg2, arg3, arg4);
     case 281:
         return sys_linux_epoll_wait(arg1, arg2, arg3, arg5);
-    case 41: /* socket */
-        return sys_linux_socket(arg1, arg2, arg3);
-    case 49: /* bind */
-        return sys_linux_bind(arg1, arg2, arg3);
-    case 50: /* listen */
-        return sys_linux_listen(arg1, arg2);
-    case 42: /* connect */
-        return sys_linux_connect(arg1, arg2, arg3);
-    case 43: /* accept */
-        return sys_linux_accept(arg1, arg2, arg3);
-    case 44: /* sendto */
-        return sys_linux_sendto(arg1, arg2, arg3, arg4, arg5, 0);
-    case 45: /* recvfrom */
-        return sys_linux_recvfrom(arg1, arg2, arg3, arg4, arg5, 0);
     case 53:
         return sys_linux_socketpair(arg1, arg2, arg3, arg4);
-    case 48: /* shutdown — soft-0 (pipe-backed; no half-close track) */
-        return sys_linux_shutdown(arg1, arg2);
-    case 51: /* getsockname */
-        return sys_linux_getsockname(arg1, arg2, arg3);
-    case 52: /* getpeername */
-        return sys_linux_getpeername(arg1, arg2, arg3);
-    case 54: /* setsockopt — soft-0 */
-        return sys_linux_setsockopt(arg1, arg2, arg3, arg4, arg5);
-    case 55: /* getsockopt — soft-0 */
-        return sys_linux_getsockopt(arg1, arg2, arg3, arg4, arg5);
     case 284:
         return sys_linux_eventfd2(arg1, arg2);
     case 290: /* musl __NR_eventfd2 (284 is __NR_eventfd v1) */
-        return sys_linux_eventfd2(arg1, arg2);
-    case 290: /* musl __NR_eventfd2 (284 is __NR_eventfd v1) */
-        return sys_linux_eventfd2(arg1, arg2);
-    case 53:
-        return sys_linux_socketpair(arg1, arg2, arg3, arg4);
-    case 48: /* shutdown — soft-0 (pipe-backed; no half-close track) */
-        return sys_linux_shutdown(arg1, arg2);
-    case 51: /* getsockname */
-        return sys_linux_getsockname(arg1, arg2, arg3);
-    case 52: /* getpeername */
-        return sys_linux_getpeername(arg1, arg2, arg3);
-    case 54: /* setsockopt — soft-0 */
-        return sys_linux_setsockopt(arg1, arg2, arg3, arg4, arg5);
-    case 55: /* getsockopt — soft-0 */
-        return sys_linux_getsockopt(arg1, arg2, arg3, arg4, arg5);
-    case 284:
         return sys_linux_eventfd2(arg1, arg2);
     case 291:
         return sys_linux_epoll_create1(arg1);
@@ -9942,11 +6872,9 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
     case 8:
         return sys_linux_lseek(arg1, arg2, arg3);
     case 9:
-        return sys_linux_mmap(arg1, arg2, arg3, arg4, arg5);
+        return sys_mmap(arg1, arg2, arg3, arg4, arg5);
     case 10:
         return sys_mprotect(arg1, arg2, arg3);
-    case 25: /* mremap */
-        return sys_linux_mremap(arg1, arg2, arg3, arg4, arg5);
     case 28:
         return sys_linux_madvise(arg1, arg2, arg3);
     case 11:
@@ -9957,53 +6885,10 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_rt_sigaction(arg1, arg2, arg3, arg4);
     case 14:
         return sys_linux_rt_sigprocmask(arg1, arg2, arg3, arg4);
-    case 15: /* rt_sigreturn */
-        return sys_linux_rt_sigreturn();
-    case 127: /* rt_sigpending */
-        return sys_linux_rt_sigpending(arg1, arg2);
-    case 130: /* rt_sigsuspend */
-        return sys_linux_rt_sigsuspend(arg1, arg2);
-    case 131: /* sigaltstack */
-        return sys_linux_sigaltstack(arg1, arg2);
-    case 37: /* alarm */
-        return sys_linux_alarm(arg1);
-    case 38: /* setitimer */
-        return sys_linux_setitimer(arg1, arg2, arg3);
-    case 36: /* getitimer */
-        return sys_linux_getitimer(arg1, arg2);
-    case 73: /* flock */
-        return sys_linux_flock(arg1, arg2);
-    case 74: /* fsync */
-    case 75: /* fdatasync */
-        return sys_linux_fsync(arg1);
-    case 162: /* sync */
-        return 0;
-    case 124: /* getsid */
-        return sys_linux_getsid(arg1);
-    case 292: /* dup3 */
-        return sys_linux_dup3(arg1, arg2, arg3);
-    case 229: /* clock_getres */
-        return sys_linux_clock_getres_linux(arg1, arg2);
-    case 273: /* set_robust_list */
-        return sys_linux_set_robust_list(arg1, arg2);
-    case 274: /* get_robust_list */
-        return sys_linux_get_robust_list(arg1, arg2, arg3);
-    case 234: /* tgkill */
-        return sys_linux_kill(arg2, arg3);
     case 16:
         return sys_linux_ioctl(arg1, arg2, arg3);
-    case 17: /* pread64 */
-        return sys_linux_pread64(arg1, arg2, arg3, arg4);
-    case 18: /* pwrite64 */
-        return sys_linux_pwrite64(arg1, arg2, arg3, arg4);
-    case 19: /* readv */
-        return sys_linux_readv(arg1, arg2, arg3);
     case 20:
         return sys_linux_writev(arg1, arg2, arg3);
-    case 23: /* select */
-        return sys_linux_select(arg1, arg2, arg3, arg4, arg5);
-    case 270: /* pselect6 */
-        return sys_linux_pselect6(arg1, arg2, arg3, arg4, arg5, 0);
     case 21:
         return sys_linux_access(arg1, arg2);
     case 22:
@@ -10018,9 +6903,6 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_nanosleep(arg3, arg4);
     case 60:
     case 231:
-        if (g_guest_thread_active) {
-            return bfree_guest_thread_exit(arg1);
-        }
         if (g_guest_fork_active) {
             bfree_guest_fork_child_pipe_close_writers();
             return bfree_guest_exit_from_fork(arg1);
@@ -10115,14 +6997,6 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return 0;
     case 268: /* fchmodat */
         return 0;
-    case 92: /* chown */
-        return sys_linux_chown(BFREE_LINUX_AT_FDCWD, arg1, arg2, arg3);
-    case 93: /* fchown */
-        return sys_linux_fchown(arg1, arg2, arg3);
-    case 94: /* lchown — no symlink follow distinction yet */
-        return sys_linux_chown(BFREE_LINUX_AT_FDCWD, arg1, arg2, arg3);
-    case 260: /* fchownat */
-        return sys_linux_chown(arg1, arg2, arg3, arg4);
     case 92: /* chown — single-user guest, ownership is fixed at root */
     case 93: /* fchown */
     case 94: /* lchown */
@@ -10150,12 +7024,6 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_gethostname(arg1, arg2);
     case 157:
         return sys_linux_prctl(arg1, arg2, arg3, arg4, arg5);
-    case 170:
-        return sys_linux_gethostname(arg1, arg2);
-    case 157:
-        return sys_linux_prctl(arg1, arg2, arg3, arg4, arg5);
-    case 200: /* tkill */
-        return sys_linux_kill(arg1, arg2);
     case 200:
         return sys_linux_get_robust_list(arg1, arg2, arg3);
     case 202:
@@ -10176,35 +7044,15 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_statx(arg1, arg2, arg3, arg4, arg5);
     case 280: /* utimensat */
         return sys_linux_utimensat(arg1, arg2, arg3, arg4);
-    case 56: /* clone — VFORK=shared AS; else AS-copy fork */
+    case 56: /* clone — vfork-compatible flags only */
         return sys_linux_clone(arg1, arg2, arg3, arg4, arg5);
-    case 57: /* fork — cooperative eager AS copy */
-        uart_puts("[FORK] SYS_fork enter\n");
-        {
-            long fr = bfree_guest_fork_enter(1);
-            uart_puts("[FORK] enter ret=");
-            uart_puthex64((uint64_t)(long)fr);
-            uart_puts(" fs=");
-            uart_puthex64(bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE));
-            {
-                uint64_t cr3v = 0;
-                __asm__ volatile("mov %%cr3, %0" : "=r"(cr3v));
-                uart_puts(" cr3=");
-                uart_puthex64(cr3v);
-            }
-            uart_puts("\n");
-            return fr;
-        }
-    case 58: /* vfork — shared AS until exec/exit */
-        return bfree_guest_fork_enter(0);
-    case 59: /* execve — child into private AS when possible */
+    case 57: /* fork — no address-space copy yet */
+        return -38; /* ENOSYS */
+    case 58: /* vfork */
+        return bfree_guest_fork_enter();
+    case 59: /* execve — vfork child into private AS when possible */
         return sys_linux_execve(arg1, arg2, arg3);
     default:
-        if (g_guest_sc_unhandled_log_count < 16U) {
-            ++g_guest_sc_unhandled_log_count;
-            uart_puts("[SC?] ");
-            bfree_guest_trace_sc_num(num);
-        }
         return BFREE_LINUX_SYSCALL_UNHANDLED;
     }
 }
@@ -10214,17 +7062,6 @@ static long bfree_dispatch_app_role_syscall(long num, long arg1, long arg2, long
     /* Do not rewrite %fs.base on every syscall: musl TLS lives in MSR FS_BASE
      * and clobbering it with a stale knl_current_task->user_fsbase breaks fork
      * children (set_tid_address / errno after syscall). */
-
-    if (g_guest_sys_trace > 0) {
-        uart_puts("[SYS] nr=");
-        uart_puthex64((uint64_t)num);
-        uart_puts(" a1=");
-        uart_puthex64((uint64_t)arg1);
-        uart_puts(" a2=");
-        uart_puthex64((uint64_t)arg2);
-        uart_puts("\n");
-        g_guest_sys_trace--;
-    }
 
     /* B-Free native numbers overlap Linux 0/1/24; disambiguate before Linux dispatch. */
     if (num == 24) {
@@ -10249,7 +7086,7 @@ static long bfree_dispatch_app_role_syscall(long num, long arg1, long arg2, long
     {
         long linux_ret = bfree_dispatch_linux_guest_syscall(num, arg1, arg2, arg3, arg4, arg5);
         if (linux_ret != BFREE_LINUX_SYSCALL_UNHANDLED) {
-            return bfree_guest_sig_try_deliver(linux_ret);
+            return linux_ret;
         }
     }
     bfree_audit_log("syscall_deny", "nr", (uint64_t)num);
