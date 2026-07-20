@@ -1,8 +1,8 @@
 id	name	severity	status	how	redo
 01	rt_sigreturn+handlers	Blocker	filled	minimal rt_sigframe (pretcode+ucontext/mcontext gregs+siginfo); SYSRET→handler; SA_SIGINFO→rsi=&info rdx=&uc; restorer→rt_sigreturn; SA_ONSTACK; residual: no glibc fpstate, no nested CATCH	REDO
-02	pipe-concurrency	Blocker	filled↑	coop pipe + AS-copy CR3; FORK_PARENT ignores exec_cr3; seq-fork uses vfork per stage (avoid dual AS-copy pt_idx>=1 wedge on ls|grep); AS-copy EAGAIN if live>=1; KEEP_INPROC=0	REDO
+02	pipe-concurrency	Blocker	filled↑	coop pipe + AS-copy CR3; FORK_PARENT ignores exec_cr3; seq-fork uses vfork per stage (avoid dual AS-copy pt_idx>=1 wedge on ls|grep); AS-copy EAGAIN if live>=1; KEEP_INPROC=0	partial
 03	per-process-fd	Blocker	filled	fd+cloexec+dup_save snaps on coop switch; OFD release honors parked snaps; parent-first fork; FD mutations isolated	REDO
-04	SIGCHLD-deliver	High	filled	pending bit + sigpending; wait still primary	verify
+04	SIGCHLD-deliver	High	filled	pending bit + sigpending; wait still primary	done
 05	SIGINT-ctrlc	High	filled	ISIG+VINTR raises SIGINT; CATCH→handler; DFL+coop child→WIFSIGNALED; DFL+interactive ash→shell reenter; soft VSUSP→SIGTSTP tracked under H07	verify
 06	background-jobs	Blocker	filled	ash cmd& = vfork+exec; dual-live; STOPPED+WUNTRACED; kill stop/cont; /dev/tty alias+NB; setpgid syncs tty_pgrp; residual: ash fg UX polish only	REDO
 07	tty-stop-signals	High	filled	/dev/tty OFD+forced NB (EAGAIN empty); controlling tty=fds 0/1/2+/dev/tty; TIOCGPGRP/TIOCSPGRP; coop TTIN/TTOU soft; shell never bg; P8_TTY opens /dev/tty	REDO
@@ -12,7 +12,7 @@ id	name	severity	status	how	redo
 11	file-mmap	Medium	filled	/tmp vfile mmap → anon copy; P8_MMAP	verify
 12	SIGPIPE	Medium	filled	EPIPE on rd_open==0; P8_SIGPIPE	REDO
 13	alarm-setitimer	Medium	filled	pending SIGALRM; nanosleep EINTR; P8_ALARM	REDO
-14	AF_UNIX	Medium	filled	pipe-backed pathname sockets; poll/epoll listen+connected via sock_ready_mask; P8_UNIX	REDO
+14	AF_UNIX	Medium	filled	pipe-backed pathname sockets; poll/epoll listen+connected via sock_ready_mask; P8_UNIX	done
 15	nr200-flock-fsync	Low	filled	tkill/tgkill/robust_list/flock/fsync/dup3/getsid/readv	REDO
 16	sigprocmask-real	Medium	filled	mask stored; P8_SIGMASK	verify
 17	sigaltstack-etc	Low	filled	rt_sigsuspend until pending→EINTR; real sigaltstack ss_sp/ss_size/ss_flags; CATCH SA_ONSTACK uses alt stack; soft SS_AUTODISARM incomplete	REDO
@@ -22,7 +22,7 @@ id	name	severity	status	how	redo
 21	timerfd-linux-nr	Low	filled	283/286/287 → existing timerfd path if any else stub	verify
 22	clock_getres	Low	filled	229; P8_MISC	verify
 23	readv	Low	filled	via 15	REDO
-24	pathname-unix-quality	Low	filled	AF_UNIX bind/connect/accept moves bytes	REDO
+24	pathname-unix-quality	Low	filled	AF_UNIX bind/connect/accept moves bytes	partial
 25	multi-pgid-jobs	Medium	filled	wait/waitid P_PGID + setpgid; 8-slot zombies; kill(-pg) ESRCH via pgid_has_member; waitid(P_PGID,0)↔tty_self_pgid; shell setpgid(0) updates g_guest_pgid+tty_pgrp together; multi-live via H02	verify
 26	CLONE_THREAD	Medium	filled	CLONE_THREAD|CLONE_VM: shared-AS coop threads (serial run-to-exit); SETTLS+tid/cleartid; gettid/set_tid_address; residual: no preemptive parallel threads	REDO
 27	blocking-wait-live	Medium	filled	wait+waitid yield to parked child; wait4 live→0 not ECHILD; multi-zombie oldest-pid reap (same 8-slot table as H25); multi-live=2 via H02	verify
