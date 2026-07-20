@@ -171,6 +171,63 @@ static int g_guest_thread_active;
 static int g_guest_thread_tid;
 static int g_guest_thread_slots_used;
 
+
+/* === restore compile glue (pre-wipe resume) === */
+#ifndef BFREE_MSR_FS_BASE
+#define BFREE_MSR_FS_BASE 0xC0000100ULL
+#endif
+#ifndef BFREE_SIG_DFL
+#define BFREE_SIG_DFL   0
+#define BFREE_SIG_IGN   1
+#define BFREE_SIG_CATCH 2
+#define BFREE_NSIG      64
+#endif
+#ifndef BFREE_UNIX_SLOTS
+#define BFREE_LINUX_AF_UNIX 1
+#define BFREE_UNIX_SLOTS 8
+#define BFREE_UNIX_FD_BASE 0x3900
+typedef struct {
+    int used;
+    int listening;
+    int connected;
+    int accept_rd;
+    int pipe_magic;
+    char path[96];
+} bfree_unix_sock_t;
+static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];
+#endif
+
+static int bfree_user_ptr_mapped(long ptr);
+static void bfree_wrmsr64(uint32_t msr, uint64_t val);
+static uint64_t bfree_rdmsr64(uint32_t msr);
+static int bfree_pty_slot_from_fd(int fd);
+static int bfree_inet_from_fd(int fd);
+static void bfree_inet_sock_release(int resolved);
+static uint16_t bfree_inet_ntohs(uint16_t x);
+static uint32_t bfree_inet_ntohl(uint32_t x);
+static int bfree_unix_from_fd(int fd);
+static long bfree_coop_yield_to_parent_done(long ret);
+static long bfree_coop_yield_to_child_done(long ret);
+static void bfree_guest_sig_raise(int sig);
+static int bfree_guest_sig_take_eintr(void);
+static long bfree_guest_sig_try_deliver(long ret);
+static long bfree_guest_exit_from_fork_signal(int sig);
+
+#ifndef BFREE_RESTORE_COOP_GLOBALS
+#define BFREE_RESTORE_COOP_GLOBALS 1
+static int g_coop_side;
+static int g_coop_child_blocked;
+static int g_coop_parent_started;
+static int g_coop_session = -1;
+static int g_guest_waitid_active;
+static long g_guest_waitid_infop;
+static long g_guest_wait_status_ptr;
+static int g_guest_tty_pgrp = 1;
+static int g_guest_sid = 1;
+static uint8_t g_guest_sig_disp[BFREE_NSIG];
+#endif
+/* === end restore compile glue === */
+
 static void bfree_guest_thread_init(void)
 {
     g_guest_thread_active = 0;
@@ -7478,10 +7535,95 @@ static void bfree_guest_trace_sc_num(long num)
 }
 
 
+
+/* === restore soft bodies (compile-only; H02/H01 replace later) === */
+#ifndef BFREE_RESTORE_SOFT_BODIES
+#define BFREE_RESTORE_SOFT_BODIES 1
+static int bfree_unix_from_fd(int fd)
+{
+    int idx;
+    if (fd < (int)BFREE_UNIX_FD_BASE || fd >= (int)BFREE_UNIX_FD_BASE + BFREE_UNIX_SLOTS) {
+        return -1;
+    }
+    idx = fd - (int)BFREE_UNIX_FD_BASE;
+    return g_unix_socks[idx].used ? idx : -1;
+}
+static int bfree_inet_from_fd(int fd)
+{
+    int idx;
+    if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
+        return -1;
+    }
+    idx = fd - (int)BFREE_INET_FD_BASE;
+    return g_inet_socks[idx].used ? idx : -1;
+}
+static void bfree_inet_sock_release(int resolved)
+{
+    int iidx = bfree_inet_from_fd(resolved);
+    if (iidx < 0) {
+        return;
+    }
+    g_inet_socks[iidx].used = 0;
+    g_inet_socks[iidx].listening = 0;
+    g_inet_socks[iidx].connected = 0;
+    g_inet_socks[iidx].bound = 0;
+    g_inet_socks[iidx].accept_rd = -1;
+    g_inet_socks[iidx].pipe_magic = -1;
+}
+static uint16_t bfree_inet_ntohs(uint16_t x)
+{
+    return (uint16_t)(((x & 0xffU) << 8) | ((x >> 8) & 0xffU));
+}
+static uint32_t bfree_inet_ntohl(uint32_t x)
+{
+    return ((x & 0xffU) << 24) | ((x & 0xff00U) << 8) |
+           ((x >> 8) & 0xff00U) | ((x >> 24) & 0xffU);
+}
+static long bfree_coop_yield_to_parent_done(long ret)
+{
+    /* Soft: full AS-copy yield resumes in H02. */
+    return ret;
+}
+static long bfree_coop_yield_to_child_done(long ret)
+{
+    return ret;
+}
+static void bfree_guest_sig_raise(int sig)
+{
+    if (sig <= 0 || sig >= BFREE_NSIG) {
+        return;
+    }
+    if (sig != 9 && g_guest_sig_disp[sig] == BFREE_SIG_IGN) {
+        return;
+    }
+    (void)sig;
+}
+static int bfree_guest_sig_take_eintr(void)
+{
+    return 0;
+}
+static long bfree_guest_sig_try_deliver(long ret)
+{
+    return ret;
+}
+static long bfree_guest_exit_from_fork_signal(int sig)
+{
+    /* Soft: treat as normal coop child exit with signal status. */
+    (void)sig;
+    if (g_guest_fork_active) {
+        g_guest_fork_status = sig & 0x7f;
+        g_guest_fork_status_ready = 1;
+        g_guest_fork_active = 0;
+    }
+    return BFREE_SYSRET_FORK_PARENT;
+}
+#endif
+/* === end restore soft bodies === */
+
 #ifndef BFREE_RESTORE_SOFT_STUBS
 #define BFREE_RESTORE_SOFT_STUBS 1
 static long sys_linux_fchown(long fd, long uid, long gid) { (void)fd;(void)uid;(void)gid; return 0; }
-static long sys_linux_chown(long path, long uid, long gid) { (void)path;(void)uid;(void)gid; return 0; }
+static long sys_linux_chown(long dirfd, long path, long uid, long gid) { (void)dirfd;(void)path;(void)uid;(void)gid; return 0; }
 static long sys_linux_flock(long fd, long op) { (void)fd;(void)op; return 0; }
 static long sys_linux_fsync(long fd) { (void)fd; return 0; }
 static long sys_linux_alarm(long sec) { (void)sec; return 0; }
