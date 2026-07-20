@@ -191,6 +191,17 @@ void bfree_sysret_exec_globals_init(void)
     bfree_process_init();
 }
 
+
+/* Forward decls: unix/coop bodies live after FD table (H14/H02) */
+static void bfree_guest_alarm_poll(void);
+static int bfree_guest_sig_take_eintr(void);
+static void bfree_coop_fd_snap_init(void);
+static long bfree_coop_yield_to_parent(void);
+static long bfree_coop_yield_to_child(void);
+static int bfree_guest_fd_publish(int target);
+static long sys_linux_read(long fd, long buf, long count);
+static long sys_linux_write(long fd, long buf, long count);
+
 static long bfree_guest_fork_enter(void)
 {
     size_t i;
@@ -230,6 +241,7 @@ static long bfree_guest_fork_enter(void)
     g_guest_fork_pid = child_pid;
     g_guest_fork_active = 1;
     g_guest_fork_status_ready = 0;
+    bfree_coop_fd_snap_init();
     return 0; /* cooperative: continue as child; parent resumes on child exit */
 }
 
@@ -1414,6 +1426,331 @@ static void bfree_guest_fd_ensure_init(void)
     g_guest_fd_target[2] = 2;
     g_guest_fd_inited = 1;
 }
+
+/* Soft stubs until H04/H13 signal pending is restored */
+static void bfree_guest_alarm_poll(void) {}
+static int bfree_guest_sig_take_eintr(void) { return 0; }
+
+#define BFREE_SYSRET_COOP_SWITCH ((long)-4092)
+#define BFREE_LINUX_AF_UNIX 1
+#define BFREE_UNIX_SLOTS 8
+#define BFREE_UNIX_FD_BASE 0x3900
+
+typedef struct {
+    int used;
+    int listening;
+    int connected;
+    int accept_rd;
+    int pipe_magic;
+    char path[96];
+} bfree_unix_sock_t;
+
+static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];
+static int g_coop_side;
+static int g_coop_child_blocked;
+static int g_coop_parent_started;
+static int g_fd_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];
+static int g_fd_snap_child[BFREE_GUEST_FD_TABLE_SIZE];
+static uint64_t g_coop_child_rcx, g_coop_child_r11, g_coop_child_rsp;
+static uint64_t g_coop_child_rbx, g_coop_child_rbp, g_coop_child_r12;
+static uint64_t g_coop_child_r13, g_coop_child_r14, g_coop_child_r15, g_coop_child_rdx;
+
+static void bfree_coop_fd_snap_init(void)
+{
+    int i;
+    bfree_guest_fd_ensure_init();
+    for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+        g_fd_snap_parent[i] = g_guest_fd_target[i];
+        g_fd_snap_child[i] = g_guest_fd_target[i];
+    }
+    g_coop_side = 1;
+    g_coop_child_blocked = 0;
+    g_coop_parent_started = 0;
+}
+
+static void bfree_coop_fd_switch_to(int side)
+{
+    int i;
+    if (side == g_coop_side) {
+        return;
+    }
+    if (g_coop_side == 1) {
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            g_fd_snap_child[i] = g_guest_fd_target[i];
+        }
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            g_guest_fd_target[i] = g_fd_snap_parent[i];
+        }
+    } else {
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            g_fd_snap_parent[i] = g_guest_fd_target[i];
+        }
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            g_guest_fd_target[i] = g_fd_snap_child[i];
+        }
+    }
+    g_coop_side = side;
+}
+
+static void bfree_coop_save_child_user(void)
+{
+    g_coop_child_rcx = g_bfree_user_sysret_rcx;
+    g_coop_child_r11 = g_bfree_user_sysret_r11;
+    g_coop_child_rsp = g_bfree_user_sysret_rsp;
+    g_coop_child_rbx = g_bfree_user_sysret_rbx;
+    g_coop_child_rbp = g_bfree_user_sysret_rbp;
+    g_coop_child_r12 = g_bfree_user_sysret_r12;
+    g_coop_child_r13 = g_bfree_user_sysret_r13;
+    g_coop_child_r14 = g_bfree_user_sysret_r14;
+    g_coop_child_r15 = g_bfree_user_sysret_r15;
+    g_coop_child_rdx = g_bfree_user_sysret_rdx;
+}
+
+static long bfree_coop_yield_to_parent(void)
+{
+    bfree_coop_save_child_user();
+    if (g_coop_child_rcx >= 2) {
+        g_coop_child_rcx -= 2;
+    }
+    g_coop_child_blocked = 1;
+    bfree_coop_fd_switch_to(0);
+    g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
+    g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
+    g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
+    if (!g_coop_parent_started) {
+        g_coop_parent_started = 1;
+        g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+    } else {
+        if (g_bfree_fork_saved_rcx >= 2) {
+            g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx - 2;
+        }
+        g_bfree_fork_parent_ret = 0;
+    }
+    return BFREE_SYSRET_COOP_SWITCH;
+}
+
+static long bfree_coop_yield_to_child(void)
+{
+    g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;
+    g_bfree_fork_saved_r11 = g_bfree_user_sysret_r11;
+    g_bfree_fork_saved_rsp = g_bfree_user_sysret_rsp;
+    g_bfree_fork_saved_rbx = g_bfree_user_sysret_rbx;
+    g_bfree_fork_saved_rbp = g_bfree_user_sysret_rbp;
+    g_bfree_fork_saved_r12 = g_bfree_user_sysret_r12;
+    g_bfree_fork_saved_r13 = g_bfree_user_sysret_r13;
+    g_bfree_fork_saved_r14 = g_bfree_user_sysret_r14;
+    g_bfree_fork_saved_r15 = g_bfree_user_sysret_r15;
+    g_bfree_fork_saved_rdx = g_bfree_user_sysret_rdx;
+    bfree_coop_fd_switch_to(1);
+    g_coop_child_blocked = 0;
+    g_bfree_sysret_exec_rsp = g_coop_child_rsp;
+    g_bfree_sysret_exec_rcx = g_coop_child_rcx;
+    g_bfree_sysret_exec_r11 = g_coop_child_r11;
+    g_bfree_fork_saved_rbx = g_coop_child_rbx;
+    g_bfree_fork_saved_rbp = g_coop_child_rbp;
+    g_bfree_fork_saved_r12 = g_coop_child_r12;
+    g_bfree_fork_saved_r13 = g_coop_child_r13;
+    g_bfree_fork_saved_r14 = g_coop_child_r14;
+    g_bfree_fork_saved_r15 = g_coop_child_r15;
+    g_bfree_fork_saved_rdx = g_coop_child_rdx;
+    g_bfree_fork_parent_ret = 0;
+    return BFREE_SYSRET_COOP_SWITCH;
+}
+
+static int bfree_unix_from_fd(int fd)
+{
+    int idx;
+    if (fd < (int)BFREE_UNIX_FD_BASE || fd >= (int)BFREE_UNIX_FD_BASE + BFREE_UNIX_SLOTS) {
+        return -1;
+    }
+    idx = fd - (int)BFREE_UNIX_FD_BASE;
+    return g_unix_socks[idx].used ? idx : -1;
+}
+
+static long sys_linux_socket(long domain, long type, long protocol)
+{
+    int i;
+    (void)type;
+    (void)protocol;
+    if (domain != BFREE_LINUX_AF_UNIX) {
+        return -97;
+    }
+    for (i = 0; i < BFREE_UNIX_SLOTS; ++i) {
+        if (!g_unix_socks[i].used) {
+            g_unix_socks[i].used = 1;
+            g_unix_socks[i].listening = 0;
+            g_unix_socks[i].connected = 0;
+            g_unix_socks[i].accept_rd = -1;
+            g_unix_socks[i].pipe_magic = -1;
+            g_unix_socks[i].path[0] = '\0';
+            return bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + i);
+        }
+    }
+    return -24;
+}
+
+static long sys_linux_bind(long sockfd, long addr, long addrlen)
+{
+    int idx, i;
+    const uint8_t *raw;
+    size_t n;
+    sockfd = bfree_guest_fd_resolve((int)sockfd);
+    idx = bfree_unix_from_fd((int)sockfd);
+    if (idx < 0) {
+        return -88;
+    }
+    if (addrlen < 4 || addr == 0 || !bfree_user_ptr_mapped(addr)) {
+        return -14;
+    }
+    raw = (const uint8_t *)(uintptr_t)addr;
+    n = 0;
+    while (n + 2U < (size_t)addrlen && n + 1U < sizeof(g_unix_socks[idx].path) &&
+           raw[2 + n] != 0) {
+        g_unix_socks[idx].path[n] = (char)raw[2 + n];
+        ++n;
+    }
+    g_unix_socks[idx].path[n] = '\0';
+    if (n == 0) {
+        return -22;
+    }
+    for (i = 0; i < BFREE_UNIX_SLOTS; ++i) {
+        if (i != idx && g_unix_socks[i].used && g_unix_socks[i].path[0] &&
+            strcmp(g_unix_socks[i].path, g_unix_socks[idx].path) == 0) {
+            return -98;
+        }
+    }
+    return 0;
+}
+
+static long sys_linux_listen(long sockfd, long backlog)
+{
+    int idx;
+    (void)backlog;
+    sockfd = bfree_guest_fd_resolve((int)sockfd);
+    idx = bfree_unix_from_fd((int)sockfd);
+    if (idx < 0) {
+        return -88;
+    }
+    if (g_unix_socks[idx].path[0] == '\0') {
+        return -22;
+    }
+    g_unix_socks[idx].listening = 1;
+    return 0;
+}
+
+static long sys_linux_connect(long sockfd, long addr, long addrlen)
+{
+    int idx, li, i, slot = -1, rd, wr;
+    const uint8_t *raw;
+    char path[96];
+    size_t n;
+    sockfd = bfree_guest_fd_resolve((int)sockfd);
+    idx = bfree_unix_from_fd((int)sockfd);
+    if (idx < 0) {
+        return -88;
+    }
+    if (addrlen < 4 || addr == 0 || !bfree_user_ptr_mapped(addr)) {
+        return -14;
+    }
+    raw = (const uint8_t *)(uintptr_t)addr;
+    n = 0;
+    while (n + 2U < (size_t)addrlen && n + 1U < sizeof(path) && raw[2 + n] != 0) {
+        path[n] = (char)raw[2 + n];
+        ++n;
+    }
+    path[n] = '\0';
+    for (li = 0; li < BFREE_UNIX_SLOTS; ++li) {
+        if (g_unix_socks[li].used && g_unix_socks[li].listening &&
+            strcmp(g_unix_socks[li].path, path) == 0) {
+            break;
+        }
+    }
+    if (li >= BFREE_UNIX_SLOTS) {
+        return -111;
+    }
+    if (g_unix_socks[li].accept_rd >= 0) {
+        return -11;
+    }
+    for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
+        if (!g_guest_pipes[i].used) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        return -24;
+    }
+    g_guest_pipes[slot].used = 1;
+    g_guest_pipes[slot].rd_open = 1;
+    g_guest_pipes[slot].wr_open = 1;
+    g_guest_pipes[slot].len = 0;
+    g_guest_pipes[slot].nonblock = 0;
+    rd = bfree_guest_pipe_magic_fd(slot, 0);
+    wr = bfree_guest_pipe_magic_fd(slot, 1);
+    g_unix_socks[idx].connected = 1;
+    g_unix_socks[idx].pipe_magic = wr;
+    g_unix_socks[li].accept_rd = rd;
+    return 0;
+}
+
+static long sys_linux_accept(long sockfd, long addr, long addrlen)
+{
+    int idx, rd;
+    (void)addr;
+    (void)addrlen;
+    sockfd = bfree_guest_fd_resolve((int)sockfd);
+    idx = bfree_unix_from_fd((int)sockfd);
+    if (idx < 0) {
+        return -88;
+    }
+    if (!g_unix_socks[idx].listening) {
+        return -22;
+    }
+    if (g_unix_socks[idx].accept_rd < 0) {
+        return -11;
+    }
+    rd = g_unix_socks[idx].accept_rd;
+    g_unix_socks[idx].accept_rd = -1;
+    return bfree_guest_fd_publish(rd);
+}
+
+static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr, long addrlen)
+{
+    int idx;
+    (void)flags;
+    (void)addr;
+    (void)addrlen;
+    fd = bfree_guest_fd_resolve((int)fd);
+    idx = bfree_unix_from_fd((int)fd);
+    if (idx >= 0 && g_unix_socks[idx].connected && g_unix_socks[idx].pipe_magic >= 0) {
+        return sys_linux_write(g_unix_socks[idx].pipe_magic, buf, len);
+    }
+    return sys_linux_write(fd, buf, len);
+}
+
+static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long addr, long addrlen)
+{
+    int idx;
+    (void)flags;
+    (void)addr;
+    (void)addrlen;
+    fd = bfree_guest_fd_resolve((int)fd);
+    idx = bfree_unix_from_fd((int)fd);
+    if (idx >= 0 && g_unix_socks[idx].pipe_magic >= 0) {
+        /* accepted side uses published pipe rd; connected client uses pipe_magic wr —
+         * recv on accepted fd goes through normal pipe read via published fd. */
+    }
+    if (idx >= 0 && g_unix_socks[idx].connected && g_unix_socks[idx].pipe_magic >= 0) {
+        /* Client sendto uses wr; client recv should use rd of same slot. */
+        int mag = g_unix_socks[idx].pipe_magic;
+        if (bfree_guest_pipe_is_wr_magic(mag)) {
+            mag = mag - 1;
+        }
+        return sys_linux_read(mag, buf, len);
+    }
+    return sys_linux_read(fd, buf, len);
+}
+
 
 static void bfree_guest_stdio_heal_pipes(void)
 {
@@ -2634,6 +2971,16 @@ static long sys_linux_read(long fd, long buf, long count)
                 return -11; /* EAGAIN */
             }
             while (ps->len == 0 && ps->wr_open > 0) {
+                if (g_guest_fork_active && g_coop_side == 1) {
+                    return bfree_coop_yield_to_parent();
+                }
+                bfree_guest_alarm_poll();
+                {
+                    int er = bfree_guest_sig_take_eintr();
+                    if (er < 0) {
+                        return er;
+                    }
+                }
                 __asm__ volatile("sti; hlt" ::: "memory");
             }
             if (ps->len == 0) {
@@ -2809,6 +3156,10 @@ static long sys_linux_write(long fd, long buf, long count)
             ps->buf[ps->len + i] = src[i];
         }
         ps->len += n;
+        /* B-Free: coop yield after pipe write */
+        if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked && n > 0) {
+            return bfree_coop_yield_to_child();
+        }
         return (long)n;
     }
     if (bfree_guest_is_eventfd(fd)) {
@@ -6855,6 +7206,20 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_epoll_ctl(arg1, arg2, arg3, arg4);
     case 281:
         return sys_linux_epoll_wait(arg1, arg2, arg3, arg5);
+    case 41: /* socket */
+        return sys_linux_socket(arg1, arg2, arg3);
+    case 49: /* bind */
+        return sys_linux_bind(arg1, arg2, arg3);
+    case 50: /* listen */
+        return sys_linux_listen(arg1, arg2);
+    case 43: /* accept */
+        return sys_linux_accept(arg1, arg2, arg3);
+    case 42: /* connect */
+        return sys_linux_connect(arg1, arg2, arg3);
+    case 44: /* sendto */
+        return sys_linux_sendto(arg1, arg2, arg3, arg4, arg5, 0);
+    case 45: /* recvfrom */
+        return sys_linux_recvfrom(arg1, arg2, arg3, arg4, arg5, 0);
     case 53:
         return sys_linux_socketpair(arg1, arg2, arg3, arg4);
     case 284:
