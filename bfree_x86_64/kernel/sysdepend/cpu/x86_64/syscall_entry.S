@@ -58,6 +58,14 @@
 
 	.extern g_bfree_sysret_sig_rax
 
+	.extern g_bfree_sig_saved_rbx
+	.extern g_bfree_sig_saved_rbp
+	.extern g_bfree_sig_saved_r12
+	.extern g_bfree_sig_saved_r13
+	.extern g_bfree_sig_saved_r14
+	.extern g_bfree_sig_saved_r15
+	.extern g_bfree_sig_saved_rdx
+
 	.extern g_bfree_user_sysret_rcx
 
 	.extern g_bfree_user_sysret_r11

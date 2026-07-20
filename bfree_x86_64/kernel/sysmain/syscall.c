@@ -94,6 +94,15 @@ uint64_t g_bfree_exec_transfer_rip;
 /* RAX loaded by BFREE_SYSRET_SIGNAL (0 at handler entry; interrupted retval on sigreturn). */
 uint64_t g_bfree_sysret_sig_rax;
 
+/* H01: callee-saved published for BFREE_SYSRET_SIGNAL (syscall_entry.S). */
+uint64_t g_bfree_sig_saved_rbx;
+uint64_t g_bfree_sig_saved_rbp;
+uint64_t g_bfree_sig_saved_r12;
+uint64_t g_bfree_sig_saved_r13;
+uint64_t g_bfree_sig_saved_r14;
+uint64_t g_bfree_sig_saved_r15;
+uint64_t g_bfree_sig_saved_rdx;
+
 uint64_t g_bfree_user_sysret_rcx;
 uint64_t g_bfree_user_sysret_r11;
 uint64_t g_bfree_user_sysret_rsp;
@@ -248,6 +257,16 @@ static long g_guest_wait_status_ptr;
 static int g_guest_tty_pgrp = 1;
 static int g_guest_sid = 1;
 static uint8_t g_guest_sig_disp[BFREE_NSIG];
+#ifndef BFREE_SA_SIGINFO
+#define BFREE_SA_SIGINFO 0x4UL
+#define BFREE_SA_NODEFER 0x40000000UL
+#endif
+static void *g_guest_sig_handler[BFREE_NSIG];
+static void *g_guest_sig_restorer[BFREE_NSIG];
+static unsigned long g_guest_sig_flags[BFREE_NSIG];
+static uint64_t g_guest_sig_sa_mask[BFREE_NSIG];
+static uint64_t g_guest_sig_pending;
+static uint64_t g_guest_sig_mask;
 #endif
 /* === end restore compile glue === */
 
@@ -4025,19 +4044,87 @@ static long sys_linux_writev(long fd, long iov_ptr, long iovcnt)
 
 static long sys_linux_rt_sigaction(long signum, long act, long oldact, long sigsetsize)
 {
-    (void)signum;
-    (void)act;
-    (void)oldact;
+    typedef struct {
+        void *sa_handler;
+        unsigned long sa_flags;
+        void *sa_restorer;
+        unsigned long sa_mask;
+    } bfree_k_sigaction_t;
+    bfree_k_sigaction_t *ka;
+    int sig = (int)signum;
+
     (void)sigsetsize;
+    if (sig <= 0 || sig >= BFREE_NSIG || sig == 9 || sig == 19) {
+        return -22;
+    }
+    if (oldact != 0) {
+        if (!bfree_user_ptr_mapped(oldact)) {
+            return -14;
+        }
+        ka = (bfree_k_sigaction_t *)(uintptr_t)oldact;
+        if (g_guest_sig_disp[sig] == BFREE_SIG_IGN) {
+            ka->sa_handler = (void *)(uintptr_t)1;
+        } else if (g_guest_sig_disp[sig] == BFREE_SIG_CATCH) {
+            ka->sa_handler = g_guest_sig_handler[sig];
+        } else {
+            ka->sa_handler = (void *)0;
+        }
+        ka->sa_flags = g_guest_sig_flags[sig];
+        ka->sa_restorer = g_guest_sig_restorer[sig];
+        ka->sa_mask = (unsigned long)g_guest_sig_sa_mask[sig];
+    }
+    if (act != 0) {
+        void *handler;
+        if (!bfree_user_ptr_mapped(act)) {
+            return -14;
+        }
+        ka = (bfree_k_sigaction_t *)(uintptr_t)act;
+        handler = ka->sa_handler;
+        g_guest_sig_flags[sig] = ka->sa_flags;
+        g_guest_sig_restorer[sig] = ka->sa_restorer;
+        g_guest_sig_sa_mask[sig] = (uint64_t)ka->sa_mask;
+        g_guest_sig_handler[sig] = handler;
+        if (handler == (void *)0) {
+            g_guest_sig_disp[sig] = BFREE_SIG_DFL;
+        } else if (handler == (void *)(uintptr_t)1) {
+            g_guest_sig_disp[sig] = BFREE_SIG_IGN;
+        } else {
+            g_guest_sig_disp[sig] = BFREE_SIG_CATCH;
+        }
+    }
     return 0;
 }
 
 static long sys_linux_rt_sigprocmask(long how, long set, long oldset, long sigsetsize)
 {
-    (void)how;
-    (void)set;
-    (void)oldset;
+    uint64_t newmask;
+    uint64_t old;
+
     (void)sigsetsize;
+    old = g_guest_sig_mask;
+    if (oldset != 0) {
+        if (!bfree_user_ptr_mapped(oldset)) {
+            return -14;
+        }
+        *(uint64_t *)(uintptr_t)oldset = old;
+    }
+    if (set == 0) {
+        return 0;
+    }
+    if (!bfree_user_ptr_mapped(set)) {
+        return -14;
+    }
+    newmask = *(uint64_t *)(uintptr_t)set;
+    newmask &= ~((1ULL << 8) | (1ULL << 18));
+    if (how == 0) { /* SIG_BLOCK */
+        g_guest_sig_mask = old | newmask;
+    } else if (how == 1) { /* SIG_UNBLOCK */
+        g_guest_sig_mask = old & ~newmask;
+    } else if (how == 2) { /* SIG_SETMASK */
+        g_guest_sig_mask = newmask;
+    } else {
+        return -22;
+    }
     return 0;
 }
 
@@ -7904,49 +7991,96 @@ static long bfree_coop_yield_to_child_done(long ret)
 #endif /* BFREE_H02_AS_COPY_WIRED */
 
 /* === restore soft bodies (compile-only; H02/H01 replace later) === */
-#ifndef BFREE_RESTORE_SOFT_BODIES
-#define BFREE_RESTORE_SOFT_BODIES 1
-static int bfree_unix_from_fd(int fd)
+
+/* === H01 rt_sigframe / CATCH deliver (fpstate + nested CATCH still residual) === */
+#ifndef BFREE_H01_SIGFRAME_WIRED
+#define BFREE_H01_SIGFRAME_WIRED 1
+
+#ifndef BFREE_OFFSETOF
+#define BFREE_OFFSETOF(type, member) __builtin_offsetof(type, member)
+#endif
+
+static int g_sig_deliver_sig;
+static int g_sig_in_handler;
+static int g_sig_mask_pushed;
+static uint64_t g_sig_saved_rax;
+static uint64_t g_sig_saved_rdi;
+static uint64_t g_sig_saved_rsi;
+static uint64_t g_sig_saved_rdx;
+static uint64_t g_sig_saved_rbx;
+static uint64_t g_sig_saved_rbp;
+static uint64_t g_sig_saved_r12;
+static uint64_t g_sig_saved_r13;
+static uint64_t g_sig_saved_r14;
+static uint64_t g_sig_saved_r15;
+static uint64_t g_sig_saved_rip;
+static uint64_t g_sig_saved_rsp;
+static uint64_t g_sig_saved_rflags;
+static uint64_t g_sig_saved_mask;
+
+typedef struct {
+    uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
+    uint64_t rdi, rsi, rbp, rbx, rdx, rax, rcx, rsp, rip, efl;
+    uint64_t csgsfs, err, trapno, oldmask, cr2;
+} bfree_sig_mcontext_t;
+
+typedef struct {
+    uint64_t pad_uc_flags;
+    uint64_t pad_uc_link;
+    uint64_t pad_ss_sp;
+    uint64_t pad_ss_flags;
+    uint64_t pad_ss_size;
+    bfree_sig_mcontext_t mc;
+    uint64_t uc_sigmask;
+} bfree_sig_ucontext_t;
+
+typedef struct {
+    int32_t si_signo;
+    int32_t si_errno;
+    int32_t si_code;
+    int32_t si_pad;
+    uint64_t si_addr;
+    int32_t si_status;
+    int32_t si_pad2;
+    uint64_t si_value;
+    uint8_t pad[96];
+} bfree_siginfo_min_t;
+
+typedef struct {
+    uint64_t pretcode;
+    bfree_sig_ucontext_t uc;
+    bfree_siginfo_min_t info;
+} bfree_rt_sigframe_t;
+
+static int bfree_user_range_mapped(uint64_t base, size_t nbytes)
 {
-    int idx;
-    if (fd < (int)BFREE_UNIX_FD_BASE || fd >= (int)BFREE_UNIX_FD_BASE + BFREE_UNIX_SLOTS) {
-        return -1;
+    uint64_t a;
+    uint64_t end;
+
+    if (nbytes == 0) {
+        return 1;
     }
-    idx = fd - (int)BFREE_UNIX_FD_BASE;
-    return g_unix_socks[idx].used ? idx : -1;
-}
-static int bfree_inet_from_fd(int fd)
-{
-    int idx;
-    if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
-        return -1;
+    if (base + (uint64_t)nbytes < base) {
+        return 0;
     }
-    idx = fd - (int)BFREE_INET_FD_BASE;
-    return g_inet_socks[idx].used ? idx : -1;
-}
-static void bfree_inet_sock_release(int resolved)
-{
-    int iidx = bfree_inet_from_fd(resolved);
-    if (iidx < 0) {
-        return;
+    end = base + (uint64_t)nbytes;
+    for (a = base & ~0xfffULL; a < end; a += 0x1000ULL) {
+        if (!bfree_user_vaddr_mapped(a)) {
+            return 0;
+        }
     }
-    g_inet_socks[iidx].used = 0;
-    g_inet_socks[iidx].listening = 0;
-    g_inet_socks[iidx].connected = 0;
-    g_inet_socks[iidx].bound = 0;
-    g_inet_socks[iidx].accept_rd = -1;
-    g_inet_socks[iidx].pipe_magic = -1;
+    return 1;
 }
-static uint16_t bfree_inet_ntohs(uint16_t x)
+
+static int bfree_sysret_is_magic(long r)
 {
-    return (uint16_t)(((x & 0xffU) << 8) | ((x >> 8) & 0xffU));
+    return r == BFREE_SYSRET_EXEC_TRANSFER ||
+           r == BFREE_SYSRET_FORK_PARENT ||
+           r == BFREE_SYSRET_COOP_SWITCH ||
+           r == BFREE_SYSRET_SIGNAL;
 }
-static uint32_t bfree_inet_ntohl(uint32_t x)
-{
-    return ((x & 0xffU) << 24) | ((x & 0xff00U) << 8) |
-           ((x >> 8) & 0xff00U) | ((x >> 24) & 0xffU);
-}
-/* H02: yield_*_done provided above */
+
+
 static void bfree_guest_sig_raise(int sig)
 {
     if (sig <= 0 || sig >= BFREE_NSIG) {
@@ -7955,16 +8089,225 @@ static void bfree_guest_sig_raise(int sig)
     if (sig != 9 && g_guest_sig_disp[sig] == BFREE_SIG_IGN) {
         return;
     }
-    (void)sig;
+    g_guest_sig_pending |= (1ULL << (unsigned)(sig - 1));
 }
+
+static int bfree_guest_sig_is_blocked(int sig)
+{
+    if (sig <= 0 || sig >= BFREE_NSIG) {
+        return 0;
+    }
+    return (g_guest_sig_mask & (1ULL << (unsigned)(sig - 1))) != 0ULL;
+}
+
+static void bfree_guest_sig_arm_catch(int sig)
+{
+    if (sig <= 0 || sig >= BFREE_NSIG) {
+        return;
+    }
+    if (g_sig_in_handler || g_sig_deliver_sig != 0) {
+        return; /* nested CATCH residual */
+    }
+    if (g_guest_sig_disp[sig] != BFREE_SIG_CATCH) {
+        return;
+    }
+    g_sig_deliver_sig = sig;
+}
+
+static void bfree_guest_sig_arm_pending_catch(void)
+{
+    const int candidates[] = { 2, 14, 13, 17, 15, 1, 10 };
+    int i;
+
+    if (g_sig_in_handler || g_sig_deliver_sig != 0) {
+        return;
+    }
+    for (i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); ++i) {
+        int sig = candidates[i];
+        uint64_t bit = 1ULL << (unsigned)(sig - 1);
+        if ((g_guest_sig_pending & bit) == 0ULL) {
+            continue;
+        }
+        if (bfree_guest_sig_is_blocked(sig)) {
+            continue;
+        }
+        if (g_guest_sig_disp[sig] != BFREE_SIG_CATCH) {
+            continue;
+        }
+        g_guest_sig_pending &= ~bit;
+        g_sig_deliver_sig = sig;
+        return;
+    }
+}
+
 static int bfree_guest_sig_take_eintr(void)
 {
+    const int candidates[] = { 2, 14, 13, 17, 15, 1, 10 };
+    int i;
+    for (i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); ++i) {
+        int sig = candidates[i];
+        uint64_t bit = 1ULL << (unsigned)(sig - 1);
+        if ((g_guest_sig_pending & bit) == 0ULL) {
+            continue;
+        }
+        if (bfree_guest_sig_is_blocked(sig)) {
+            continue;
+        }
+        if (sig != 9 && g_guest_sig_disp[sig] == BFREE_SIG_IGN) {
+            g_guest_sig_pending &= ~bit;
+            continue;
+        }
+        g_guest_sig_pending &= ~bit;
+        if (g_guest_sig_disp[sig] == BFREE_SIG_CATCH) {
+            bfree_guest_sig_arm_catch(sig);
+        }
+        return -4; /* EINTR */
+    }
     return 0;
 }
-static long bfree_guest_sig_try_deliver(long ret)
+
+static long bfree_guest_sig_try_deliver(long syscall_ret)
 {
-    return ret;
+    int sig;
+    void *handler;
+    void *restorer;
+    uint64_t rsp;
+    uint64_t frame_base;
+    bfree_rt_sigframe_t *frame;
+
+    if (bfree_sysret_is_magic(syscall_ret)) {
+        return syscall_ret;
+    }
+    bfree_guest_sig_arm_pending_catch();
+    if (g_sig_in_handler || g_sig_deliver_sig == 0) {
+        return syscall_ret;
+    }
+
+    sig = g_sig_deliver_sig;
+    g_sig_deliver_sig = 0;
+    handler = g_guest_sig_handler[sig];
+    restorer = g_guest_sig_restorer[sig];
+
+    if (g_guest_sig_disp[sig] != BFREE_SIG_CATCH ||
+        handler == 0 || handler == (void *)(uintptr_t)1 ||
+        restorer == 0 ||
+        !bfree_user_ptr_mapped((long)(uintptr_t)handler) ||
+        !bfree_user_ptr_mapped((long)(uintptr_t)restorer)) {
+        bfree_guest_sig_raise(sig);
+        return syscall_ret;
+    }
+
+    rsp = g_bfree_user_sysret_rsp;
+    if (rsp < (uint64_t)sizeof(bfree_rt_sigframe_t) + 16ULL) {
+        bfree_guest_sig_raise(sig);
+        return syscall_ret;
+    }
+    rsp &= ~15ULL;
+    frame_base = rsp - (uint64_t)sizeof(bfree_rt_sigframe_t);
+    if (!bfree_user_range_mapped(frame_base, sizeof(bfree_rt_sigframe_t))) {
+        bfree_guest_sig_raise(sig);
+        return syscall_ret;
+    }
+    frame = (bfree_rt_sigframe_t *)(uintptr_t)frame_base;
+    memset(frame, 0, sizeof(*frame));
+    frame->pretcode = (uint64_t)(uintptr_t)restorer;
+    frame->info.si_signo = sig;
+    frame->info.si_code = 0;
+
+    g_sig_saved_rax = (uint64_t)(int64_t)syscall_ret;
+    g_sig_saved_rdi = 0;
+    g_sig_saved_rsi = 0;
+    g_sig_saved_rdx = g_bfree_user_sysret_rdx;
+    g_sig_saved_rbx = g_bfree_user_sysret_rbx;
+    g_sig_saved_rbp = g_bfree_user_sysret_rbp;
+    g_sig_saved_r12 = g_bfree_user_sysret_r12;
+    g_sig_saved_r13 = g_bfree_user_sysret_r13;
+    g_sig_saved_r14 = g_bfree_user_sysret_r14;
+    g_sig_saved_r15 = g_bfree_user_sysret_r15;
+    g_sig_saved_rip = g_bfree_user_sysret_rcx;
+    g_sig_saved_rsp = g_bfree_user_sysret_rsp;
+    g_sig_saved_rflags = g_bfree_user_sysret_r11;
+    g_sig_saved_mask = g_guest_sig_mask;
+
+    frame->uc.mc.r12 = g_sig_saved_r12;
+    frame->uc.mc.r13 = g_sig_saved_r13;
+    frame->uc.mc.r14 = g_sig_saved_r14;
+    frame->uc.mc.r15 = g_sig_saved_r15;
+    frame->uc.mc.rdi = g_sig_saved_rdi;
+    frame->uc.mc.rsi = g_sig_saved_rsi;
+    frame->uc.mc.rbp = g_sig_saved_rbp;
+    frame->uc.mc.rbx = g_sig_saved_rbx;
+    frame->uc.mc.rdx = g_sig_saved_rdx;
+    frame->uc.mc.rax = g_sig_saved_rax;
+    frame->uc.mc.rsp = g_sig_saved_rsp;
+    frame->uc.mc.rip = g_sig_saved_rip;
+    frame->uc.mc.efl = g_sig_saved_rflags;
+    frame->uc.mc.oldmask = g_sig_saved_mask;
+    frame->uc.uc_sigmask = g_sig_saved_mask;
+
+    g_guest_sig_mask |= g_guest_sig_sa_mask[sig];
+    if ((g_guest_sig_flags[sig] & BFREE_SA_NODEFER) == 0UL) {
+        g_guest_sig_mask |= (1ULL << (unsigned)(sig - 1));
+    }
+    g_guest_sig_mask &= ~((1ULL << 8) | (1ULL << 18));
+    g_sig_mask_pushed = 1;
+    g_sig_in_handler = 1;
+
+    g_bfree_sysret_exec_rsp = frame_base;
+    g_bfree_sysret_exec_rcx = (uint64_t)(uintptr_t)handler;
+    g_bfree_sysret_exec_r11 = g_bfree_user_sysret_r11 | 0x200ULL;
+    g_bfree_sysret_exec_rdi = (uint64_t)(unsigned)sig;
+    if ((g_guest_sig_flags[sig] & BFREE_SA_SIGINFO) != 0UL) {
+        g_bfree_sysret_exec_rsi = frame_base + BFREE_OFFSETOF(bfree_rt_sigframe_t, info);
+        g_bfree_sysret_exec_rdx = frame_base + BFREE_OFFSETOF(bfree_rt_sigframe_t, uc);
+    } else {
+        g_bfree_sysret_exec_rsi = 0;
+        g_bfree_sysret_exec_rdx = 0;
+    }
+    g_bfree_sysret_exec_cr3 = 0;
+    g_bfree_sysret_sig_rax = 0;
+    g_bfree_sig_saved_rbx = g_sig_saved_rbx;
+    g_bfree_sig_saved_rbp = g_sig_saved_rbp;
+    g_bfree_sig_saved_r12 = g_sig_saved_r12;
+    g_bfree_sig_saved_r13 = g_sig_saved_r13;
+    g_bfree_sig_saved_r14 = g_sig_saved_r14;
+    g_bfree_sig_saved_r15 = g_sig_saved_r15;
+    g_bfree_sig_saved_rdx = g_sig_saved_rdx;
+    return BFREE_SYSRET_SIGNAL;
 }
+
+static long sys_linux_rt_sigreturn(void)
+{
+    if (!g_sig_in_handler) {
+        return -22;
+    }
+    g_sig_in_handler = 0;
+    if (g_sig_mask_pushed) {
+        g_guest_sig_mask = g_sig_saved_mask;
+        g_sig_mask_pushed = 0;
+    }
+    g_bfree_sysret_exec_rsp = g_sig_saved_rsp;
+    g_bfree_sysret_exec_rcx = g_sig_saved_rip;
+    g_bfree_sysret_exec_r11 = g_sig_saved_rflags | 0x200ULL;
+    g_bfree_sysret_exec_rdi = g_sig_saved_rdi;
+    g_bfree_sysret_exec_rsi = g_sig_saved_rsi;
+    g_bfree_sysret_exec_rdx = g_sig_saved_rdx;
+    g_bfree_sysret_exec_cr3 = 0;
+    g_bfree_sysret_sig_rax = g_sig_saved_rax;
+    g_bfree_sig_saved_rbx = g_sig_saved_rbx;
+    g_bfree_sig_saved_rbp = g_sig_saved_rbp;
+    g_bfree_sig_saved_r12 = g_sig_saved_r12;
+    g_bfree_sig_saved_r13 = g_sig_saved_r13;
+    g_bfree_sig_saved_r14 = g_sig_saved_r14;
+    g_bfree_sig_saved_r15 = g_sig_saved_r15;
+    g_bfree_sig_saved_rdx = g_sig_saved_rdx;
+    return BFREE_SYSRET_SIGNAL;
+}
+
+#endif /* BFREE_H01_SIGFRAME_WIRED */
+
+#ifndef BFREE_RESTORE_SOFT_BODIES
+#define BFREE_RESTORE_SOFT_BODIES 1
 static long bfree_guest_exit_from_fork_signal(int sig)
 {
     /* Soft: treat as normal coop child exit with signal status. */
@@ -7991,7 +8334,7 @@ static long sys_linux_setitimer(long which, long newv, long oldv) { (void)which;
 static long sys_linux_getsid(long pid) { (void)pid; return 1; }
 static long sys_linux_set_robust_list(long head, long len) { (void)head;(void)len; return 0; }
 static long sys_linux_rt_sigpending(long set) { (void)set; return 0; }
-static long sys_linux_rt_sigreturn(void) { return 0; }
+/* H01: sys_linux_rt_sigreturn provided above */
 static long sys_linux_clock_getres_linux(long clk, long tp) { (void)clk;(void)tp; return 0; }
 static int bfree_pty_slot_from_fd(int fd) { (void)fd; return -1; }
 static unsigned initrd_presence_mask(void) { return 0; }
@@ -8089,6 +8432,8 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_rt_sigaction(arg1, arg2, arg3, arg4);
     case 14:
         return sys_linux_rt_sigprocmask(arg1, arg2, arg3, arg4);
+    case 15: /* rt_sigreturn */
+        return sys_linux_rt_sigreturn();
     case 16:
         return sys_linux_ioctl(arg1, arg2, arg3);
     case 20:
