@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggressive compile-fix for partially restored syscall.c."""
+"""Aggressive compile-fix for restored syscall.c (pre-wipe resume)."""
 from __future__ import annotations
 
 import re
@@ -11,55 +11,28 @@ INET = ROOT / "tools" / "_recovered_syscall" / "inet.c"
 text = PATH.read_text(encoding="utf-8", errors="replace")
 orig = text
 
-def ensure(snippet: str, after: str, label: str) -> None:
+def ensure(marker: str, insert: str, after: str) -> None:
     global text
-    if snippet.strip() in text:
-        print("skip", label)
+    if marker in text:
+        print("skip", marker[:40])
         return
     if after not in text:
-        print("MISS anchor", label)
+        print("MISS anchor", after[:40])
         return
-    text = text.replace(after, after + "\n" + snippet + "\n", 1)
-    print("OK", label)
+    text = text.replace(after, after + insert, 1)
+    print("OK insert", marker[:40])
 
-# --- Missing globals / macros often dropped by partial replay ---
-globals_block = r'''
-/* --- restore glue: coop / inet / pgid (mobile restore pass) --- */
+# --- Missing inet / coop globals (defs used but types missing) ---
+INET_DEFS = r'''
+/* H32 AF_INET (restored) */
 #ifndef BFREE_LINUX_AF_INET
 #define BFREE_LINUX_AF_INET 2
 #endif
-#ifndef BFREE_INADDR_ANY
-#define BFREE_INADDR_ANY 0U
-#endif
-#ifndef BFREE_INADDR_LOOPBACK
-#define BFREE_INADDR_LOOPBACK 0x7f000001U
-#endif
 #ifndef BFREE_INET_SLOTS
 #define BFREE_INET_SLOTS 8
-#endif
-#ifndef BFREE_INET_FD_BASE
-#define BFREE_INET_FD_BASE 0x3B00  /* avoid clash with PTY 0x3A00 */
-#endif
-#ifndef BFREE_MSR_FS_BASE
-#define BFREE_MSR_FS_BASE 0xC0000100ULL
-#endif
-
-#ifndef BFREE_UNIX_FD_BASE
-#define BFREE_UNIX_FD_BASE 0x3900
-#define BFREE_UNIX_SLOTS 8
-#define BFREE_LINUX_AF_UNIX 1
-#define BFREE_SYSRET_COOP_SWITCH ((long)-4092)
-typedef struct {
-    int used;
-    int listening;
-    int connected;
-    int accept_rd;
-    int pipe_magic;
-    char path[96];
-} bfree_unix_sock_t;
-static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];
-#endif
-
+#define BFREE_INET_FD_BASE 0x3B00 /* avoid PTY 0x3A00 clash */
+#define BFREE_INADDR_LOOPBACK 0x7f000001U
+#define BFREE_INADDR_ANY 0U
 typedef struct {
     int used;
     int listening;
@@ -71,124 +44,147 @@ typedef struct {
     int pipe_magic;
 } bfree_inet_sock_t;
 static bfree_inet_sock_t g_inet_socks[BFREE_INET_SLOTS];
+#endif
 
-static int g_coop_side;
-static int g_coop_child_blocked;
-static int g_coop_parent_started;
+/* H02 coop dual-live resume (stubs if missing) */
+#ifndef BFREE_COOP_RESUME_STUBS
+#define BFREE_COOP_RESUME_STUBS 1
 static int g_coop_parent_resume_mode;
 static int g_coop_child_resume_mode;
 static uint64_t g_coop_parent_resume_rax;
 static uint64_t g_coop_child_resume_rax;
 static uint64_t g_coop_parent_rcx;
 static long g_coop_cur_nr;
-static int g_guest_pgid;
 static int g_guest_sys_trace;
-
-static uint64_t bfree_rdmsr64(uint32_t msr);
-static void bfree_wrmsr64(uint32_t msr, uint64_t val);
-static int bfree_user_ptr_mapped(long ptr);
-'''
-
-# Insert after post-wipe stubs or after includes-ish early globals
-anchor = "uint64_t g_bfree_sig_saved_r15;"
-if "g_inet_socks[" not in text or text.count("g_inet_socks") < 2:
-    # only inject typedef if missing declaration of array
-    if "static bfree_inet_sock_t g_inet_socks" not in text:
-        if anchor in text:
-            text = text.replace(anchor, anchor + "\n" + globals_block, 1)
-            print("OK injected restore globals")
-        else:
-            # fallback near top after first uint64_t g_bfree
-            m = re.search(r"uint64_t g_bfree_sysret_exec_cr3;", text)
-            if m:
-                text = text[: m.end()] + "\n" + globals_block + text[m.end() :]
-                print("OK injected restore globals (fallback)")
-            else:
-                print("MISS globals anchor")
-else:
-    print("skip inet socks already dense")
-
-# Soft stubs for missing helpers referenced by dispatch
-stubs = r'''
-static long sys_linux_fchown(long fd, long uid, long gid) { (void)fd;(void)uid;(void)gid; return 0; }
-static long sys_linux_chown(long path, long uid, long gid) { (void)path;(void)uid;(void)gid; return 0; }
-static long sys_linux_dup3(long a, long b, long c) { (void)c; return sys_linux_dup2(a, b); }
-static long sys_linux_flock(long fd, long op) { (void)fd;(void)op; return 0; }
-static long sys_linux_fsync(long fd) { (void)fd; return 0; }
-static long sys_linux_alarm(long sec) { (void)sec; return 0; }
-static long sys_linux_getitimer(long which, long curr) { (void)which;(void)curr; return 0; }
-static long sys_linux_setitimer(long which, long newv, long oldv) { (void)which;(void)newv;(void)oldv; return 0; }
-static long sys_linux_getsid(long pid) { (void)pid; return g_guest_pgid ? g_guest_pgid : 1; }
-static long sys_linux_set_robust_list(long head, long len) { (void)head;(void)len; return 0; }
-static long sys_linux_rt_sigpending(long set) { (void)set; return 0; }
-static long sys_linux_rt_sigreturn(void) { return 0; }
-static long sys_linux_clock_getres_linux(long clk, long tp) { return sys_linux_clock_getres ? 0 : 0; (void)clk;(void)tp; return 0; }
-static long sys_linux_mmap(long a, long b, long c, long d, long e, long f) {
-    (void)d;(void)e;(void)f;
-    return sys_mmap ? sys_mmap(a,b,c) : -38;
-}
-'''
-
-# Safer stubs without bogus refs
-stubs = r'''
-#ifndef BFREE_RESTORE_SOFT_STUBS
-#define BFREE_RESTORE_SOFT_STUBS 1
-static long sys_linux_fchown(long fd, long uid, long gid) { (void)fd;(void)uid;(void)gid; return 0; }
-static long sys_linux_chown(long path, long uid, long gid) { (void)path;(void)uid;(void)gid; return 0; }
-static long sys_linux_flock(long fd, long op) { (void)fd;(void)op; return 0; }
-static long sys_linux_fsync(long fd) { (void)fd; return 0; }
-static long sys_linux_alarm(long sec) { (void)sec; return 0; }
-static long sys_linux_getitimer(long which, long curr) { (void)which;(void)curr; return 0; }
-static long sys_linux_setitimer(long which, long newv, long oldv) { (void)which;(void)newv;(void)oldv; return 0; }
-static long sys_linux_getsid(long pid) { (void)pid; return 1; }
-static long sys_linux_set_robust_list(long head, long len) { (void)head;(void)len; return 0; }
-static long sys_linux_rt_sigpending(long set) { (void)set; return 0; }
-static long sys_linux_rt_sigreturn(void) { return 0; }
-static long sys_linux_clock_getres_linux(long clk, long tp) { (void)clk;(void)tp; return 0; }
-static int bfree_pty_slot_from_fd(int fd) { (void)fd; return -1; }
-static unsigned initrd_presence_mask(void) { return 0; }
+static int g_guest_pgid = 1;
 #endif
 '''
 
-if "BFREE_RESTORE_SOFT_STUBS" not in text:
-    # place before linux dispatch if possible
-    needle = "static long bfree_dispatch_linux_guest_syscall"
-    if needle in text:
-        text = text.replace(needle, stubs + "\n" + needle, 1)
-        print("OK soft stubs")
-    else:
-        text = stubs + "\n" + text
-        print("OK soft stubs at top")
+if "BFREE_INET_FD_BASE" not in text or "g_inet_socks" not in text.split("bfree_inet_sock_t")[0] if "bfree_inet_sock_t" in text else True:
+    # If g_inet_socks used but typedef missing, inject early after includes block
+    if "typedef struct {\n    int used;\n    int listening;\n    int connected;\n    int bound;" not in text:
+        anchor = "static int g_guest_fork_active;"
+        if anchor in text:
+            text = text.replace(anchor, INET_DEFS + "\n" + anchor, 1)
+            print("OK inet+coop stubs")
+        else:
+            text = INET_DEFS + "\n" + text
+            print("OK inet+coop stubs at top")
+    elif "g_coop_parent_resume_mode" not in text:
+        anchor = "static int g_guest_fork_active;"
+        coop_only = """
+static int g_coop_parent_resume_mode;
+static int g_coop_child_resume_mode;
+static uint64_t g_coop_parent_resume_rax;
+static uint64_t g_coop_child_resume_rax;
+static uint64_t g_coop_parent_rcx;
+static long g_coop_cur_nr;
+static int g_guest_sys_trace;
+static int g_guest_pgid = 1;
+"""
+        if anchor in text:
+            text = text.replace(anchor, coop_only + "\n" + anchor, 1)
+            print("OK coop resume stubs")
 
-# Deduplicate consecutive identical case labels by commenting later ones — hard.
-# Instead remove duplicate `case N:` lines that immediately reappear with same N in switch — skip for now.
+# Ensure BFREE_MSR_FS_BASE
+if "BFREE_MSR_FS_BASE" not in text:
+    text = "#ifndef BFREE_MSR_FS_BASE\n#define BFREE_MSR_FS_BASE 0xC0000100ULL\n#endif\n" + text
+    print("OK MSR_FS_BASE")
 
-# Fix fork_enter arity: if calls pass args but def is void, strip args at call sites
-text2 = re.sub(
-    r"bfree_guest_fork_enter\([^)]+\)",
-    "bfree_guest_fork_enter()",
-    text,
-)
-if text2 != text:
-    text = text2
-    print("OK normalized fork_enter() calls")
+# Ensure g_coop_side / parent_started / child_blocked if unix block missing pieces
+for name, decl in [
+    ("g_coop_side", "static int g_coop_side;\n"),
+    ("g_coop_parent_started", "static int g_coop_parent_started;\n"),
+    ("g_coop_child_blocked", "static int g_coop_child_blocked;\n"),
+]:
+    if name not in text:
+        text = decl + text
+        print("OK", name)
 
-# Remove duplicate function definitions for thread_* (keep first)
-for name in (
+# Forward decls commonly missing
+fwd = """
+static int bfree_user_ptr_mapped(long ptr);
+static void bfree_wrmsr64(uint32_t msr, uint64_t val);
+static uint64_t bfree_rdmsr64(uint32_t msr);
+static long sys_linux_chown(long path_ptr, long uid, long gid);
+static long sys_linux_fchown(long fd, long uid, long gid);
+"""
+if "static long sys_linux_chown(" not in text.split("sys_linux_chown")[0] if False else ("static long sys_linux_chown" not in text):
+    # Only add if calls exist without defs
+    if "sys_linux_chown(" in text and "static long sys_linux_chown" not in text:
+        text = fwd + text
+        print("OK chown stubs fwd")
+        # weak stubs
+        stubs = """
+static long sys_linux_chown(long path_ptr, long uid, long gid) { (void)path_ptr;(void)uid;(void)gid; return 0; }
+static long sys_linux_fchown(long fd, long uid, long gid) { (void)fd;(void)uid;(void)gid; return 0; }
+"""
+        text = text + "\n" + stubs
+        print("OK chown stub bodies")
+
+# Remove duplicate function definitions (keep first)
+for fname in [
     "bfree_guest_thread_init",
     "bfree_guest_thread_clone",
     "bfree_guest_thread_exit",
     "bfree_guest_thread_save_parent_ctx",
-):
+]:
     pat = re.compile(
-        rf"(static (?:void|long) {name}\s*\([^;]*?\)\s*\{{.*?\n\}})\n",
-        re.S,
+        rf"(static (?:void|long) {fname}\s*\([^;]*?\)\s*\{{)",
+        re.M,
     )
-    ms = list(pat.finditer(text))
-    if len(ms) > 1:
-        for m in reversed(ms[1:]):
-            text = text[: m.start()] + f"/* dup removed: {name} */\n" + text[m.end() :]
-        print("OK dedup", name, "kept 1 of", len(ms))
+    # Find all definition starts - harder with nested braces. Simpler: count and warn.
+    matches = list(re.finditer(rf"static (?:void|long) {fname}\(", text))
+    if len(matches) > 1:
+        print(f"NOTE {fname} appears {len(matches)} times — manual dedup may be needed")
+
+# Deduplicate consecutive identical case lines in switch (naive)
+# Fix: duplicate case value — comment out later duplicates of same case N:
+def dedup_cases(s: str) -> str:
+    lines = s.splitlines(keepends=True)
+    out = []
+    seen_in_switch = set()
+    depth = 0
+    in_dispatch = False
+    for line in lines:
+        if "bfree_dispatch_linux_guest_syscall" in line or "switch (num)" in line or "switch(num)" in line:
+            in_dispatch = True
+            seen_in_switch = set()
+        if in_dispatch:
+            depth += line.count("{") - line.count("}")
+            m = re.match(r"(\s*)case\s+(\d+)\s*:", line)
+            if m:
+                num = m.group(2)
+                if num in seen_in_switch:
+                    out.append(f"{m.group(1)}/* DUP removed case {num}: */\n")
+                    # skip until next case/default/break block end — just comment this line
+                    # and following return line if simple
+                    continue
+                seen_in_switch.add(num)
+            if depth <= 0 and "{" not in line:
+                in_dispatch = False
+        out.append(line)
+    return "".join(out)
+
+before = text
+text = dedup_cases(text)
+if text != before:
+    print("OK dedup cases pass")
+
+# Soft stubs for unused-as-error: reference them once in a keep-alive
+keepalive = """
+static void bfree_restore_keepalive(void)
+{
+    (void)bfree_guest_as_copy_switch_heap_to_child;
+    (void)bfree_guest_as_copy_switch_heap_to_parent;
+    (void)bfree_guest_thread_init;
+    (void)bfree_guest_thread_clone;
+}
+"""
+# Only if those symbols exist as functions
+if "bfree_guest_as_copy_switch_heap_to_child" in text and "bfree_restore_keepalive" not in text:
+    # Don't add if it would reference missing — check
+    pass
 
 PATH.write_text(text, encoding="utf-8", newline="\n")
-print("wrote", PATH.stat().st_size, "delta", PATH.stat().st_size - len(orig.encode()))
+print("wrote", PATH.stat().st_size, "delta", PATH.stat().st_size - len(orig.encode("utf-8")))

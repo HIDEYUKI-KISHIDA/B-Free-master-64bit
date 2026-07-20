@@ -18,6 +18,14 @@
 
 extern page_table_t kernel_page_table;
 
+#ifndef BFREE_GUEST_FD_TABLE_SIZE
+#define BFREE_GUEST_FD_TABLE_SIZE 64
+#endif
+static int g_fd_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];
+static int g_fd_snap_child[BFREE_GUEST_FD_TABLE_SIZE];
+static int g_fd_dup_save_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];
+static int g_fd_dup_save_snap_child[BFREE_GUEST_FD_TABLE_SIZE];
+
 extern void bfree_enable_user_fpu(void);
 
 extern void uart_puts(const char *s);
@@ -112,6 +120,42 @@ uint64_t g_bfree_fork_saved_r14;
 uint64_t g_bfree_fork_saved_r15;
 uint64_t g_bfree_fork_saved_rdx;
 static uint64_t g_guest_fork_saved_fsbase;
+
+
+/* H32 AF_INET (restored) */
+#ifndef BFREE_LINUX_AF_INET
+#define BFREE_LINUX_AF_INET 2
+#endif
+#ifndef BFREE_INET_SLOTS
+#define BFREE_INET_SLOTS 8
+#define BFREE_INET_FD_BASE 0x3B00 /* avoid PTY 0x3A00 clash */
+#define BFREE_INADDR_LOOPBACK 0x7f000001U
+#define BFREE_INADDR_ANY 0U
+typedef struct {
+    int used;
+    int listening;
+    int connected;
+    int bound;
+    uint32_t addr;
+    uint16_t port;
+    int accept_rd;
+    int pipe_magic;
+} bfree_inet_sock_t;
+static bfree_inet_sock_t g_inet_socks[BFREE_INET_SLOTS];
+#endif
+
+/* H02 coop dual-live resume (stubs if missing) */
+#ifndef BFREE_COOP_RESUME_STUBS
+#define BFREE_COOP_RESUME_STUBS 1
+static int g_coop_parent_resume_mode;
+static int g_coop_child_resume_mode;
+static uint64_t g_coop_parent_resume_rax;
+static uint64_t g_coop_child_resume_rax;
+static uint64_t g_coop_parent_rcx;
+static long g_coop_cur_nr;
+static int g_guest_sys_trace;
+static int g_guest_pgid = 1;
+#endif
 
 static int g_guest_fork_active;
 static int g_guest_fork_pid;
@@ -1601,6 +1645,7 @@ static int bfree_guest_eventfd_index(int fd)
     return fd - (int)BFREE_GUEST_EVENTFD_BASE;
 }
 
+#define BFREE_GUEST_DEV_TTY_FD     0x3707
 #define BFREE_GUEST_DEV_NULL_FD     0x3700
 #define BFREE_GUEST_DEV_URANDOM_FD  0x3701
 #define BFREE_GUEST_PROC_MAPS_FD    0x3702
@@ -3909,8 +3954,6 @@ typedef struct {
     int64_t __unused[3];
 } bfree_linux_stat_t;
 
-typedef char bfree_linux_stat_size_ok[(sizeof(bfree_linux_stat_t) == 144U) ? 1 : -1];
-
 static long bfree_linux_stat_fill(long statbuf, uint32_t mode, int64_t size)
 {
     bfree_linux_stat_t *st;
@@ -3919,7 +3962,7 @@ static long bfree_linux_stat_fill(long statbuf, uint32_t mode, int64_t size)
         return -14;
     }
     st = (bfree_linux_stat_t *)(uintptr_t)statbuf;
-    memset(st, 0, sizeof(*st));
+    memset(st, 0, 144U);
     st->st_dev = 1ULL;
     st->st_ino = 1ULL;
     st->st_mode = mode;
@@ -3931,6 +3974,12 @@ static long bfree_linux_stat_fill(long statbuf, uint32_t mode, int64_t size)
     st->st_blocks = (size + 511) / 512;
     return 0;
 }
+
+
+
+typedef char bfree_linux_stat_size_ok[(sizeof(bfree_linux_stat_t) == 144U) ? 1 : -1];
+
+
 
 /* /tmp vfiles need distinct inodes: tar compares (st_dev, st_ino) of the
  * archive against each input file and skips "the archive itself" when every

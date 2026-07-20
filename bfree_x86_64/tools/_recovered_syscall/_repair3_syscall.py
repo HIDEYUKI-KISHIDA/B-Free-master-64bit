@@ -43,7 +43,7 @@ else:
     print("MISS kernel_page_table for snap")
 
 # --- Replace 2-arg stat_fill with 3-arg ---
-best = Path("tools/_recovered_syscall/_best_stat_fill.c").read_text(encoding="utf-8")
+best = (Path(__file__).resolve().parent / "_best_stat_fill.c").read_text(encoding="utf-8")
 # remove all current definitions
 text2, n = re.subn(
     r"static long bfree_linux_stat_fill\([^)]*\)\s*\{(?:[^{}]|\{[^{}]*\})*\}",

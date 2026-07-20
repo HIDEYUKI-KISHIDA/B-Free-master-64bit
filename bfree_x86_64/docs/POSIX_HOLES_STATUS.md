@@ -1,32 +1,22 @@
 # POSIX holes — mobile status
 
-**Updated:** 2026-07-21 02:52 JST  
 **Branch:** `work/posix-holes-redo`  
-**Build:** `COMPILE_FAIL errors≈59`
+**Updated:** 2026-07-21T03:04:26+09:00  
+**Mode:** RESTORE → then residuals **2 → 1 → 3** (H02 → H01 → H06)
 
-## Mission (user order)
+## Now
 
-Restore pre-wipe “almost done”, then crush residuals **2 → 1 → 3**:
+- Restoring pre-wipe `syscall.c` (compile errors remaining: **40**)
+- After COMPILE_OK: crush H02, then H01, then H06
+- Pre-wipe residuals total were **5**; active polish queue is **3** (H02/H01/H06). H17/H26 deferred.
 
-| Step | Hole | Status |
-|------|------|--------|
-| **2** | H02 pipe / AS-copy finish | pending (needs compile green) |
-| **1** | H01 sigframe residuals | pending |
-| **3** | H06 ash fg UX | pending |
+## Order (user)
 
-Pre-wipe residual pool was **5** (H01, H02, H06, H17, H26). Active queue = first three.
+1. **H02** pipe / AS-copy finish  
+2. **H01** sigframe residuals  
+3. **H06** ash fg UX  
 
-## Restore markers in syscall.c
+## Git tips
 
-| Marker | Present |
-|--------|---------|
-| as_copy | True |
-| inet | True |
-| exec_transfer_rip | True |
-| unix socks | True |
-| /dev/ptmx | False |
-
-## Links
-
-- This file (refresh): branch `work/posix-holes-redo` → `bfree_x86_64/docs/POSIX_HOLES_STATUS.md`
+- Work: `work/posix-holes-redo`
 - Backup: `backup/syscall-wipe-recovery`
