@@ -78,6 +78,7 @@ static void bfree_exec_unmap_init_legacy(page_table_t *pt)
 /* syscall_entry.S: if knl_syscall_handler returns this, replace user RCX/R11/RSP for SYSRET */
 #define BFREE_SYSRET_EXEC_TRANSFER ((long)-4094)
 #define BFREE_SYSRET_FORK_PARENT   ((long)-4093)
+#define BFREE_SYSRET_COOP_SWITCH   ((long)-4092)
 #define BFREE_SYSRET_SIGNAL        ((long)-4091)
 
 uint64_t g_bfree_sysret_exec_rsp;
@@ -152,6 +153,15 @@ static int g_coop_child_resume_mode;
 static uint64_t g_coop_parent_resume_rax;
 static uint64_t g_coop_child_resume_rax;
 static uint64_t g_coop_parent_rcx;
+static uint64_t g_coop_parent_r11;
+static uint64_t g_coop_parent_rsp;
+static uint64_t g_coop_parent_rbx;
+static uint64_t g_coop_parent_rbp;
+static uint64_t g_coop_parent_r12;
+static uint64_t g_coop_parent_r13;
+static uint64_t g_coop_parent_r14;
+static uint64_t g_coop_parent_r15;
+static uint64_t g_coop_parent_rdx;
 static long g_coop_cur_nr;
 static int g_guest_sys_trace;
 static int g_guest_pgid = 1;
@@ -208,6 +218,16 @@ static uint32_t bfree_inet_ntohl(uint32_t x);
 static int bfree_unix_from_fd(int fd);
 static long bfree_coop_yield_to_parent_done(long ret);
 static long bfree_coop_yield_to_child_done(long ret);
+static void bfree_coop_fd_snap_init(void);
+static void bfree_coop_fd_switch_to(int side);
+static void bfree_coop_as_switch_to(int side);
+static void bfree_coop_save_child_user(void);
+static void bfree_coop_save_parent_user(void);
+static void bfree_coop_publish_parent_resume(void);
+static void bfree_coop_publish_child_resume(void);
+static long bfree_coop_yield_to_parent(void);
+static long bfree_coop_yield_to_child(void);
+static long bfree_guest_fork_enter(int copy_as);
 static void bfree_guest_sig_raise(int sig);
 static int bfree_guest_sig_take_eintr(void);
 static long bfree_guest_sig_try_deliver(long ret);
@@ -218,6 +238,9 @@ static long bfree_guest_exit_from_fork_signal(int sig);
 static int g_coop_side;
 static int g_coop_child_blocked;
 static int g_coop_parent_started;
+static uint64_t g_coop_child_rcx, g_coop_child_r11, g_coop_child_rsp;
+static uint64_t g_coop_child_rbx, g_coop_child_rbp, g_coop_child_r12;
+static uint64_t g_coop_child_r13, g_coop_child_r14, g_coop_child_r15, g_coop_child_rdx;
 static int g_coop_session = -1;
 static int g_guest_waitid_active;
 static long g_guest_waitid_infop;
@@ -539,7 +562,7 @@ void bfree_sysret_exec_globals_init(void)
     bfree_process_init();
 }
 
-static long bfree_guest_fork_enter()
+static long bfree_guest_fork_enter(int copy_as)
 {
     size_t i;
     int child_pid = 0;
@@ -556,6 +579,17 @@ static long bfree_guest_fork_enter()
     g_bfree_fork_saved_r14 = g_bfree_user_sysret_r14;
     g_bfree_fork_saved_r15 = g_bfree_user_sysret_r15;
     g_bfree_fork_saved_rdx = g_bfree_user_sysret_rdx;
+    /* Seed parent park so later COOP publish works after AS-copy parent-first. */
+    g_coop_parent_rcx = g_bfree_user_sysret_rcx;
+    g_coop_parent_r11 = g_bfree_user_sysret_r11;
+    g_coop_parent_rsp = g_bfree_user_sysret_rsp;
+    g_coop_parent_rbx = g_bfree_user_sysret_rbx;
+    g_coop_parent_rbp = g_bfree_user_sysret_rbp;
+    g_coop_parent_r12 = g_bfree_user_sysret_r12;
+    g_coop_parent_r13 = g_bfree_user_sysret_r13;
+    g_coop_parent_r14 = g_bfree_user_sysret_r14;
+    g_coop_parent_r15 = g_bfree_user_sysret_r15;
+    g_coop_parent_rdx = g_bfree_user_sysret_rdx;
     g_guest_fork_saved_fsbase = bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE);
     if (knl_current_task != 0) {
         knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;
@@ -569,22 +603,52 @@ static long bfree_guest_fork_enter()
     g_guest_fork_saved_cwd[sizeof(g_guest_fork_saved_cwd) - 1U] = '\0';
     g_guest_fork_saved_heap_next = g_guest_heap_next;
     g_guest_fork_saved_brk = g_guest_brk;
-    (void)bfree_guest_vfork_stack_snapshot(g_bfree_fork_saved_rsp);
+    if (!copy_as) {
+        (void)bfree_guest_vfork_stack_snapshot(g_bfree_fork_saved_rsp);
+    }
 
-    rc = bfree_process_vfork_enter(&child_pid);
+    if (copy_as) {
+        /* EAGAIN if another live AS-copy/vfork child already occupies a slot. */
+        rc = bfree_process_fork_enter(&child_pid);
+    } else {
+        rc = bfree_process_vfork_enter(&child_pid);
+    }
     if (rc < 0) {
         return rc;
     }
     g_guest_fork_pid = child_pid;
     g_guest_fork_active = 1;
     g_guest_fork_status_ready = 0;
-    return 0; /* cooperative: continue as child; parent resumes on child exit */
+    g_guest_fork_was_as_copy = copy_as ? 1 : 0;
+    g_guest_parent_parked_heap_valid = 0;
+    g_guest_child_parked_heap_valid = 0;
+    bfree_coop_fd_snap_init();
+    if (copy_as) {
+        /*
+         * AS-copy: return to parent immediately (parent-first). Child parked
+         * until parent blocks on stdin/wait/pipe and yields. CR3 flipped in C;
+         * FORK_PARENT/COOP must not consume g_bfree_sysret_exec_cr3.
+         */
+        bfree_coop_save_child_user();
+        g_coop_child_blocked = 1;
+        bfree_coop_fd_switch_to(0);
+        bfree_coop_as_switch_to(0);
+        g_coop_parent_started = 1;
+        g_bfree_sysret_exec_cr3 = 0;
+        bfree_coop_publish_parent_resume();
+        g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+        return BFREE_SYSRET_COOP_SWITCH;
+    }
+    return 0; /* vfork: continue as child; parent resumes on child exit */
 }
+
 
 static long bfree_guest_exit_from_fork(long status)
 {
     int *cleartid;
     size_t i;
+
+    int as_copy = g_guest_fork_was_as_copy;
 
     bfree_process_exit_child((int)status);
     g_guest_fork_active = 0;
@@ -592,17 +656,27 @@ static long bfree_guest_exit_from_fork(long status)
     g_guest_fork_status_ready = 1;
     /* Shared fd table: a pipeline child may leave stdin/stdout wired to a
      * pipe. Restore the shell's console before the parent resumes. */
+    bfree_guest_sig_raise(17);
+    bfree_coop_fd_switch_to(0);
+    g_coop_child_blocked = 0;
     bfree_guest_stdio_heal_pipes();
-    for (i = 0; i < sizeof(g_guest_cwd); ++i) {
-        g_guest_cwd[i] = g_guest_fork_saved_cwd[i];
-        if (g_guest_fork_saved_cwd[i] == '\0') {
-            break;
+    /* AS-copy: parent kept running — do not rewind heap/stack. */
+    if (!as_copy) {
+        for (i = 0; i < sizeof(g_guest_cwd); ++i) {
+            g_guest_cwd[i] = g_guest_fork_saved_cwd[i];
+            if (g_guest_fork_saved_cwd[i] == '\0') {
+                break;
+            }
         }
+        g_guest_cwd[sizeof(g_guest_cwd) - 1U] = '\0';
+        g_guest_heap_next = g_guest_fork_saved_heap_next;
+        g_guest_brk = g_guest_fork_saved_brk;
+        bfree_guest_vfork_stack_restore();
+    } else {
+        bfree_guest_restore_parent_isol(1);
+        bfree_coop_as_switch_to(0);
     }
-    g_guest_cwd[sizeof(g_guest_cwd) - 1U] = '\0';
-    g_guest_heap_next = g_guest_fork_saved_heap_next;
-    g_guest_brk = g_guest_fork_saved_brk;
-    bfree_guest_vfork_stack_restore();
+    g_guest_fork_was_as_copy = 0;
     /* Child execve cleared FS/TLS; restore the frozen parent's TLS base. */
     if (knl_current_task != 0) {
         knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;
@@ -635,16 +709,44 @@ static long sys_linux_waitpid(long pid, long status_ptr, long options)
     int status = 0;
     long rc;
 
-    rc = bfree_process_wait4(pid,
-        (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) ? &status : 0,
-        (int)options);
-    if (rc > 0) {
-        g_guest_fork_status_ready = 0;
-        if (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) {
-            *(int *)(uintptr_t)status_ptr = status;
+    for (;;) {
+        rc = bfree_process_wait4(pid,
+            (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) ? &status : 0,
+            (int)options);
+        if (rc > 0) {
+            g_guest_fork_status_ready = 0;
+            if (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) {
+                *(int *)(uintptr_t)status_ptr = status;
+            }
+            return rc;
         }
+        if (rc < 0) {
+            return rc; /* ECHILD */
+        }
+        if (((unsigned)options & 1U) != 0U) { /* WNOHANG */
+            return 0;
+        }
+        /* H02: live AS-copy child — schedule it instead of sti;hlt forever. */
+        if (g_guest_fork_was_as_copy || g_coop_parent_started) {
+            if (bfree_process_child_active() || g_guest_fork_active) {
+                g_guest_fork_active = 1;
+                g_guest_wait_status_ptr = status_ptr;
+                g_guest_waitid_active = 0;
+                return bfree_coop_yield_to_child();
+            }
+        }
+        if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {
+            g_guest_wait_status_ptr = status_ptr;
+            return bfree_coop_yield_to_child();
+        }
+        {
+            int er = bfree_guest_sig_take_eintr();
+            if (er < 0) {
+                return er;
+            }
+        }
+        __asm__ volatile("sti; hlt" ::: "memory");
     }
-    return rc;
 }
 
 /* Minimal Linux waitid → wait4 bridge (siginfo filled for WEXITED). */
@@ -3075,6 +3177,18 @@ static long sys_linux_read(long fd, long buf, long count)
                 return -11; /* EAGAIN */
             }
             while (ps->len == 0 && ps->wr_open > 0) {
+                if (g_guest_fork_active && g_coop_side == 1) {
+                    return bfree_coop_yield_to_parent();
+                }
+                if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {
+                    return bfree_coop_yield_to_child();
+                }
+                {
+                    int er = bfree_guest_sig_take_eintr();
+                    if (er < 0) {
+                        return er;
+                    }
+                }
                 __asm__ volatile("sti; hlt" ::: "memory");
             }
             if (ps->len == 0) {
@@ -3260,6 +3374,14 @@ static long sys_linux_write(long fd, long buf, long count)
             ps->buf[ps->len + i] = src[i];
         }
         ps->len += n;
+        /* H02: coop yield after pipe write */
+        if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked && n > 0) {
+            return bfree_coop_yield_to_child();
+        }
+        if (g_guest_fork_active && g_coop_side == 1 && n > 0 &&
+            g_guest_fork_was_as_copy && g_coop_parent_started) {
+            return bfree_coop_yield_to_parent();
+        }
         return (long)n;
     }
     if (bfree_guest_is_eventfd(fd)) {
@@ -6667,7 +6789,7 @@ static long sys_linux_clone(long flags, long newsp, long ptid, long ctid, long t
     /* Only the cooperative vfork-like subset is supported. Real fork/threads
      * need address-space copy and a scheduler. */
     if (((unsigned long)flags & (unsigned long)BFREE_LINUX_CLONE_VFORK) != 0UL) {
-        return bfree_guest_fork_enter();
+        return bfree_guest_fork_enter(0);
     }
     return -38; /* ENOSYS */
 }
@@ -7536,6 +7658,251 @@ static void bfree_guest_trace_sc_num(long num)
 
 
 
+
+/* === H02 AS-copy / coop pipe concurrency === */
+#ifndef BFREE_H02_AS_COPY_WIRED
+#define BFREE_H02_AS_COPY_WIRED 1
+
+static void bfree_coop_fd_snap_init(void)
+{
+    int i;
+    bfree_guest_fd_ensure_init();
+    for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+        g_fd_snap_parent[i] = g_guest_fd_target[i];
+        g_fd_snap_child[i] = g_guest_fd_target[i];
+    }
+    g_coop_side = 1;
+    g_coop_child_blocked = 0;
+    g_coop_parent_started = 0;
+}
+
+static void bfree_coop_fd_switch_to(int side)
+{
+    int i;
+    if (side == g_coop_side) {
+        return;
+    }
+    if (g_coop_side == 1) {
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            g_fd_snap_child[i] = g_guest_fd_target[i];
+        }
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            g_guest_fd_target[i] = g_fd_snap_parent[i];
+        }
+    } else {
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            g_fd_snap_parent[i] = g_guest_fd_target[i];
+        }
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            g_guest_fd_target[i] = g_fd_snap_child[i];
+        }
+    }
+    g_coop_side = side;
+}
+
+static void bfree_coop_save_child_user(void)
+{
+    g_coop_child_rcx = g_bfree_user_sysret_rcx;
+    g_coop_child_r11 = g_bfree_user_sysret_r11;
+    g_coop_child_rsp = g_bfree_user_sysret_rsp;
+    g_coop_child_rbx = g_bfree_user_sysret_rbx;
+    g_coop_child_rbp = g_bfree_user_sysret_rbp;
+    g_coop_child_r12 = g_bfree_user_sysret_r12;
+    g_coop_child_r13 = g_bfree_user_sysret_r13;
+    g_coop_child_r14 = g_bfree_user_sysret_r14;
+    g_coop_child_r15 = g_bfree_user_sysret_r15;
+    g_coop_child_rdx = g_bfree_user_sysret_rdx;
+}
+
+static void bfree_coop_save_parent_user(void)
+{
+    g_coop_parent_rcx = g_bfree_user_sysret_rcx;
+    g_coop_parent_r11 = g_bfree_user_sysret_r11;
+    g_coop_parent_rsp = g_bfree_user_sysret_rsp;
+    g_coop_parent_rbx = g_bfree_user_sysret_rbx;
+    g_coop_parent_rbp = g_bfree_user_sysret_rbp;
+    g_coop_parent_r12 = g_bfree_user_sysret_r12;
+    g_coop_parent_r13 = g_bfree_user_sysret_r13;
+    g_coop_parent_r14 = g_bfree_user_sysret_r14;
+    g_coop_parent_r15 = g_bfree_user_sysret_r15;
+    g_coop_parent_rdx = g_bfree_user_sysret_rdx;
+}
+
+/* Stage parent into fork_saved_* for FORK_PARENT/COOP (-4092/-4093). */
+static void bfree_coop_publish_parent_resume(void)
+{
+    g_bfree_fork_saved_rbx = g_coop_parent_rbx;
+    g_bfree_fork_saved_rbp = g_coop_parent_rbp;
+    g_bfree_fork_saved_r12 = g_coop_parent_r12;
+    g_bfree_fork_saved_r13 = g_coop_parent_r13;
+    g_bfree_fork_saved_r14 = g_coop_parent_r14;
+    g_bfree_fork_saved_r15 = g_coop_parent_r15;
+    g_bfree_fork_saved_rdx = g_coop_parent_rdx;
+    g_bfree_fork_saved_rcx = g_coop_parent_rcx;
+    g_bfree_fork_saved_r11 = g_coop_parent_r11;
+    g_bfree_fork_saved_rsp = g_coop_parent_rsp;
+    g_bfree_sysret_exec_rsp = g_coop_parent_rsp;
+    g_bfree_sysret_exec_rcx = g_coop_parent_rcx;
+    g_bfree_sysret_exec_r11 = g_coop_parent_r11;
+}
+
+/* Stage child into fork_saved_* (entry.S COOP uses fork_saved RIP/RSP). */
+static void bfree_coop_publish_child_resume(void)
+{
+    g_bfree_fork_saved_rbx = g_coop_child_rbx;
+    g_bfree_fork_saved_rbp = g_coop_child_rbp;
+    g_bfree_fork_saved_r12 = g_coop_child_r12;
+    g_bfree_fork_saved_r13 = g_coop_child_r13;
+    g_bfree_fork_saved_r14 = g_coop_child_r14;
+    g_bfree_fork_saved_r15 = g_coop_child_r15;
+    g_bfree_fork_saved_rdx = g_coop_child_rdx;
+    g_bfree_fork_saved_rcx = g_coop_child_rcx;
+    g_bfree_fork_saved_r11 = g_coop_child_r11;
+    g_bfree_fork_saved_rsp = g_coop_child_rsp;
+    g_bfree_sysret_exec_rsp = g_coop_child_rsp;
+    g_bfree_sysret_exec_rcx = g_coop_child_rcx;
+    g_bfree_sysret_exec_r11 = g_coop_child_r11;
+}
+
+/* H02: flip CR3 with logical parent/child side. FORK_PARENT must not use exec_cr3. */
+static void bfree_coop_as_switch_to(int side)
+{
+    page_table_t *pt;
+
+    if (!knl_current_task) {
+        return;
+    }
+    if (!bfree_process_child_has_private_as()) {
+        return;
+    }
+    pt = (side == 0) ? bfree_process_parent_pt() : bfree_process_child_pt();
+    if (!pt) {
+        return;
+    }
+    if ((page_table_t *)knl_current_task->page_table_base == pt) {
+        return;
+    }
+    knl_current_task->page_table_base = pt;
+    __asm__ volatile("mov %0, %%cr3" :: "r"(pt) : "memory");
+    /* Never leave a stale exec_cr3 for FORK_PARENT/COOP resume. */
+    g_bfree_sysret_exec_cr3 = 0;
+}
+
+static void bfree_coop_arm_parent_resume(void)
+{
+    if (!g_coop_parent_started) {
+        g_coop_parent_started = 1;
+        g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+        return;
+    }
+    if (g_coop_parent_resume_mode == 2) {
+        g_bfree_fork_saved_rcx = g_coop_parent_rcx;
+        g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
+        g_coop_parent_resume_mode = 0;
+        return;
+    }
+    if (g_coop_parent_rcx >= 2) {
+        g_bfree_fork_saved_rcx = g_coop_parent_rcx - 2;
+    }
+    if (g_coop_parent_resume_mode == 1) {
+        g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
+        g_coop_parent_resume_mode = 0;
+    } else {
+        g_bfree_fork_parent_ret = 0;
+    }
+}
+
+static void bfree_coop_arm_child_resume(void)
+{
+    if (g_coop_child_resume_mode == 1 || g_coop_child_resume_mode == 2) {
+        g_bfree_fork_parent_ret = g_coop_child_resume_rax;
+        g_coop_child_resume_mode = 0;
+    } else {
+        g_bfree_fork_parent_ret = 0;
+    }
+}
+
+static long bfree_coop_yield_to_parent(void)
+{
+    bfree_coop_save_child_user();
+    if (g_coop_child_rcx >= 2) {
+        g_coop_child_rcx -= 2;
+    }
+    g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;
+    g_coop_child_resume_mode = 1;
+    g_coop_child_blocked = 1;
+    if (g_guest_fork_was_as_copy) {
+        bfree_guest_as_copy_switch_heap_to_parent();
+    }
+    bfree_coop_fd_switch_to(0);
+    bfree_coop_as_switch_to(0);
+    if (g_guest_fork_saved_fsbase != 0) {
+        if (knl_current_task != 0) {
+            knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;
+        }
+        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);
+    }
+    bfree_coop_publish_parent_resume();
+    bfree_coop_arm_parent_resume();
+    return BFREE_SYSRET_COOP_SWITCH;
+}
+
+static long bfree_coop_yield_to_child(void)
+{
+    bfree_coop_save_parent_user();
+    if (g_guest_fork_was_as_copy) {
+        bfree_guest_as_copy_switch_heap_to_child();
+    }
+    g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;
+    g_coop_parent_resume_mode = 1;
+    bfree_coop_fd_switch_to(1);
+    if (g_guest_fork_saved_fsbase != 0) {
+        if (knl_current_task != 0) {
+            knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;
+        }
+        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);
+    }
+    bfree_coop_as_switch_to(1);
+    g_coop_child_blocked = 0;
+    bfree_coop_publish_child_resume();
+    bfree_coop_arm_child_resume();
+    return BFREE_SYSRET_COOP_SWITCH;
+}
+
+static long bfree_coop_yield_to_parent_done(long ret)
+{
+    bfree_coop_save_child_user();
+    g_coop_child_resume_rax = (uint64_t)(long)ret;
+    g_coop_child_resume_mode = 2;
+    g_coop_child_blocked = 1;
+    if (g_guest_fork_was_as_copy) {
+        bfree_guest_as_copy_switch_heap_to_parent();
+    }
+    bfree_coop_fd_switch_to(0);
+    bfree_coop_as_switch_to(0);
+    bfree_coop_publish_parent_resume();
+    bfree_coop_arm_parent_resume();
+    return BFREE_SYSRET_COOP_SWITCH;
+}
+
+static long bfree_coop_yield_to_child_done(long ret)
+{
+    bfree_coop_save_parent_user();
+    if (g_guest_fork_was_as_copy) {
+        bfree_guest_as_copy_switch_heap_to_child();
+    }
+    g_coop_parent_resume_rax = (uint64_t)(long)ret;
+    g_coop_parent_resume_mode = 2;
+    bfree_coop_fd_switch_to(1);
+    bfree_coop_as_switch_to(1);
+    g_coop_child_blocked = 0;
+    bfree_coop_publish_child_resume();
+    bfree_coop_arm_child_resume();
+    return BFREE_SYSRET_COOP_SWITCH;
+}
+
+#endif /* BFREE_H02_AS_COPY_WIRED */
+
 /* === restore soft bodies (compile-only; H02/H01 replace later) === */
 #ifndef BFREE_RESTORE_SOFT_BODIES
 #define BFREE_RESTORE_SOFT_BODIES 1
@@ -7579,15 +7946,7 @@ static uint32_t bfree_inet_ntohl(uint32_t x)
     return ((x & 0xffU) << 24) | ((x & 0xff00U) << 8) |
            ((x >> 8) & 0xff00U) | ((x >> 24) & 0xffU);
 }
-static long bfree_coop_yield_to_parent_done(long ret)
-{
-    /* Soft: full AS-copy yield resumes in H02. */
-    return ret;
-}
-static long bfree_coop_yield_to_child_done(long ret)
-{
-    return ret;
-}
+/* H02: yield_*_done provided above */
 static void bfree_guest_sig_raise(int sig)
 {
     if (sig <= 0 || sig >= BFREE_NSIG) {
@@ -7897,10 +8256,10 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_utimensat(arg1, arg2, arg3, arg4);
     case 56: /* clone — vfork-compatible flags only */
         return sys_linux_clone(arg1, arg2, arg3, arg4, arg5);
-    case 57: /* fork — no address-space copy yet */
-        return -38; /* ENOSYS */
-    case 58: /* vfork */
-        return bfree_guest_fork_enter();
+    case 57: /* fork — cooperative eager AS copy (H02) */
+        return bfree_guest_fork_enter(1);
+    case 58: /* vfork — shared AS until exec/exit */
+        return bfree_guest_fork_enter(0);
     case 59: /* execve — vfork child into private AS when possible */
         return sys_linux_execve(arg1, arg2, arg3);
     default:

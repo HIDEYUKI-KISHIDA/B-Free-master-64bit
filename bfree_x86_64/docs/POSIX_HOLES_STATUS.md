@@ -1,22 +1,21 @@
 # POSIX holes — mobile status
 
 **Branch:** `work/posix-holes-redo`  
-**Updated:** 2026-07-21T03:07:00+09:00  
-**Mode:** **COMPILE_OK** → residuals **H02 → H01 → H06**
+**Updated:** 2026-07-21T03:13:38+09:00  
+**Mode:** Residuals **H02 → H01 → H06** (compile stays green)
+
+## Progress
+
+- [x] **COMPILE_OK** — `sysmain/syscall.o` errors=0
+- [x] **H02** AS-copy / pipe concurrency — coop CR3 switch, parent-first fork, yield_done, EAGAIN via live_count, FORK_PARENT ignores exec_cr3
+- [ ] **H01** sigframe / handler path
+- [ ] **H06** job control / fg path
 
 ## Now
 
-- `make -C bfree_x86_64/kernel sysmain/syscall.o` → **errors=0** (COMPILE_OK)
-- Soft restore glue in place for missing unix/coop/sig/inet helpers; full H02 yield bodies still soft
-- **Next:** crush **H02** (pipe / AS-copy finish), then **H01** (sigframe), then **H06** (ash fg UX)
-- Pre-wipe residuals total were **5**; active polish queue is **3** (H02/H01/H06). H17/H26 deferred.
-- Markers: `as_copy` yes, `inet` yes, `exec_transfer` yes, `ptmx` not yet (re-apply `_patch_pty_stage2.py` after FD-base reconcile vs inet `0x3B00`)
-
-## Order (user)
-
-1. **H02** pipe / AS-copy finish  
-2. **H01** sigframe residuals  
-3. **H06** ash fg UX  
+- Next: **H01** (rt_sigreturn / CATCH deliver)
+- Then: **H06** (tty_pgrp / setpgid / stop-cont)
+- Markers: as_copy yes, inet yes, exec_transfer yes; ptmx deferred (FD vs inet)
 
 ## Git tips
 
