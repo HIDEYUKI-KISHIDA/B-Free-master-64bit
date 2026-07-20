@@ -87,6 +87,50 @@ uint64_t g_bfree_sig_saved_r14;
 uint64_t g_bfree_sig_saved_r15;
 
 
+/* H04: real POSIX signal pending/mask (minimal) */
+#define BFREE_NSIG 64
+#define BFREE_SIG_DFL 0
+#define BFREE_SIG_IGN 1
+#define BFREE_SIG_CATCH 2
+static uint8_t g_guest_sig_disp[BFREE_NSIG];
+static uint64_t g_guest_sig_pending;
+static uint64_t g_guest_sig_mask;
+
+static void bfree_guest_sig_raise(int sig)
+{
+    if (sig <= 0 || sig >= BFREE_NSIG) {
+        return;
+    }
+    if (g_guest_sig_disp[sig] == BFREE_SIG_IGN) {
+        return;
+    }
+    g_guest_sig_pending |= (1ULL << (unsigned)sig);
+}
+
+static int bfree_guest_sig_is_blocked(int sig)
+{
+    if (sig <= 0 || sig >= BFREE_NSIG) {
+        return 0;
+    }
+    return (g_guest_sig_mask & (1ULL << (unsigned)sig)) != 0;
+}
+
+static int bfree_guest_sig_take_eintr(void)
+{
+    uint64_t pend = g_guest_sig_pending & ~g_guest_sig_mask;
+    if (pend == 0) {
+        return 0;
+    }
+    /* Leave pending for wait/handlers; interrupt blocking ops. */
+    return -4; /* EINTR */
+}
+
+static void bfree_guest_alarm_poll(void)
+{
+    /* filled by H13; no-op until setitimer wired */
+}
+
+
 uint64_t g_bfree_user_sysret_rcx;
 uint64_t g_bfree_user_sysret_r11;
 uint64_t g_bfree_user_sysret_rsp;
@@ -1426,10 +1470,6 @@ static void bfree_guest_fd_ensure_init(void)
     g_guest_fd_target[2] = 2;
     g_guest_fd_inited = 1;
 }
-
-/* Soft stubs until H04/H13 signal pending is restored */
-static void bfree_guest_alarm_poll(void) {}
-static int bfree_guest_sig_take_eintr(void) { return 0; }
 
 #define BFREE_SYSRET_COOP_SWITCH ((long)-4092)
 #define BFREE_LINUX_AF_UNIX 1
