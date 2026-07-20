@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\c6a289a7-e330-4909-9ba9-edbe59f71b8c\\c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "line": 271,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 283,
+    "new_len": 633
+  },
+  "themes": [
+    "timerfd"
+  ],
+  "old_string": "static bfree_timerfd_entry_t *bfree_find_timerfd(int fd)\n{\n    int index = fd - BFREE_TIMERFD_FD_BASE;\n    if (index < 0 || index >= BFREE_MAX_TIMERFD) {\n        return 0;\n    }\n    if (!g_timerfd_entries[index].used) {\n        return 0;\n    }\n    return &g_timerfd_entries[index];\n}",
+  "new_string": "static bfree_timerfd_entry_t *bfree_find_timerfd(int fd)\n{\n    int index = fd - BFREE_TIMERFD_FD_BASE;\n    if (index < 0 || index >= BFREE_MAX_TIMERFD) {\n        return 0;\n    }\n    if (!g_timerfd_entries[index].used) {\n        return 0;\n    }\n    return &g_timerfd_entries[index];\n}\n\nstatic void bfree_timerfd_purge_all(void)\n{\n    int i;\n\n    for (i = 0; i < BFREE_MAX_TIMERFD; ++i) {\n        if (g_timerfd_entries[i].event_id >= 0) {\n            timer_cancel_event(g_timerfd_entries[i].event_id);\n        }\n        memset(&g_timerfd_entries[i], 0, sizeof(g_timerfd_entries[i]));\n        g_timerfd_entries[i].event_id = -1;\n    }\n}"
+}

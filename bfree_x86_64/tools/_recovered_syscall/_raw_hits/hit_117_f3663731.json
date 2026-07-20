@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\subagents\\f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "line": 31,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 381,
+    "new_len": 249
+  },
+  "themes": [
+    "inet"
+  ],
+  "old_string": "        if (g_guest_ptys[pslot].master_open <= 0 &&\n            g_guest_ptys[pslot].slave_open <= 0) {\n            memset(&g_guest_ptys[pslot], 0, sizeof(g_guest_ptys[pslot]));\n        }\n    }\n    {\n        int iidx = bfree_inet_from_fd(resolved);\n        if (iidx >= 0) {\n            g_inet_socks[iidx] = 0;\n        }\n    }\n    if (orig >= 0 && orig < BFREE_GUEST_FD_TABLE_SIZE) {",
+  "new_string": "        if (g_guest_ptys[pslot].master_open <= 0 &&\n            g_guest_ptys[pslot].slave_open <= 0) {\n            memset(&g_guest_ptys[pslot], 0, sizeof(g_guest_ptys[pslot]));\n        }\n    }\n    if (orig >= 0 && orig < BFREE_GUEST_FD_TABLE_SIZE) {"
+}

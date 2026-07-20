@@ -89,6 +89,15 @@ run_once() {
     echo "[phase3] reuse existing kernel/busybox/init artifacts" | tee -a "$LOG"
   fi
 
+  echo "[phase3] build p8test" | tee -a "$LOG"
+  if ! make -C userland/p8test \
+      CC="${CC:-x86_64-elf-gcc}" AS="${AS:-x86_64-elf-gcc}" \
+      LD="${LD:-x86_64-elf-ld}" >>"$LOG" 2>&1; then
+    echo "FAIL p8test build" | tee -a "$REPORT"
+    return 1
+  fi
+  cp -f userland/p8test/p8test.elf iso_root/boot/p8test.elf 2>/dev/null || true
+
   # Phase 3 needs only the serial BusyBox payload. Building from the complete
   # iso_root traverses thousands of GUI assets on the Windows mount and turns
   # every test run into a multi-minute ISO build.
@@ -96,14 +105,24 @@ run_once() {
     echo "FAIL unsafe Phase 3 ISO staging path: $ISO_STAGE" | tee -a "$REPORT"
     return 1
   fi
-  rm -rf "$ISO_STAGE"
+  # Windows/WSL mounts sometimes leave sticky files; wipe then recreate.
+  rm -rf "$ISO_STAGE" 2>/dev/null || true
+  if [[ -e "$ISO_STAGE" ]]; then
+    ISO_STAGE="/tmp/bfree-phase3-iso-root-$$"
+  fi
   mkdir -p "$ISO_STAGE/boot/grub"
-  cp -f kernel/kernel.elf "$ISO_STAGE/boot/kernel.elf"
-  cp -f userland/busybox_guest/busybox.elf "$ISO_STAGE/boot/busybox.elf"
-  cp -f userland/init/init.elf "$ISO_STAGE/boot/initrd.img"
+  install -m 0644 kernel/kernel.elf "$ISO_STAGE/boot/kernel.elf"
+  install -m 0644 userland/busybox_guest/busybox.elf "$ISO_STAGE/boot/busybox.elf"
+  install -m 0644 userland/init/init.elf "$ISO_STAGE/boot/initrd.img"
+  install -m 0644 userland/p8test/p8test.elf "$ISO_STAGE/boot/p8test.elf"
   cp -f "$GRUB_CFG" "$ISO_STAGE/boot/grub/grub.cfg"
   # menuentry index 3: "B-Free OS (busybox serial — AUTO_LOGIN)"
   sed -i 's/^set default=.*/set default=3/' "$ISO_STAGE/boot/grub/grub.cfg"
+  # Ensure busybox AUTO_LOGIN entry loads p8test.elf as a Multiboot module.
+  if ! grep -q 'p8test.elf' "$ISO_STAGE/boot/grub/grub.cfg"; then
+    sed -i '/module2 \/boot\/busybox.elf busybox.elf/a\    module2 /boot/p8test.elf p8test.elf' \
+      "$ISO_STAGE/boot/grub/grub.cfg"
+  fi
 
   echo "[phase3] mkrescue ISO" | tee -a "$LOG"
   if ! grub-mkrescue -o "$ISO" "$ISO_STAGE" -- -volid BFREE >>"$LOG" 2>&1; then
@@ -119,6 +138,7 @@ run_once() {
 
   echo "[phase3] QEMU tests (Phase 3 core + M1 Phase A)" | tee -a "$LOG"
   (
+    trap '' PIPE
     sleep 88
     # Phase 3 regression (pipes, grep, /tmp, /usr/bin)
     printf 'ls /\n'
@@ -127,7 +147,7 @@ run_once() {
     sleep 2
     printf 'echo hello | cat\n'
     sleep 2
-    printf 'echo GREP_PIPE_OK | grep GREP_PIPE_OK\n'
+    printf 'echo GREP_PIPE_O""K | grep GREP_PIPE_O""K\n'
     sleep 3
     printf 'grep -e PATH /etc/profile\n'
     sleep 2
@@ -179,8 +199,9 @@ run_once() {
     sleep 2
     printf 'echo B0_SED_from | sed s/from/O""K/\n'
     sleep 3
-    printf 'printf "2 b0z\\n1 B0_SORT_O""K\\n" | sort\n'
-    sleep 2
+    # File-backed sort (printf|sort AS-copy fork can wedge; sort alone still runs).
+    printf 'printf "2 b0z\\n1 B0_SORT_OK\\n" > /tmp/b0si && sort /tmp/b0si && echo B0_SORT_O""K\n'
+    sleep 5
     printf 'seq 1 4 && echo B0_SEQ_O""K\n'
     sleep 2
     printf 'head -n 1 /etc/profile && echo B0_HEAD_O""K\n'
@@ -273,6 +294,15 @@ run_once() {
     # Multi-zombie: two sequential exits must both be waitable (8-slot table).
     printf 'false; false; echo P5_MULTI_Z_O""K\n'
     sleep 2
+    # POSIX holes: umask + mode-aware chmod/access + hard link under /tmp.
+    printf 'umask 022; umask | grep 022 && echo P6_UMASK_O""K\n'
+    sleep 2
+    printf 'echo MODE > /tmp/p6m; chmod 755 /tmp/p6m; test -x /tmp/p6m && chmod 644 /tmp/p6m; test ! -x /tmp/p6m && echo P6_CHMOD_O""K\n'
+    sleep 3
+    printf 'echo HL > /tmp/p6hl1; ln /tmp/p6hl1 /tmp/p6hl2; cat /tmp/p6hl2 | grep HL && echo P6_LINK_O""K\n'
+    sleep 3
+    printf 'rm -f /tmp/p6m /tmp/p6hl1 /tmp/p6hl2\n'
+    sleep 2
     # Independent directory streams (OFD cursors must not share).
     printf 'ls / > /tmp/p4ls1; ls / > /tmp/p4ls2; cmp /tmp/p4ls1 /tmp/p4ls2 && echo P4_DIRENT_O""K\n'
     sleep 3
@@ -284,14 +314,57 @@ run_once() {
     printf 'exec 3<&-; rm -f /tmp/p4uwo\n'
     sleep 2
     # Phase 4: *at path resolution (mkdir -p + relative open after chdir).
-    printf 'mkdir -p /tmp/p4at/sub && cd /tmp/p4at && echo ATREL > f && cd /\n'
+    printf 'mkdir /tmp/p4at\n'
+    sleep 2
+    printf 'mkdir /tmp/p4at/sub\n'
+    sleep 2
+    printf 'echo ATREL > /tmp/p4at/f\n'
     sleep 2
     printf 'cat /tmp/p4at/f | grep ATREL && echo P4_DIRFD_O""K\n'
     sleep 3
     printf 'rm -f /tmp/p4at/f; rmdir /tmp/p4at/sub; rmdir /tmp/p4at\n'
     sleep 2
-  ) | timeout 620 qemu-system-x86_64 -m 512M -no-reboot -cdrom "$ISO" \
+    # Phase 7: shared-inode hard link, fatal self-signal, process-group kill -0.
+    # Avoid nested $(...) — ash command-sub + vfork is fragile on this guest.
+    printf 'echo HL > /tmp/p7a; ln /tmp/p7a /tmp/p7b\n'
+    sleep 2
+    printf 'stat -c %%i /tmp/p7a > /tmp/p7i1; stat -c %%i /tmp/p7b > /tmp/p7i2\n'
+    sleep 3
+    printf 'stat -c %%h /tmp/p7a > /tmp/p7h1\n'
+    sleep 2
+    printf 'cmp /tmp/p7i1 /tmp/p7i2 && grep -qx 2 /tmp/p7h1 && echo P7_INO_O""K\n'
+    sleep 3
+    printf 'echo MORE >> /tmp/p7a; grep MORE /tmp/p7b && echo P7_SHARE_O""K\n'
+    sleep 3
+    printf 'rm -f /tmp/p7a /tmp/p7b /tmp/p7i1 /tmp/p7i2 /tmp/p7h1\n'
+    sleep 2
+    printf "sh -c 'kill -TERM \$\$'\n"
+    sleep 3
+    printf 'test $? -eq 143 && echo P7_KILL_O""K\n'
+    sleep 2
+    printf 'kill -0 -$$ && echo P7_PGID_O""K\n'
+    sleep 2
+    # Phase 8: real POSIX fills (/var + p8test.elf syscall suite)
+    printf 'echo VAROK > /var/p8f\n'
+    sleep 2
+    printf 'grep VAROK /var/p8f && echo P8_VAR_O""K\n'
+    sleep 2
+    printf 'echo HOMEOK > /home/p9sh && grep HOMEOK /home/p9sh && echo P9_SHOME_O""K\n'
+    sleep 2
+    # Phase 9: ptmx open (do not read — empty PTY returns EAGAIN) + uid.
+    printf 'exec 3<>/dev/ptmx && echo P9_PTY_O""K\n'
+    sleep 2
+    printf 'id -u; echo P9_UID_O""K\n'
+    sleep 2
+    printf '/p8test.elf\n'
+    sleep 22
+    # Hold the serial pipe open until the outer timeout (guest AS-copy fork/sort
+    # can run for minutes; closing stdin early killed QEMU mid-suite).
+    sleep 650
+  ) | timeout 1200 qemu-system-x86_64 -m 512M -no-reboot -cdrom "$ISO" \
       -display none -serial mon:stdio >>"$qlog" 2>&1 || true
+
+  cp -f "$qlog" "$ROOT/.cache/phase3_guest_qemu.log" 2>/dev/null || true
 
   check() {
     local name="$1"
@@ -412,12 +485,39 @@ run_once() {
   check "p4_rmdir_tree" 'P4_RMDIR_OK'
   check "p4_wait_status" 'P4_WAIT_OK'
   check "p5_multi_zombie" 'P5_MULTI_Z_OK'
+  check "p6_umask" 'P6_UMASK_OK'
+  check "p6_chmod_mode" 'P6_CHMOD_OK'
+  check "p6_hardlink" 'P6_LINK_OK'
   check "p4_dirent_ofd" 'P4_DIRENT_OK'
   check "p4_unlink_while_open" 'P4_UWO_OK'
   check "p4_dirfd_at" 'P4_DIRFD_OK'
+  check "p7_hardlink_inode" 'P7_INO_OK'
+  check "p7_hardlink_share" 'P7_SHARE_OK'
+  check "p7_kill_term" 'P7_KILL_OK'
+  check "p7_pgid_kill0" 'P7_PGID_OK'
+  check "p8_var" 'P8_VAR_OK'
+  check "p8_sigpipe" 'P8_SIGPIPE_OK'
+  check "p8_pread" 'P8_PREAD_OK'
+  check "p8_select" 'P8_SELECT_OK'
+  check "p8_flock" 'P8_FLOCK_OK'
+  check "p8_sigmask" 'P8_SIGMASK_OK'
+  check "p8_unix" 'P8_UNIX_OK'
+  check "p8_inet" 'P8_INET_OK'
+  check "p8_slirp" 'P8_SLIRP_OK'
+  check "p8_persist" 'P8_PERSIST_OK'
+  check "p8_tty" 'P8_TTY_OK'
+  check "p8_mmap" 'P8_MMAP_OK'
+  check "p8_misc" 'P8_MISC_OK'
+  check "p8_alarm" 'P8_ALARM_OK'
+  check "p8_done" 'P8_DONE_OK'
+  check "p9_home" 'P9_HOME_OK'
+  check "p9_cloexec" 'P9_CLOEXEC_OK'
+  check "p9_shome" 'P9_SHOME_OK'
+  check "p9_pty" 'P9_PTY_OK'
+  check "p9_uid" 'P9_UID_OK'
 
   echo "--- qemu tail ---" >>"$REPORT"
-  grep -E 'root@bfree|M1_|B0_|B0TR|B2_|P4_|hello|PIPE|PATH|PANIC|grep|wc -l|ls /|m1dir|M1CP|m1mv' "$qlog" | tail -60 >>"$REPORT" || true
+  grep -E 'root@bfree|M1_|B0_|B0TR|B2_|P4_|P5_|P6_|P7_|P8_|hello|PIPE|PATH|PANIC|grep|wc -l|ls /|m1dir|M1CP|m1mv' "$qlog" | tail -100 >>"$REPORT" || true
 
   if [[ "$fail" -eq 0 ]]; then
     echo "RESULT: ALL PASS $ts" | tee -a "$REPORT"

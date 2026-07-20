@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\dc5da4bc-3c54-4564-8ce8-1e5e74f5696a\\dc5da4bc-3c54-4564-8ce8-1e5e74f5696a.jsonl",
+    "line": 67,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\userland\\desktop_qt\\desktop_qt_guest.pro",
+    "old_len": 173,
+    "new_len": 310
+  },
+  "themes": [
+    "timerfd"
+  ],
+  "old_string": "DEFINES += BFREE_GUEST_HAS_QT6 QT_STATIC\n# Guest Qt was built with linux-g++ / CROSS_COMPILE; bare x86_64-elf-g++ needs OS + libstdc++ paths.\nDEFINES += __linux__ __x86_64__",
+  "new_string": "DEFINES += BFREE_GUEST_HAS_QT6 QT_STATIC\n# Guest Qt was built with linux-g++ / CROSS_COMPILE; bare x86_64-elf-g++ needs OS + libstdc++ paths.\nDEFINES += __linux__ __x86_64__\n# musl __mmap must not fall back to Linux syscall 9 inside ring3 (B-Free case 9 is timerfd_pending).\nDEFINES += BFREE_GUEST_NO_HOST_MMAP"
+}

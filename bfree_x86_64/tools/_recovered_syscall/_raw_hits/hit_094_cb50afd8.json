@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\cb50afd8-b946-4a3f-b32e-11c7737bb9d9\\cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 1916,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 428,
+    "new_len": 493
+  },
+  "themes": [
+    "timerfd"
+  ],
+  "old_string": "    uart_puts(\"[SYSCALL] exec_initrd: loading \");\n    uart_puts(g_bfree_exec_initrd_kpath);\n    uart_puts(\" ...\\n\");\n    bfree_guest_heap_reset();\n    timer_purge_all();\n    bfree_timerfd_purge_all();\n    ld = load_elf_image(g_bfree_exec_initrd_kpath, &entry, knl_current_task->page_table_base);\n    if (ld == 0) {\n        bfree_exec_unmap_init_legacy((page_table_t *)knl_current_task->page_table_base);\n    }\n    if (ld != 0) {",
+  "new_string": "    uart_puts(\"[SYSCALL] exec_initrd: loading \");\n    uart_puts(g_bfree_exec_initrd_kpath);\n    uart_puts(\" ...\\n\");\n    bfree_guest_heap_reset();\n    timer_purge_all();\n    bfree_timerfd_purge_all();\n    /* Drop init PT_LOAD at 0x400000 before mapping the next ELF (busybox reuses that VA). */\n    bfree_exec_unmap_init_legacy((page_table_t *)knl_current_task->page_table_base);\n    ld = load_elf_image(g_bfree_exec_initrd_kpath, &entry, knl_current_task->page_table_base);\n    if (ld != 0) {"
+}

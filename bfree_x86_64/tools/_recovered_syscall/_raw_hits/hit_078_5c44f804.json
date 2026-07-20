@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\5c44f804-a588-440e-ac50-0b36379eca43\\5c44f804-a588-440e-ac50-0b36379eca43.jsonl",
+    "line": 25,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 482,
+    "new_len": 672
+  },
+  "themes": [
+    "sigframe"
+  ],
+  "old_string": "/*\n * Minimal one-level CATCH delivery: redirect SYSRET to sa_handler with rdi=sig\n * and restorer as return address; rt_sigreturn restores interrupted rax/rip/rsp.\n * Remaining gaps: no full rt_sigframe / ucontext, no SA_SIGINFO, no sa_mask\n * apply, no nested delivery, no altstack.\n */\nstatic int g_sig_deliver_sig;\nstatic int g_sig_in_handler;\nstatic uint64_t g_sig_saved_rax;\nstatic uint64_t g_sig_saved_rip;\nstatic uint64_t g_sig_saved_rsp;\nstatic uint64_t g_sig_saved_rflags;",
+  "new_string": "/*\n * Minimal one-level CATCH delivery: redirect SYSRET to sa_handler with rdi=sig\n * and restorer as return address; rt_sigreturn restores interrupted rax/rip/rsp\n * and the pre-handler sigmask. sa_mask is OR'd into the process mask for the\n * handler duration (plus the delivered signal unless SA_NODEFER).\n * Remaining gaps: no full rt_sigframe / ucontext, no SA_SIGINFO, no nested\n * delivery, no altstack.\n */\nstatic int g_sig_deliver_sig;\nstatic int g_sig_in_handler;\nstatic int g_sig_mask_pushed;\nstatic uint64_t g_sig_saved_rax;\nstatic uint64_t g_sig_saved_rip;\nstatic uint64_t g_sig_saved_rsp;\nstatic uint64_t g_sig_saved_rflags;\nstatic uint64_t g_sig_saved_mask;"
+}

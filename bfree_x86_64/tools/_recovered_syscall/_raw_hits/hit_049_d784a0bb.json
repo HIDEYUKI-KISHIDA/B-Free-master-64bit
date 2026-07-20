@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\d784a0bb-48dd-4106-8f28-7cf562b4af2c\\d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 1175,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 922,
+    "new_len": 1218
+  },
+  "themes": [
+    "futex"
+  ],
+  "old_string": "// Linux 202: futex — single-threaded guest; never block, satisfy musl/Qt mutex init.\nlong sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, long val3)\n{\n    int cmd = (int)(op & 0x7f);\n\n    (void)uaddr;\n    (void)val;\n    (void)timeout_ptr;\n    (void)uaddr2;\n    (void)val3;\n\n    switch (cmd) {\n    case 0: /* FUTEX_WAIT */\n        /*\n         * Single-threaded guest: EAGAIN makes Qt QBasicMutex / musl spin at 100% CPU\n         * (futex_wait → EAGAIN → retry with no other thread ever changing *uaddr).\n         * Always succeed immediately; no blocking, no EAGAIN busy-loop.\n         */\n        return 0;\n    case 1: /* FUTEX_WAKE */\n        return 1;\n    case 3: /* FUTEX_REQUEUE */\n    case 4: /* FUTEX_CMP_REQUEUE */\n    case 5: /* FUTEX_WAKE_OP */\n    case 9: /* FUTEX_WAIT_BITSET */\n    case 10: /* FUTEX_WAKE_BITSET */\n        return 0;\n    default:\n        return -22; /* EINVAL */\n    }\n}",
+  "new_string": "static unsigned g_guest_futex_log_count;\n\n// Linux 202: futex — single-threaded guest; never block, satisfy musl/Qt mutex init.\nlong sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, long val3)\n{\n    int cmd = (int)(op & 0x7f);\n\n    (void)val;\n    (void)timeout_ptr;\n    (void)uaddr2;\n    (void)val3;\n\n    switch (cmd) {\n    case 0: /* FUTEX_WAIT */\n    case 9: /* FUTEX_WAIT_BITSET */\n        /*\n         * Qt futexSemaphoreTryAcquire_loop: futex_wait returns but *uaddr stays locked\n         * → fastTryLock fails forever (100% CPU, no further serial output).\n         * Single-threaded guest: wake by clearing the word; never return EAGAIN.\n         */\n        if (uaddr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uaddr)) {\n            *(int *)(uintptr_t)uaddr = 0;\n        }\n        if (g_guest_futex_log_count < 8U) {\n            ++g_guest_futex_log_count;\n            uart_puts(\"[FUTEX] wait\\n\");\n        }\n        return 0;\n    case 1: /* FUTEX_WAKE */\n        return 1;\n    case 3: /* FUTEX_REQUEUE */\n    case 4: /* FUTEX_CMP_REQUEUE */\n    case 5: /* FUTEX_WAKE_OP */\n    case 10: /* FUTEX_WAKE_BITSET */\n        return 0;\n    default:\n        return -22; /* EINVAL */\n    }\n}"
+}

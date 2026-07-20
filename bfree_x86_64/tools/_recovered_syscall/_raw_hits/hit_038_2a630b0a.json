@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\2a630b0a-aa9d-40d2-9d10-839aec4ecb20\\2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 861,
+    "tool": "Write",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\.cache\\POSIX685_UNIMPL_20260718.md",
+    "old_len": 0,
+    "new_len": 1698
+  },
+  "themes": [
+    "timerfd"
+  ],
+  "old_string": "",
+  "new_string": "# POSIX 685 未実装洗い出し（2026-07-18）\n\n## 結論（3層で見る）\n\n| 層 | 結果 | 意味 |\n|----|------|------|\n| **A. シンボル存在** | **fail=0**（685=678 pass + 7 macro） | 関数名は libc に揃っている |\n| **B. 意図的未提供** | **94 件**（`POSIX_685_POLICY_ENOSYS.txt`） | STREAMS/trace 等。実装しない方針 |\n| **C. 実体が ENOSYS スタブ** | **約 40 ファイル**（`bfree_posix` + musl stubs） | シンボルはあるが動く実装ではない |\n\n→ 「685 のうち名前が無い」は **0**。未実装の本丸は **B（方針）+ C（スタブ）+ ゲスト Linux ABI**。\n\n再計測コマンド:\n```bash\nQUIET=1 bash ./run_posix_685_symbol_gate.sh\npowershell.exe -File tools/_count_stubs.ps1\n```\n\n---\n\n## B. 意図的 ENOSYS（94）— 実装しない群\n\n| 区分 | 件数 | 例 |\n|------|-----:|----|\n| posix_trace | 50 | `posix_trace_*` |\n| AIO | 8 | `aio_*` / `lio_listio` |\n| STREAMS | 7 | `fattach` `getmsg` `putmsg` … |\n| LEGACY_* 他 | 29 | `gets` `ftw` `ulimit` `wordexp` … |\n| typed_mem | 3 | `posix_typed_mem_*` |\n\n正本: `POSIX_685_POLICY_ENOSYS.txt`  \n戦略: OSS Gateway（busybox 等）優先で 685 全実装は目標外。\n\n---\n\n## C. ENOSYS スタブ残（実経路化が必要）\n\n`tools/_count_stubs.ps1` が出す代表:\n\n**VFS / path:** chmod系, mkdir, rmdir, unlink, rename, link, symlink, readlink, mknod, utime, *at 系, faccessat…  \n**socket:** socket, listen, socketpair, poll  \n**misc:** statvfs, getrlimit, process, timerfd, sched_get/setparam…\n\n※ ゲスト BusyBox 経路（`syscall.c` Linux ABI）では一部を別実装済み。スタブ一覧は **ホスト/TK2/bfree_posix 経路**の残債と混在する点に注意。\n\n---\n\n## D. ゲスト Linux ABI（BusyBox / musl 直実行）の明示 ENOSYS\n\n`kernel/sysmain/syscall.c` で `-38` を明示している主なもの:\n\n- `waitid` (247)\n- `fork` (57) — 本物の fork 未実装\n- ほか数本 + **未登録番号は default ENOSYS**（Linux syscall 数百本のうち dispatch は ~100 弱）\n\nPhase 5〜7 の「未実装」は主にここ。\n\n---\n\n## 次に潰すなら（優先）\n\n1. **ゲスト**: Phase 5（NOFORK 解除に必要な exec/プロセス）→ Phase 6 musl  \n2. **685 スタブ**: OSS が呼ぶ B/C 波（VFS・socket）だけ実経路化  \n3. **Policy 94**: 触らない（意図的 ENOSYS のまま）\n"
+}

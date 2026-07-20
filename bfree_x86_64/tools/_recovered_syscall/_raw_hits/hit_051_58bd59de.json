@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\subagents\\58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "line": 46,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 486,
+    "new_len": 1160
+  },
+  "themes": [
+    "coop"
+  ],
+  "old_string": "static long bfree_coop_yield_to_child(void)\n{\n    g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;\n    g_bfree_fork_saved_r11 = g_bfree_user_sysret_r11;\n    g_bfree_fork_saved_rsp = g_bfree_user_sysret_rsp;\n    /* Park parent callee-saved before fork_saved_* is loaded with the child. */\n    bfree_coop_save_parent_callee_saved();\n    g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;\n    g_coop_parent_resume_mode = 1;\n    bfree_coop_fd_switch_to(1);\n    bfree_coop_as_switch_to(1);",
+  "new_string": "static long bfree_coop_yield_to_child(void)\n{\n    g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;\n    g_bfree_fork_saved_r11 = g_bfree_user_sysret_r11;\n    g_bfree_fork_saved_rsp = g_bfree_user_sysret_rsp;\n    /* Park parent callee-saved before fork_saved_* is loaded with the child. */\n    bfree_coop_save_parent_callee_saved();\n    g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;\n    g_coop_parent_resume_mode = 1;\n    bfree_coop_fd_switch_to(1);\n    bfree_coop_as_switch_to(1);\n    /* Child inherits parent's TLS base (copied AS); re-arm after CR3 flip. */\n    if (g_guest_fork_saved_fsbase != 0) {\n        if (knl_current_task != 0) {\n            knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;\n        }\n        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);\n    }\n    uart_puts(\"[COOP] yield_child fs=\");\n    uart_puthex64(bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE));\n    {\n        uint64_t cr3v = 0;\n        __asm__ volatile(\"mov %%cr3, %0\" : \"=r\"(cr3v));\n        uart_puts(\" cr3=\");\n        uart_puthex64(cr3v);\n        uart_puts(\" rip=\");\n        uart_puthex64(g_coop_child_rcx);\n        uart_puts(\"\\n\");\n    }"
+}

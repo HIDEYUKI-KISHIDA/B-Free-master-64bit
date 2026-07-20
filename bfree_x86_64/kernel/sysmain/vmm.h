@@ -72,6 +72,14 @@ int vmm_map_mmio_huge(page_table_t *pt, uint64_t vaddr, uint64_t paddr);
 
 int vmm_unmap_page(page_table_t *pt, uint64_t vaddr);
 
+/*
+ * After mapping a PMM frame as a user page at some other VA, drop the
+ * supervisor identity PTE at VA==phys (clone artifact). Leaving that alias
+ * lets ring0 under the task CR3 wipe live ELF/stack frames via VA=phys
+ * (observed: busybox .text at PA 0x8BF000 zeroed → fopen #PF on .rodata).
+ */
+void vmm_drop_identity_alias(page_table_t *pt, uint64_t phys);
+
 /* True when vaddr has a real user RW mapping (not supervisor identity clone). */
 
 int vmm_user_page_mapped(page_table_t *pt, uint64_t vaddr);
@@ -79,8 +87,13 @@ int vmm_user_page_mapped(page_table_t *pt, uint64_t vaddr);
 /* Resolve a user mapping to its physical address (-1 on miss/identity). */
 int vmm_user_virt_to_phys(page_table_t *pt, uint64_t vaddr, uint64_t *paddr_out);
 
-/* Unmap and pmm_free every non-identity user page under pt (child AS teardown). */
+/* True if any User PTE under pt targets this physical frame. */
+int vmm_user_maps_phys(page_table_t *pt, uint64_t paddr);
+
+/* Unmap and pmm_free every non-identity user page under pt (child AS teardown).
+ * If keep is non-NULL, never free frames still mapped as User in keep (parent). */
 void vmm_destroy_user_mappings(page_table_t *pt);
+void vmm_destroy_user_mappings_keep(page_table_t *pt, page_table_t *keep);
 
 /* Copy every non-identity user page from src into dst (dst must already be
  * kernel-cloned). Used so cooperative vfork children can mutate a private

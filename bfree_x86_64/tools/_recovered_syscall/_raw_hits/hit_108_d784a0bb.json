@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\d784a0bb-48dd-4106-8f28-7cf562b4af2c\\d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 141,
+    "tool": "StrReplace",
+    "path": "userland/libc/bfree_epoll.h",
+    "old_len": 65,
+    "new_len": 346
+  },
+  "themes": [
+    "unix",
+    "timerfd"
+  ],
+  "old_string": "#define BFREE_TIMERFD_FD_BASE 0x3200\n#define BFREE_MAX_TIMERFD 16",
+  "new_string": "#define BFREE_TIMERFD_FD_BASE 0x3200\n#define BFREE_MAX_TIMERFD 16\n/* Qt QEventDispatcherUNIX wakeup pipe + epoll (Linux guest syscalls in kernel). */\n#define BFREE_GUEST_PIPE_RD_FD   0x3400\n#define BFREE_GUEST_PIPE_WR_FD   0x3401\n#define BFREE_GUEST_EPOLL_FD_BASE 0x3500\n#define BFREE_MAX_GUEST_EPOLL    8\n#define BFREE_MAX_GUEST_EPOLL_WATCHES 32"
+}

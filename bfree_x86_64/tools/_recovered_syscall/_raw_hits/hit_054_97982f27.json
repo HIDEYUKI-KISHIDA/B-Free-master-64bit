@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1433,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 122,
+    "new_len": 1122
+  },
+  "themes": [
+    "inet"
+  ],
+  "old_string": "static int bfree_inet_is_loopback(uint32_t addr)\n{\n    return addr == BFREE_INADDR_LOOPBACK || addr == BFREE_INADDR_ANY;\n}",
+  "new_string": "static int bfree_inet_is_guest_routable(uint32_t addr)\n{\n    if (addr == BFREE_INADDR_ANY) {\n        return 1;\n    }\n    if ((addr & 0xFF000000u) == 0x7F000000u) {\n        return 1; /* 127.0.0.0/8 */\n    }\n    if ((addr & 0xFFFFFF00u) == 0x0A000200u) {\n        return 1; /* 10.0.2.0/24 — QEMU user/slirp guest LAN */\n    }\n    return 0;\n}\n\n/* Collapse guest-local binds/connects onto loopback pipe listeners. */\nstatic uint32_t bfree_inet_match_addr(uint32_t addr)\n{\n    if (addr == BFREE_INADDR_ANY) {\n        return BFREE_INADDR_LOOPBACK;\n    }\n    if ((addr & 0xFF000000u) == 0x7F000000u) {\n        return BFREE_INADDR_LOOPBACK;\n    }\n    if ((addr & 0xFFFFFF00u) == 0x0A000200u) {\n        return BFREE_INADDR_LOOPBACK;\n    }\n    return addr;\n}\n\nstatic int bfree_inet_listener_matches(uint32_t bound_addr, uint32_t peer_addr)\n{\n    uint32_t b = bfree_inet_match_addr(bound_addr);\n    uint32_t p = bfree_inet_match_addr(peer_addr);\n\n    if (bound_addr == BFREE_INADDR_ANY) {\n        return 1;\n    }\n    return b == p;\n}\n\nstatic int bfree_inet_is_loopback(uint32_t addr)\n{\n    return bfree_inet_is_guest_routable(addr);\n}"
+}

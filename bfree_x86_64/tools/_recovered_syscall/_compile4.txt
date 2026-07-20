@@ -1,0 +1,688 @@
+make: Entering directory '/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel'
+/home/h_kis/x86_64-elf-toolchain/bin/x86_64-elf-gcc -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-pic -ffreestanding -nostdlib -Wall -Wextra -Werror=implicit-function-declaration -mno-sse -mno-mmx -mno-3dnow -I../include -Iinclude -Isysmain -Isysdepend -I../../../kernel -DENABLE_RUNTIME_NET=0 -DBFREE_STRICT_BOOT_VERIFY=0 -DBFREE_ENFORCE_WX=0 -DBFREE_ENABLE_ASLR=0 -DBFREE_BOOT_GUI_FIRST=0 -DBFREE_WAYLAND_INPUT_STRICT=0 -DDEBUG=1 -DRELEASE=0 -c sysmain/syscall.c -o sysmain/syscall.o
+sysmain/syscall.c: In function 'bfree_copy_user_cstr':
+sysmain/syscall.c:1084:13: warning: assignment to 'uintptr_t' {aka 'long unsigned int'} from 'void *' makes integer from pointer without a cast [-Wint-conversion]
+ 1084 |         kva = bfree_linux_user_kva(pt, uva);
+      |             ^
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:2041: warning: "BFREE_GUEST_VFILE_SLOTS" redefined
+ 2041 | #define BFREE_GUEST_VFILE_SLOTS     16
+      | 
+sysmain/syscall.c:1921: note: this is the location of the previous definition
+ 1921 | #define BFREE_GUEST_VFILE_SLOTS     8
+      | 
+sysmain/syscall.c:2042: warning: "BFREE_GUEST_VFILE_SIZE" redefined
+ 2042 | #define BFREE_GUEST_VFILE_SIZE      16384
+      | 
+sysmain/syscall.c:1922: note: this is the location of the previous definition
+ 1922 | #define BFREE_GUEST_VFILE_SIZE      4096
+      | 
+sysmain/syscall.c:2250:29: error: redefinition of 'bfree_guest_vfile_from_fd'
+ 2250 | static bfree_guest_vfile_t *bfree_guest_vfile_from_fd(int fd)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1966:29: note: previous definition of 'bfree_guest_vfile_from_fd' with type 'bfree_guest_vfile_t *(int)'
+ 1966 | static bfree_guest_vfile_t *bfree_guest_vfile_from_fd(int fd)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_ofd_maybe_release':
+sysmain/syscall.c:2346:13: error: 'g_fd_snap_parent' undeclared (first use in this function)
+ 2346 |         if (g_fd_snap_parent[i] == fd || g_fd_dup_save_snap_parent[i] == fd ||
+      |             ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:2346:13: note: each undeclared identifier is reported only once for each function it appears in
+sysmain/syscall.c:2346:42: error: 'g_fd_dup_save_snap_parent' undeclared (first use in this function)
+ 2346 |         if (g_fd_snap_parent[i] == fd || g_fd_dup_save_snap_parent[i] == fd ||
+      |                                          ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2347:13: error: 'g_fd_snap_child' undeclared (first use in this function)
+ 2347 |             g_fd_snap_child[i] == fd || g_fd_dup_save_snap_child[i] == fd) {
+      |             ^~~~~~~~~~~~~~~
+sysmain/syscall.c:2347:41: error: 'g_fd_dup_save_snap_child' undeclared (first use in this function)
+ 2347 |             g_fd_snap_child[i] == fd || g_fd_dup_save_snap_child[i] == fd) {
+      |                                         ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:2379:29: error: redefinition of 'bfree_guest_vfile_find_by_name'
+ 2379 | static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1980:29: note: previous definition of 'bfree_guest_vfile_find_by_name' with type 'bfree_guest_vfile_t *(const char *)'
+ 1980 | static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2997:19: error: redefinition of 'g_guest_etc_profile'
+ 2997 | static const char g_guest_etc_profile[] =
+      |                   ^~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2034:19: note: previous definition of 'g_guest_etc_profile' with type 'const char[1]'
+ 2034 | static const char g_guest_etc_profile[] = "";
+      |                   ^~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_linux_stat_fill_vfile':
+sysmain/syscall.c:5018:11: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5018 |     ret = bfree_linux_stat_fill(statbuf, mode, size);
+      |           ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_linux_stat_for_path':
+sysmain/syscall.c:5035:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5035 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5038:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5038 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFCHR | 0666U, 0);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5042:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5042 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5049:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5049 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFLNK | 0777U, (int64_t)exe_len);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5058:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5058 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0555U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5061:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5061 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5065:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5065 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5069:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5069 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5073:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5073 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5077:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5077 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5081:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5081 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5085:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5085 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5089:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5089 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5093:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5093 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5097:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5097 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5101:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5101 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5109:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5109 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5113:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5113 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5116:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5116 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5119:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5119 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0700U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5122:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5122 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5126:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5126 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5130:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5130 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5134:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5134 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5138:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5138 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5142:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5142 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5145:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5145 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5150:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5150 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5153:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5153 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5156:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5156 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5160:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5160 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5163:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5163 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5168:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5168 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5171:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5171 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5174:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5174 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 167424);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5177:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5177 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 8192);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5180:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5180 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 01777U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_fstat':
+sysmain/syscall.c:5323:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5323 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5278:13: note: declared here
+ 5278 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode)
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5326:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5326 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFCHR | 0666U, 0);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5278:13: note: declared here
+ 5278 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode)
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_getdents64':
+sysmain/syscall.c:5389:30: error: redefinition of 'k_usr_names'
+ 5389 |     static const char *const k_usr_names[] = {
+      |                              ^~~~~~~~~~~
+sysmain/syscall.c:5383:30: note: previous definition of 'k_usr_names' with type 'const char * const[3]'
+ 5383 |     static const char *const k_usr_names[] = {
+      |                              ^~~~~~~~~~~
+sysmain/syscall.c:5392:30: error: redefinition of 'k_var_names'
+ 5392 |     static const char *const k_var_names[] = {
+      |                              ^~~~~~~~~~~
+sysmain/syscall.c:5386:30: note: previous definition of 'k_var_names' with type 'const char * const[2]'
+ 5386 |     static const char *const k_var_names[] = {
+      |                              ^~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_link':
+sysmain/syscall.c:6445:32: warning: passing argument 1 of 'bfree_guest_alias_add' makes integer from pointer without a cast [-Wint-conversion]
+ 6445 |     rc = bfree_guest_alias_add(nname, vidx);
+      |                                ^~~~~
+      |                                |
+      |                                char *
+sysmain/syscall.c:197:38: note: expected 'int' but argument is of type 'char *'
+  197 | static int bfree_guest_alias_add(int vnode, const char *name);
+      |                                  ~~~~^~~~~
+sysmain/syscall.c:6445:39: warning: passing argument 2 of 'bfree_guest_alias_add' makes pointer from integer without a cast [-Wint-conversion]
+ 6445 |     rc = bfree_guest_alias_add(nname, vidx);
+      |                                       ^~~~
+      |                                       |
+      |                                       int
+sysmain/syscall.c:197:57: note: expected 'const char *' but argument is of type 'int'
+  197 | static int bfree_guest_alias_add(int vnode, const char *name);
+      |                                             ~~~~~~~~~~~~^~~~
+sysmain/syscall.c: In function 'sys_isatty':
+sysmain/syscall.c:6646:26: error: 'BFREE_GUEST_DEV_TTY_FD' undeclared (first use in this function); did you mean 'BFREE_GUEST_DEV_NULL_FD'?
+ 6646 |     if (resolved == (int)BFREE_GUEST_DEV_TTY_FD) {
+      |                          ^~~~~~~~~~~~~~~~~~~~~~
+      |                          BFREE_GUEST_DEV_NULL_FD
+sysmain/syscall.c:6655:9: error: implicit declaration of function 'bfree_pty_slot_from_fd' [-Werror=implicit-function-declaration]
+ 6655 |     if (bfree_pty_slot_from_fd(resolved) >= 0) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_get_tk2_snapshot':
+sysmain/syscall.c:7261:18: error: implicit declaration of function 'initrd_presence_mask' [-Werror=implicit-function-declaration]
+ 7261 |     out->flags = initrd_presence_mask();
+      |                  ^~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:7335: warning: "BFREE_USER_STACK_PAGES_BUSYBOX" redefined
+ 7335 | #define BFREE_USER_STACK_PAGES_BUSYBOX 512
+      | 
+sysmain/syscall.c:7334: note: this is the location of the previous definition
+ 7334 | #define BFREE_USER_STACK_PAGES_BUSYBOX 128
+      | 
+sysmain/syscall.c:7341: warning: "BFREE_USER_STACK_MIN_VADDR" redefined
+ 7341 | #define BFREE_USER_STACK_MIN_VADDR   0x00C00000ULL
+      | 
+sysmain/syscall.c:7330: note: this is the location of the previous definition
+ 7330 | #define BFREE_USER_STACK_MIN_VADDR   0x00200000ULL
+      | 
+sysmain/syscall.c:7345: warning: "BFREE_USER_STACK_PAGES_EXEC" redefined
+ 7345 | #define BFREE_USER_STACK_PAGES_EXEC 2048
+      | 
+sysmain/syscall.c:7333: note: this is the location of the previous definition
+ 7333 | #define BFREE_USER_STACK_PAGES_EXEC 4608
+      | 
+sysmain/syscall.c: In function 'sys_linux_clone':
+sysmain/syscall.c:8162:16: error: too many arguments to function 'bfree_guest_fork_enter'
+ 8162 |         return bfree_guest_fork_enter(0);
+      |                ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:554:13: note: declared here
+  554 | static long bfree_guest_fork_enter(void)
+      |             ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8167:12: error: too many arguments to function 'bfree_guest_fork_enter'
+ 8167 |     return bfree_guest_fork_enter(1);
+      |            ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:554:13: note: declared here
+  554 | static long bfree_guest_fork_enter(void)
+      |             ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_arm_parent_resume':
+sysmain/syscall.c:8610:9: error: 'g_coop_parent_resume_mode' undeclared (first use in this function); did you mean 'g_coop_parent_started'?
+ 8610 |     if (g_coop_parent_resume_mode == 2) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |         g_coop_parent_started
+sysmain/syscall.c:8612:34: error: 'g_coop_parent_rcx' undeclared (first use in this function)
+ 8612 |         g_bfree_fork_saved_rcx = g_coop_parent_rcx;
+      |                                  ^~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8613:35: error: 'g_coop_parent_resume_rax' undeclared (first use in this function)
+ 8613 |         g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_arm_child_resume':
+sysmain/syscall.c:8631:9: error: 'g_coop_child_resume_mode' undeclared (first use in this function)
+ 8631 |     if (g_coop_child_resume_mode == 1 || g_coop_child_resume_mode == 2) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8632:35: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8632 |         g_bfree_fork_parent_ret = g_coop_child_resume_rax;
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_coop_child_rdx
+sysmain/syscall.c: In function 'bfree_coop_yield_to_parent':
+sysmain/syscall.c:8646:5: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8646 |     g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_child_rdx
+sysmain/syscall.c:8646:41: error: 'g_coop_cur_nr' undeclared (first use in this function)
+ 8646 |     g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;
+      |                                         ^~~~~~~~~~~~~
+sysmain/syscall.c:8647:5: error: 'g_coop_child_resume_mode' undeclared (first use in this function)
+ 8647 |     g_coop_child_resume_mode = 1;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_yield_to_child':
+sysmain/syscall.c:8670:5: error: 'g_coop_parent_resume_rax' undeclared (first use in this function)
+ 8670 |     g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8670:42: error: 'g_coop_cur_nr' undeclared (first use in this function)
+ 8670 |     g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;
+      |                                          ^~~~~~~~~~~~~
+sysmain/syscall.c:8671:5: error: 'g_coop_parent_resume_mode' undeclared (first use in this function); did you mean 'g_coop_parent_started'?
+ 8671 |     g_coop_parent_resume_mode = 1;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_parent_started
+sysmain/syscall.c: In function 'bfree_coop_yield_to_parent_done':
+sysmain/syscall.c:8694:5: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8694 |     g_coop_child_resume_rax = (uint64_t)(long)ret;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_child_rdx
+sysmain/syscall.c:8695:5: error: 'g_coop_child_resume_mode' undeclared (first use in this function)
+ 8695 |     g_coop_child_resume_mode = 2;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_yield_to_child_done':
+sysmain/syscall.c:8718:5: error: 'g_coop_parent_resume_rax' undeclared (first use in this function)
+ 8718 |     g_coop_parent_resume_rax = (uint64_t)(long)ret;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8719:5: error: 'g_coop_parent_resume_mode' undeclared (first use in this function); did you mean 'g_coop_parent_started'?
+ 8719 |     g_coop_parent_resume_mode = 2;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_parent_started
+sysmain/syscall.c: In function 'bfree_inet_from_fd':
+sysmain/syscall.c:8750:19: error: 'BFREE_INET_FD_BASE' undeclared (first use in this function); did you mean 'BFREE_UNIX_FD_BASE'?
+ 8750 |     if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
+      |                   ^~~~~~~~~~~~~~~~~~
+      |                   BFREE_UNIX_FD_BASE
+sysmain/syscall.c:8750:73: error: 'BFREE_INET_SLOTS' undeclared (first use in this function); did you mean 'BFREE_UNIX_SLOTS'?
+ 8750 |     if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
+      |                                                                         ^~~~~~~~~~~~~~~~
+      |                                                                         BFREE_UNIX_SLOTS
+sysmain/syscall.c:8754:12: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8754 |     return g_inet_socks[idx].used ? idx : -1;
+      |            ^~~~~~~~~~~~
+      |            g_unix_socks
+sysmain/syscall.c: In function 'bfree_inet_sock_release':
+sysmain/syscall.c:8763:5: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8763 |     g_inet_socks[iidx].used = 0;
+      |     ^~~~~~~~~~~~
+      |     g_unix_socks
+sysmain/syscall.c: In function 'bfree_inet_parse_sockaddr':
+sysmain/syscall.c:8794:29: error: 'BFREE_LINUX_AF_INET' undeclared (first use in this function); did you mean 'BFREE_LINUX_AF_UNIX'?
+ 8794 |     if (family != (uint16_t)BFREE_LINUX_AF_INET) {
+      |                             ^~~~~~~~~~~~~~~~~~~
+      |                             BFREE_LINUX_AF_UNIX
+sysmain/syscall.c: In function 'bfree_inet_is_guest_routable':
+sysmain/syscall.c:8811:17: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8811 |     if (addr == BFREE_INADDR_ANY) {
+      |                 ^~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_inet_match_addr':
+sysmain/syscall.c:8826:17: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8826 |     if (addr == BFREE_INADDR_ANY) {
+      |                 ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:8827:16: error: 'BFREE_INADDR_LOOPBACK' undeclared (first use in this function)
+ 8827 |         return BFREE_INADDR_LOOPBACK;
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_inet_listener_matches':
+sysmain/syscall.c:8843:23: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8843 |     if (bound_addr == BFREE_INADDR_ANY) {
+      |                       ^~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_socket':
+sysmain/syscall.c:8859:19: error: 'BFREE_LINUX_AF_INET' undeclared (first use in this function); did you mean 'BFREE_LINUX_AF_UNIX'?
+ 8859 |     if (domain == BFREE_LINUX_AF_INET) {
+      |                   ^~~~~~~~~~~~~~~~~~~
+      |                   BFREE_LINUX_AF_UNIX
+sysmain/syscall.c:8860:25: error: 'BFREE_INET_SLOTS' undeclared (first use in this function); did you mean 'BFREE_UNIX_SLOTS'?
+ 8860 |         for (i = 0; i < BFREE_INET_SLOTS; ++i) {
+      |                         ^~~~~~~~~~~~~~~~
+      |                         BFREE_UNIX_SLOTS
+sysmain/syscall.c:8861:18: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8861 |             if (!g_inet_socks[i].used) {
+      |                  ^~~~~~~~~~~~
+      |                  g_unix_socks
+sysmain/syscall.c:8866:40: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8866 |                 g_inet_socks[i].addr = BFREE_INADDR_ANY;
+      |                                        ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:8870:52: error: 'BFREE_INET_FD_BASE' undeclared (first use in this function); did you mean 'BFREE_UNIX_FD_BASE'?
+ 8870 |                 return bfree_guest_fd_publish((int)BFREE_INET_FD_BASE + i);
+      |                                                    ^~~~~~~~~~~~~~~~~~
+      |                                                    BFREE_UNIX_FD_BASE
+sysmain/syscall.c: In function 'sys_linux_bind':
+sysmain/syscall.c:8915:25: error: 'BFREE_INET_SLOTS' undeclared (first use in this function); did you mean 'BFREE_UNIX_SLOTS'?
+ 8915 |         for (i = 0; i < BFREE_INET_SLOTS; ++i) {
+      |                         ^~~~~~~~~~~~~~~~
+      |                         BFREE_UNIX_SLOTS
+sysmain/syscall.c:8916:29: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8916 |             if (i != idx && g_inet_socks[i].used && g_inet_socks[i].bound &&
+      |                             ^~~~~~~~~~~~
+      |                             g_unix_socks
+sysmain/syscall.c:8919:42: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8919 |                  g_inet_socks[i].addr == BFREE_INADDR_ANY ||
+      |                                          ^~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_listen':
+sysmain/syscall.c:8963:14: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8963 |         if (!g_inet_socks[idx].bound) {
+      |              ^~~~~~~~~~~~
+      |              g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_connect':
+sysmain/syscall.c:9000:27: error: 'BFREE_INET_SLOTS' undeclared (first use in this function); did you mean 'BFREE_UNIX_SLOTS'?
+ 9000 |         for (li = 0; li < BFREE_INET_SLOTS; ++li) {
+      |                           ^~~~~~~~~~~~~~~~
+      |                           BFREE_UNIX_SLOTS
+sysmain/syscall.c:9001:17: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9001 |             if (g_inet_socks[li].used && g_inet_socks[li].listening &&
+      |                 ^~~~~~~~~~~~
+      |                 g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_accept':
+sysmain/syscall.c:9092:14: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9092 |         if (!g_inet_socks[idx].listening) {
+      |              ^~~~~~~~~~~~
+      |              g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_sendto':
+sysmain/syscall.c:9125:21: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9125 |     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
+      |                     ^~~~~~~~~~~~
+      |                     g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_recvfrom':
+sysmain/syscall.c:9143:21: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9143 |     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
+      |                     ^~~~~~~~~~~~
+      |                     g_unix_socks
+sysmain/syscall.c: In function 'bfree_guest_sock_ready_mask':
+sysmain/syscall.c:9201:13: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9201 |         if (g_inet_socks[iidx].listening) {
+      |             ^~~~~~~~~~~~
+      |             g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_getsockname':
+sysmain/syscall.c:9303:9: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9303 |     a = g_inet_socks[idx].addr;
+      |         ^~~~~~~~~~~~
+      |         g_unix_socks
+sysmain/syscall.c:9305:13: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 9305 |         a = BFREE_INADDR_ANY;
+      |             ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:9307:13: error: 'BFREE_INADDR_LOOPBACK' undeclared (first use in this function)
+ 9307 |         a = BFREE_INADDR_LOOPBACK;
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:9312:24: error: 'BFREE_LINUX_AF_INET' undeclared (first use in this function); did you mean 'BFREE_LINUX_AF_UNIX'?
+ 9312 |     raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);
+      |                        ^~~~~~~~~~~~~~~~~~~
+      |                        BFREE_LINUX_AF_UNIX
+sysmain/syscall.c: In function 'sys_linux_getpeername':
+sysmain/syscall.c:9343:21: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9343 |     if (idx < 0 || !g_inet_socks[idx].connected) {
+      |                     ^~~~~~~~~~~~
+      |                     g_unix_socks
+sysmain/syscall.c:9350:58: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 9350 |     addr_be = bfree_inet_ntohl(g_inet_socks[idx].addr == BFREE_INADDR_ANY
+      |                                                          ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:9351:38: error: 'BFREE_INADDR_LOOPBACK' undeclared (first use in this function)
+ 9351 |                                    ? BFREE_INADDR_LOOPBACK
+      |                                      ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:9354:24: error: 'BFREE_LINUX_AF_INET' undeclared (first use in this function); did you mean 'BFREE_LINUX_AF_UNIX'?
+ 9354 |     raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);
+      |                        ^~~~~~~~~~~~~~~~~~~
+      |                        BFREE_LINUX_AF_UNIX
+sysmain/syscall.c: In function 'bfree_dispatch_linux_guest_syscall':
+sysmain/syscall.c:9778:5: error: 'g_coop_cur_nr' undeclared (first use in this function)
+ 9778 |     g_coop_cur_nr = (unsigned long)num;
+      |     ^~~~~~~~~~~~~
+sysmain/syscall.c:9864:5: error: duplicate case value
+ 9864 |     case 271:
+      |     ^~~~
+sysmain/syscall.c:9800:5: note: previously used here
+ 9800 |     case 271:
+      |     ^~~~
+sysmain/syscall.c:9866:5: error: duplicate case value
+ 9866 |     case 39:
+      |     ^~~~
+sysmain/syscall.c:9802:5: note: previously used here
+ 9802 |     case 39:
+      |     ^~~~
+sysmain/syscall.c:9874:5: error: duplicate case value
+ 9874 |     case 110:
+      |     ^~~~
+sysmain/syscall.c:9804:5: note: previously used here
+ 9804 |     case 110:
+      |     ^~~~
+sysmain/syscall.c:9876:5: error: duplicate case value
+ 9876 |     case 109: /* setpgid — job-control stub (single session) */
+      |     ^~~~
+sysmain/syscall.c:9806:5: note: previously used here
+ 9806 |     case 109: /* setpgid */
+      |     ^~~~
+sysmain/syscall.c:9878:5: error: duplicate case value
+ 9878 |     case 111: /* getpgid */
+      |     ^~~~
+sysmain/syscall.c:9825:5: note: previously used here
+ 9825 |     case 111: /* getpgid */
+      |     ^~~~
+sysmain/syscall.c:9880:5: error: duplicate case value
+ 9880 |     case 112: /* setsid */
+      |     ^~~~
+sysmain/syscall.c:9841:5: note: previously used here
+ 9841 |     case 112: /* setsid */
+      |     ^~~~
+sysmain/syscall.c:9882:5: error: duplicate case value
+ 9882 |     case 186:
+      |     ^~~~
+sysmain/syscall.c:9860:5: note: previously used here
+ 9860 |     case 186:
+      |     ^~~~
+sysmain/syscall.c:9884:5: error: duplicate case value
+ 9884 |     case 302:
+      |     ^~~~
+sysmain/syscall.c:9862:5: note: previously used here
+ 9862 |     case 302:
+      |     ^~~~
+sysmain/syscall.c:9922:5: error: duplicate case value
+ 9922 |     case 290: /* musl __NR_eventfd2 (284 is __NR_eventfd v1) */
+      |     ^~~~
+sysmain/syscall.c:9920:5: note: previously used here
+ 9920 |     case 290: /* musl __NR_eventfd2 (284 is __NR_eventfd v1) */
+      |     ^~~~
+sysmain/syscall.c:9924:5: error: duplicate case value
+ 9924 |     case 53:
+      |     ^~~~
+sysmain/syscall.c:9906:5: note: previously used here
+ 9906 |     case 53:
+      |     ^~~~
+sysmain/syscall.c:9926:5: error: duplicate case value
+ 9926 |     case 48: /* shutdown — soft-0 (pipe-backed; no half-close track) */
+      |     ^~~~
+sysmain/syscall.c:9908:5: note: previously used here
+ 9908 |     case 48: /* shutdown — soft-0 (pipe-backed; no half-close track) */
+      |     ^~~~
+sysmain/syscall.c:9928:5: error: duplicate case value
+ 9928 |     case 51: /* getsockname */
+      |     ^~~~
+sysmain/syscall.c:9910:5: note: previously used here
+ 9910 |     case 51: /* getsockname */
+      |     ^~~~
+sysmain/syscall.c:9930:5: error: duplicate case value
+ 9930 |     case 52: /* getpeername */
+      |     ^~~~
+sysmain/syscall.c:9912:5: note: previously used here
+ 9912 |     case 52: /* getpeername */
+      |     ^~~~
+sysmain/syscall.c:9932:5: error: duplicate case value
+ 9932 |     case 54: /* setsockopt — soft-0 */
+      |     ^~~~
+sysmain/syscall.c:9914:5: note: previously used here
+ 9914 |     case 54: /* setsockopt — soft-0 */
+      |     ^~~~
+sysmain/syscall.c:9934:5: error: duplicate case value
+ 9934 |     case 55: /* getsockopt — soft-0 */
+      |     ^~~~
+sysmain/syscall.c:9916:5: note: previously used here
+ 9916 |     case 55: /* getsockopt — soft-0 */
+      |     ^~~~
+sysmain/syscall.c:9936:5: error: duplicate case value
+ 9936 |     case 284:
+      |     ^~~~
+sysmain/syscall.c:9918:5: note: previously used here
+ 9918 |     case 284:
+      |     ^~~~
+sysmain/syscall.c:9949:16: error: implicit declaration of function 'sys_linux_mmap'; did you mean 'sys_linux_mremap'? [-Werror=implicit-function-declaration]
+ 9949 |         return sys_linux_mmap(arg1, arg2, arg3, arg4, arg5);
+      |                ^~~~~~~~~~~~~~
+      |                sys_linux_mremap
+sysmain/syscall.c:9965:16: error: implicit declaration of function 'sys_linux_rt_sigreturn'; did you mean 'sys_linux_rt_sigaction'? [-Werror=implicit-function-declaration]
+ 9965 |         return sys_linux_rt_sigreturn();
+      |                ^~~~~~~~~~~~~~~~~~~~~~
+      |                sys_linux_rt_sigaction
+sysmain/syscall.c:9967:16: error: implicit declaration of function 'sys_linux_rt_sigpending'; did you mean 'sys_linux_rt_sigsuspend'? [-Werror=implicit-function-declaration]
+ 9967 |         return sys_linux_rt_sigpending(arg1, arg2);
+      |                ^~~~~~~~~~~~~~~~~~~~~~~
+      |                sys_linux_rt_sigsuspend
+sysmain/syscall.c:9973:16: error: implicit declaration of function 'sys_linux_alarm'; did you mean 'sys_linux_clone'? [-Werror=implicit-function-declaration]
+ 9973 |         return sys_linux_alarm(arg1);
+      |                ^~~~~~~~~~~~~~~
+      |                sys_linux_clone
+sysmain/syscall.c:9975:16: error: implicit declaration of function 'sys_linux_setitimer'; did you mean 'sys_linux_gettid'? [-Werror=implicit-function-declaration]
+ 9975 |         return sys_linux_setitimer(arg1, arg2, arg3);
+      |                ^~~~~~~~~~~~~~~~~~~
+      |                sys_linux_gettid
+sysmain/syscall.c:9977:16: error: implicit declaration of function 'sys_linux_getitimer'; did you mean 'sys_linux_gettid'? [-Werror=implicit-function-declaration]
+ 9977 |         return sys_linux_getitimer(arg1, arg2);
+      |                ^~~~~~~~~~~~~~~~~~~
+      |                sys_linux_gettid
+sysmain/syscall.c:9979:16: error: implicit declaration of function 'sys_linux_flock'; did you mean 'sys_linux_clone'? [-Werror=implicit-function-declaration]
+ 9979 |         return sys_linux_flock(arg1, arg2);
+      |                ^~~~~~~~~~~~~~~
+      |                sys_linux_clone

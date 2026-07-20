@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1214,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 1098,
+    "new_len": 836
+  },
+  "themes": [
+    "as_copy",
+    "coop"
+  ],
+  "old_string": "    bfree_guest_pipe_reset_all();\n    bfree_guest_fd_ensure_init();\n    /* Image boundary: drop any stale redirects / pipes on stdio (H25 hang:\n     * wait/write on phantom live pipe or coop child left from prior image). */\n    bfree_guest_stdio_heal_pipes();\n    g_guest_fd_target[0] = -1;\n    g_guest_fd_target[1] = -1;\n    g_guest_fd_target[2] = -1;\n    g_guest_fd_dup_save[0] = -1;\n    g_guest_fd_dup_save[1] = -1;\n    g_guest_fd_dup_save[2] = -1;\n    g_guest_fork_active = 0;\n    g_guest_fork_pid = 0;\n    g_guest_fork_status_ready = 0;\n    g_guest_fork_was_as_copy = 0;\n    g_coop_side = 0;\n    g_coop_child_blocked = 0;\n    g_coop_parent_started = 0;\n    g_guest_waitid_active = 0;\n    g_guest_waitid_infop = 0;\n    g_guest_wait_status_ptr = 0;\n    g_guest_pgid = 1;\n    g_guest_tty_pgrp = 1;\n    g_guest_sid = 1;\n    bfree_process_init();\n    for (i = 3; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {\n        g_guest_fd_target[i] = -1;\n        g_guest_fd_dup_save[i] = -1;\n    }\n    for (i = 0; i < BFREE_GUEST_OFD_SLOTS; ++i) {\n        memset(&g_guest_ofds[i], 0, sizeof(g_guest_ofds[i]));\n    }\n}",
+  "new_string": "    bfree_guest_pipe_reset_all();\n    bfree_guest_fd_ensure_init();\n    /* Drop stale fork/coop only — full process_init here races AS-copy\n     * fork PT readiness and faulted the first applet (wc) on heap PTEs. */\n    g_guest_fork_active = 0;\n    g_guest_fork_pid = 0;\n    g_guest_fork_status_ready = 0;\n    g_guest_fork_was_as_copy = 0;\n    g_coop_side = 0;\n    g_coop_child_blocked = 0;\n    g_coop_parent_started = 0;\n    g_guest_waitid_active = 0;\n    g_guest_waitid_infop = 0;\n    g_guest_wait_status_ptr = 0;\n    g_guest_pgid = 1;\n    g_guest_tty_pgrp = 1;\n    g_guest_sid = 1;\n    for (i = 3; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {\n        g_guest_fd_target[i] = -1;\n        g_guest_fd_dup_save[i] = -1;\n    }\n    for (i = 0; i < BFREE_GUEST_OFD_SLOTS; ++i) {\n        memset(&g_guest_ofds[i], 0, sizeof(g_guest_ofds[i]));\n    }\n}"
+}

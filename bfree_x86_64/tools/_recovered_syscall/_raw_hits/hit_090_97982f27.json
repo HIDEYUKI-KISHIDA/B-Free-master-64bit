@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 412,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 871,
+    "new_len": 521
+  },
+  "themes": [
+    "parked",
+    "coop"
+  ],
+  "old_string": "            if (wopts != 0) {\n                return 0; /* WNOHANG, nothing ready */\n            }\n            {\n                long yr = bfree_coop_wait_maybe_yield_child(0,infop, 1);\n                if (yr != 0) {\n                    return yr;\n                }\n            }\n            /* Blocking: run parked child (legacy shared-AS edge). */\n            if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {\n                g_guest_wait_status_ptr = 0;\n                g_guest_waitid_infop = infop;\n                g_guest_waitid_active = 1;\n                return bfree_coop_yield_to_child();\n            }\n            {\n                int er = bfree_guest_sig_take_eintr();\n                if (er < 0) {\n                    return er;\n                }\n            }\n            __asm__ volatile(\"sti; hlt\" ::: \"memory\");\n            continue;",
+  "new_string": "            if (wopts != 0) {\n                return 0; /* WNOHANG, nothing ready */\n            }\n            {\n                long yr = bfree_coop_wait_yield_if_live_child(0, infop, 1);\n                if (yr != 0) {\n                    return yr;\n                }\n            }\n            {\n                int er = bfree_guest_sig_take_eintr();\n                if (er < 0) {\n                    return er;\n                }\n            }\n            __asm__ volatile(\"sti; hlt\" ::: \"memory\");\n            continue;"
+}

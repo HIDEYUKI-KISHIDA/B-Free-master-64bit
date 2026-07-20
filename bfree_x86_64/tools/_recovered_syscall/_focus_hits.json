@@ -1,0 +1,1205 @@
+[
+  {
+    "file": "hit_003_f40d0181.json",
+    "new_len": 8337,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_inet_from_fd",
+      "bfree_inet_is_loopback",
+      "bfree_inet_parse_sockaddr",
+      "g_inet_socks",
+      "g_unix_socks"
+    ],
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "snip": "static long sys_linux_bind(long sockfd, long addr, long addrlen) {     int idx, i;     const uint8_t"
+  },
+  {
+    "file": "hit_006_2a630b0a.json",
+    "new_len": 6127,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "exec_transfer",
+      "coop",
+      "timerfd"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_timerfd_purge_all"
+    ],
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "snip": "/* vfork child: load BusyBox into a private address space so the suspended  * parent's mappings surv"
+  },
+  {
+    "file": "hit_007_f3663731.json",
+    "new_len": 5735,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "exec_transfer",
+      "sigframe"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "snip": "/* Signal dispositions: 0=DFL, 1=IGN, 2=CATCH (user handler). */ #define BFREE_SIG_DFL   0 #define B"
+  },
+  {
+    "file": "hit_008_fa9a295b.json",
+    "new_len": 5724,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_inet_from_fd",
+      "bfree_inet_ntohl",
+      "bfree_inet_ntohs",
+      "g_inet_socks",
+      "g_unix_socks"
+    ],
+    "src": "fa9a295b-4c10-43b0-a5c0-745ba02c9972.jsonl",
+    "snip": "/* S3-02: readiness for pipe-backed AF_INET/AF_UNIX (fd bases 0x3A00/0x3900). */ static uint32_t bfr"
+  },
+  {
+    "file": "hit_010_2a630b0a.json",
+    "new_len": 5397,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "exec_transfer",
+      "coop",
+      "timerfd"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_timerfd_purge_all"
+    ],
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "snip": "/* vfork child: load BusyBox into a private address space so the suspended  * parent's mappings surv"
+  },
+  {
+    "file": "hit_011_2a630b0a.json",
+    "new_len": 5360,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "exec_transfer",
+      "timerfd"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_timerfd_purge_all"
+    ],
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "snip": "/* vfork child: load BusyBox into a private address space so the suspended  * parent's mappings surv"
+  },
+  {
+    "file": "hit_012_97982f27.json",
+    "new_len": 5342,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop",
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_futex_waiter_armed",
+      "g_futex_waiter_uaddr",
+      "sys_futex"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static unsigned g_guest_futex_log_count;  /*  * Linux 202: futex — guest coop (H20).  * - timeout_pt"
+  },
+  {
+    "file": "hit_014_6c4d83e9.json",
+    "new_len": 4973,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "sigframe"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "6c4d83e9-a562-4f1a-97b2-6fe71ef5e3ea.jsonl",
+    "snip": "static int bfree_user_range_mapped(uint64_t base, size_t nbytes) {     uint64_t a;     uint64_t end;"
+  },
+  {
+    "file": "hit_015_6c4d83e9.json",
+    "new_len": 4688,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop",
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_futex_waiter_armed",
+      "g_futex_waiter_side",
+      "g_futex_waiter_uaddr",
+      "g_futex_waiter_val",
+      "sys_futex"
+    ],
+    "src": "6c4d83e9-a562-4f1a-97b2-6fe71ef5e3ea.jsonl",
+    "snip": "static unsigned g_guest_futex_log_count;  /*  * Linux 202: futex — single-waiter guest (H20 partial↑"
+  },
+  {
+    "file": "hit_016_97982f27.json",
+    "new_len": 4617,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "sigframe"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "    sig = g_sig_deliver_sig;     g_sig_deliver_sig = 0;     handler = g_guest_sig_handler[sig];     "
+  },
+  {
+    "file": "hit_017_97982f27.json",
+    "new_len": 4469,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to",
+      "bfree_guest_as_copy_switch_heap_to_child",
+      "bfree_guest_as_copy_switch_heap_to_parent",
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_child_user();     if (g_coop_chil"
+  },
+  {
+    "file": "hit_018_97982f27.json",
+    "new_len": 3561,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_guest_thread_clone",
+      "bfree_guest_thread_exit",
+      "bfree_guest_thread_init",
+      "bfree_guest_thread_save_parent_ctx",
+      "g_futex_waiter_armed",
+      "g_futex_waiter_uaddr"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static uintptr_t g_guest_clear_child_tid; static int g_guest_thread_active; static int g_guest_threa"
+  },
+  {
+    "file": "hit_019_6c4d83e9.json",
+    "new_len": 3496,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop",
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_futex_waiter_parked",
+      "g_futex_waiter_side",
+      "g_futex_waiter_uaddr",
+      "g_futex_waiter_val",
+      "sys_futex"
+    ],
+    "src": "6c4d83e9-a562-4f1a-97b2-6fe71ef5e3ea.jsonl",
+    "snip": "static unsigned g_guest_futex_log_count;  /* H20: single waiter slot (no multi-waiter queue). */ sta"
+  },
+  {
+    "file": "hit_020_2a630b0a.json",
+    "new_len": 3396,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "timerfd"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_timerfd_purge_all"
+    ],
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "snip": "    if (bfree_copy_user_strarray(argv_ptr, argv_buf, 16, &argc) != 0 || argc <= 0) {         return "
+  },
+  {
+    "file": "hit_021_97982f27.json",
+    "new_len": 3314,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to",
+      "g_guest_fork_was_as_copy",
+      "g_guest_parent_parked_brk",
+      "g_guest_parent_parked_cwd",
+      "g_guest_parent_parked_heap_next",
+      "g_guest_parent_parked_heap_valid"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "    return BFREE_SYSRET_FORK_PARENT; }  /* H06: job-control stop — keep child AS/session, yield pare"
+  },
+  {
+    "file": "hit_023_97982f27.json",
+    "new_len": 2924,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to",
+      "bfree_guest_as_copy_switch_heap_to_child",
+      "bfree_guest_as_copy_switch_heap_to_parent",
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_child_user();     if (g_coop_chil"
+  },
+  {
+    "file": "hit_024_6c4d83e9.json",
+    "new_len": 2877,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "sigframe"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "6c4d83e9-a562-4f1a-97b2-6fe71ef5e3ea.jsonl",
+    "snip": "#define BFREE_SA_SIGINFO 0x4UL #define BFREE_SA_NODEFER 0x40000000UL #define BFREE_SA_ONSTACK 0x0800"
+  },
+  {
+    "file": "hit_026_97982f27.json",
+    "new_len": 2849,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "parked"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_guest_as_copy_switch_heap_to_child",
+      "bfree_guest_as_copy_switch_heap_to_parent",
+      "g_guest_child_parked_brk",
+      "g_guest_child_parked_cwd",
+      "g_guest_child_parked_heap_next",
+      "g_guest_child_parked_heap_valid",
+      "g_guest_parent_parked_brk",
+      "g_guest_parent_parked_cwd",
+      "g_guest_parent_parked_heap_next",
+      "g_guest_parent_parked_heap_valid"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static void bfree_guest_cwd_copy(char *dst, size_t dst_sz, const char *src) {     size_t i;      for"
+  },
+  {
+    "file": "hit_027_f40d0181.json",
+    "new_len": 2734,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_inet_from_fd",
+      "bfree_inet_is_loopback",
+      "bfree_inet_ntohl",
+      "bfree_inet_ntohs",
+      "bfree_inet_parse_sockaddr",
+      "g_inet_socks",
+      "g_unix_socks"
+    ],
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "snip": "static int bfree_inet_from_fd(int fd) {     int idx;     if (fd < (int)BFREE_INET_FD_BASE || fd >= ("
+  },
+  {
+    "file": "hit_030_97982f27.json",
+    "new_len": 2279,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "/* Blocking wait with a live coop child: always schedule it. Never fall through  * to sti;hlt while "
+  },
+  {
+    "file": "hit_031_f40d0181.json",
+    "new_len": 2271,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "snip": "static long sys_linux_waitid(long idtype, long id, long infop, long options) {     long pid;     int"
+  },
+  {
+    "file": "hit_032_97982f27.json",
+    "new_len": 2263,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to",
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "/* Blocking wait with a live AS-copy (parent-first) child: always schedule it.  * A too-strict check"
+  },
+  {
+    "file": "hit_034_97982f27.json",
+    "new_len": 1993,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "sigframe"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "/*  * H01 CATCH delivery: minimal rt_sigframe on user stack  * (pretcode=restorer + padded ucontext/"
+  },
+  {
+    "file": "hit_035_97982f27.json",
+    "new_len": 1888,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static void bfree_coop_save_parent_user(void) {     g_coop_parent_rcx = g_bfree_user_sysret_rcx;    "
+  },
+  {
+    "file": "hit_037_2a630b0a.json",
+    "new_len": 1814,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop",
+      "timerfd"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_timerfd_purge_all"
+    ],
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "snip": "    /* Kernel-only bookkeeping is safe for both paths; do not remap ELF yet. */     g_guest_proc_map"
+  },
+  {
+    "file": "hit_039_97982f27.json",
+    "new_len": 1668,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "    bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0;     /* Shared fd table: a pipeline chi"
+  },
+  {
+    "file": "hit_040_0ce9e498.json",
+    "new_len": 1593,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "snip": "static long bfree_guest_exit_from_fork(long status) {     int *cleartid;     size_t i;     /* Use en"
+  },
+  {
+    "file": "hit_041_f3663731.json",
+    "new_len": 1515,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_inet_from_fd",
+      "g_inet_socks",
+      "g_unix_socks"
+    ],
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "snip": "static int bfree_unix_from_fd(int fd) {     int idx;     if (fd < (int)BFREE_UNIX_FD_BASE || fd >= ("
+  },
+  {
+    "file": "hit_042_97982f27.json",
+    "new_len": 1496,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "    /* Parent may have progressed (AS-copy); publish parked parent SYSRET. */     bfree_coop_publish"
+  },
+  {
+    "file": "hit_043_97982f27.json",
+    "new_len": 1472,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "parked"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_guest_parent_parked_brk",
+      "g_guest_parent_parked_cwd",
+      "g_guest_parent_parked_heap_next",
+      "g_guest_parent_parked_heap_valid"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "    return 0; /* vfork: continue as child; parent resumes on child exit */ }  /* Snapshot parent hea"
+  },
+  {
+    "file": "hit_044_0ce9e498.json",
+    "new_len": 1469,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "snip": "static long bfree_guest_exit_from_fork(long status) {     int *cleartid;     size_t i;     /* Captur"
+  },
+  {
+    "file": "hit_045_f40d0181.json",
+    "new_len": 1409,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet",
+      "unix",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_inet_sock_t",
+      "g_inet_socks",
+      "g_unix_socks"
+    ],
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "snip": "#define BFREE_SYSRET_COOP_SWITCH ((long)-4092) #define BFREE_LINUX_AF_UNIX 1 #define BFREE_LINUX_AF_"
+  },
+  {
+    "file": "hit_046_58bd59de.json",
+    "new_len": 1381,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "snip": "    bfree_coop_as_switch_to(1);     {         uint64_t rip = g_coop_child_rcx;         page_table_t "
+  },
+  {
+    "file": "hit_048_cb50afd8.json",
+    "new_len": 1248,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "timerfd"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "snip": "#define BFREE_VINTR  0 #define BFREE_VQUIT  1 #define BFREE_VERASE 2 #define BFREE_VEOF   4 #define "
+  },
+  {
+    "file": "hit_049_d784a0bb.json",
+    "new_len": 1218,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "sys_futex"
+    ],
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "snip": "static unsigned g_guest_futex_log_count;  // Linux 202: futex — single-threaded guest; never block, "
+  },
+  {
+    "file": "hit_050_cf433436.json",
+    "new_len": 1196,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "snip": "static void bfree_coop_save_child_user(void) {     g_coop_child_rcx = g_bfree_user_sysret_rcx;     g"
+  },
+  {
+    "file": "hit_051_58bd59de.json",
+    "new_len": 1160,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "snip": "static long bfree_coop_yield_to_child(void) {     g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx; "
+  },
+  {
+    "file": "hit_052_97982f27.json",
+    "new_len": 1129,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "    bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0;     bfree_guest_stdio_heal_pipes();   "
+  },
+  {
+    "file": "hit_053_5c44f804.json",
+    "new_len": 1124,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop",
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "sys_futex"
+    ],
+    "src": "5c44f804-a588-440e-ac50-0b36379eca43.jsonl",
+    "snip": "/*  * Linux 202: futex — single-threaded guest.  * H20: real blocking / timeout-bounded coop yield l"
+  },
+  {
+    "file": "hit_054_97982f27.json",
+    "new_len": 1122,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_inet_is_guest_routable",
+      "bfree_inet_is_loopback",
+      "bfree_inet_listener_matches",
+      "bfree_inet_match_addr"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static int bfree_inet_is_guest_routable(uint32_t addr) {     if (addr == BFREE_INADDR_ANY) {        "
+  },
+  {
+    "file": "hit_055_f40d0181.json",
+    "new_len": 1121,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "snip": "static long sys_linux_waitpid(long pid, long status_ptr, long options) {     int status = 0;     lon"
+  },
+  {
+    "file": "hit_056_cf433436.json",
+    "new_len": 1107,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "snip": "    g_coop_child_blocked = 1;     bfree_coop_fd_switch_to(0);     bfree_coop_as_switch_to(0);     g_"
+  },
+  {
+    "file": "hit_057_cf433436.json",
+    "new_len": 1102,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "snip": "    g_coop_child_blocked = 1;     bfree_coop_fd_switch_to(0);     bfree_coop_as_switch_to(0);     g_"
+  },
+  {
+    "file": "hit_060_0ce9e498.json",
+    "new_len": 1070,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "snip": "static long bfree_guest_exit_from_fork_signal(int sig) {     int *cleartid;     size_t i;     int as"
+  },
+  {
+    "file": "hit_061_2a630b0a.json",
+    "new_len": 1054,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "snip": "static long sys_linux_waitpid(long pid, long status_ptr, long options) {     int status = 0;     lon"
+  },
+  {
+    "file": "hit_062_0ce9e498.json",
+    "new_len": 1048,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "snip": "static long bfree_guest_exit_from_fork_signal(int sig) {     int *cleartid;     size_t i;     int as"
+  },
+  {
+    "file": "hit_066_cf433436.json",
+    "new_len": 978,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "snip": "    bfree_coop_fd_snap_init();     if (copy_as) {         /*          * AS-copy fork: return to pare"
+  },
+  {
+    "file": "hit_068_58bd59de.json",
+    "new_len": 934,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "snip": "static long bfree_coop_yield_to_child(void) {     uart_puts(\"[COOP] yield_child enter\\n\");     g_bfr"
+  },
+  {
+    "file": "hit_069_97982f27.json",
+    "new_len": 932,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to",
+      "bfree_guest_as_copy_switch_heap_to_parent",
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_child_user();     if (g_coop_chil"
+  },
+  {
+    "file": "hit_070_97982f27.json",
+    "new_len": 877,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to",
+      "bfree_guest_as_copy_switch_heap_to_child",
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_coop_yield_to_child(void) {     /* Park full parent user context before staging ch"
+  },
+  {
+    "file": "hit_072_58bd59de.json",
+    "new_len": 830,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "snip": "    bfree_coop_as_switch_to(1);     uart_puts(\"[COOP] yield_child switched insn=\");     {         ui"
+  },
+  {
+    "file": "hit_075_58bd59de.json",
+    "new_len": 698,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to"
+    ],
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "snip": "    bfree_coop_fd_switch_to(0);     bfree_coop_as_switch_to(0);     /* Parent TLS — child execve may"
+  },
+  {
+    "file": "hit_079_97982f27.json",
+    "new_len": 672,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static void bfree_guest_ofd_maybe_release(int fd) {     bfree_guest_ofd_t *ofd = bfree_guest_ofd_fro"
+  },
+  {
+    "file": "hit_081_c6a289a7.json",
+    "new_len": 633,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "timerfd"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_timerfd_entry_t",
+      "bfree_timerfd_purge_all"
+    ],
+    "src": "c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "snip": "static bfree_timerfd_entry_t *bfree_find_timerfd(int fd) {     int index = fd - BFREE_TIMERFD_FD_BAS"
+  },
+  {
+    "file": "hit_082_97982f27.json",
+    "new_len": 632,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "            if (wopts != 0) {                 return 0; /* WNOHANG, nothing ready */             }  "
+  },
+  {
+    "file": "hit_083_97982f27.json",
+    "new_len": 632,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "exec_transfer"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_bfree_exec_transfer_rip"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "    g_bfree_sysret_exec_rsp = user_rsp;     g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry; "
+  },
+  {
+    "file": "hit_084_f40d0181.json",
+    "new_len": 621,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_inet_from_fd",
+      "bfree_inet_sock_release",
+      "g_inet_socks"
+    ],
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "snip": "static int bfree_inet_from_fd(int fd) {     int idx;     if (fd < (int)BFREE_INET_FD_BASE || fd >= ("
+  },
+  {
+    "file": "hit_089_f3663731.json",
+    "new_len": 538,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet",
+      "unix",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_inet_socks",
+      "g_unix_socks"
+    ],
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "snip": "#define BFREE_SYSRET_COOP_SWITCH ((long)-4092) #define BFREE_LINUX_AF_UNIX 1 #define BFREE_LINUX_AF_"
+  },
+  {
+    "file": "hit_090_97982f27.json",
+    "new_len": 521,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "            if (wopts != 0) {                 return 0; /* WNOHANG, nothing ready */             }  "
+  },
+  {
+    "file": "hit_092_97982f27.json",
+    "new_len": 504,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_coop_yield_to_child(void) {     g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx; "
+  },
+  {
+    "file": "hit_095_97982f27.json",
+    "new_len": 478,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to",
+      "bfree_guest_as_copy_switch_heap_to_parent",
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_coop_yield_to_parent_done(long ret) {     bfree_coop_save_child_user();     g_coop"
+  },
+  {
+    "file": "hit_096_97982f27.json",
+    "new_len": 477,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_coop_as_switch_to",
+      "bfree_guest_as_copy_switch_heap_to_child",
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_coop_yield_to_child_done(long ret) {     bfree_coop_save_parent_user();     if (g_"
+  },
+  {
+    "file": "hit_097_97982f27.json",
+    "new_len": 428,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_coop_yield_to_child_done(long ret) {     g_bfree_fork_saved_rcx = g_bfree_user_sys"
+  },
+  {
+    "file": "hit_098_f3663731.json",
+    "new_len": 414,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "bfree_inet_from_fd"
+    ],
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "snip": "static long sys_linux_connect(long sockfd, long addr, long addrlen) {     int idx, li, i, slot = -1,"
+  },
+  {
+    "file": "hit_100_d784a0bb.json",
+    "new_len": 408,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "snip": "    switch (cmd) {     case 0: /* FUTEX_WAIT */         if (uaddr != 0 && bfree_user_vaddr_mapped((u"
+  },
+  {
+    "file": "hit_107_cb50afd8.json",
+    "new_len": 351,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "snip": "// Linux 218: set_tid_address — remember cleartid; do not poke TLS memory on set. long sys_set_tid_a"
+  },
+  {
+    "file": "hit_110_d784a0bb.json",
+    "new_len": 342,
+    "path": "kernel/sysmain/syscall.c",
+    "themes": [
+      "futex"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [],
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "snip": "    case 0: /* FUTEX_WAIT */         if (uaddr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)"
+  },
+  {
+    "file": "hit_111_97982f27.json",
+    "new_len": 341,
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "exec_transfer"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_bfree_exec_transfer_rip"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "void bfree_sysret_exec_globals_init(void) {     g_bfree_sysret_exec_rsp = 0;     g_bfree_sysret_exec"
+  },
+  {
+    "file": "hit_118_97982f27.json",
+    "new_len": 243,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_guest_exit_from_fork(long status) {     int *cleartid;     /* Use enter-time AS-co"
+  },
+  {
+    "file": "hit_135_97982f27.json",
+    "new_len": 162,
+    "path": "C:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "themes": [
+      "as_copy"
+    ],
+    "is_py": false,
+    "is_syscall": true,
+    "is_cish": true,
+    "syms": [
+      "g_guest_fork_was_as_copy"
+    ],
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "snip": "static long bfree_guest_exit_from_fork_signal(int sig) {     int *cleartid;     int as_copy = g_gues"
+  }
+]

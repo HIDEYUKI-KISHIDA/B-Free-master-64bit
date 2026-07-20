@@ -1,0 +1,111 @@
+﻿focus count 70
+8337 hit_003_f40d0181.json ['inet', 'unix'] ['bfree_inet_from_fd', 'bfree_inet_is_loopback', 'bfree_inet_parse_sockaddr', 'g_inet_socks', 'g_unix_socks'] static long sys_linux_bind(long sockfd, long addr, long addr
+6127 hit_006_2a630b0a.json ['exec_transfer', 'coop', 'timerfd'] ['bfree_timerfd_purge_all'] /* vfork child: load BusyBox into a private address space so
+5735 hit_007_f3663731.json ['exec_transfer', 'sigframe'] [] /* Signal dispositions: 0=DFL, 1=IGN, 2=CATCH (user handler)
+5724 hit_008_fa9a295b.json ['inet', 'unix'] ['bfree_inet_from_fd', 'bfree_inet_ntohl', 'bfree_inet_ntohs', 'g_inet_socks', 'g_unix_socks'] /* S3-02: readiness for pipe-backed AF_INET/AF_UNIX (fd base
+5397 hit_010_2a630b0a.json ['exec_transfer', 'coop', 'timerfd'] ['bfree_timerfd_purge_all'] /* vfork child: load BusyBox into a private address space so
+5360 hit_011_2a630b0a.json ['exec_transfer', 'timerfd'] ['bfree_timerfd_purge_all'] /* vfork child: load BusyBox into a private address space so
+5342 hit_012_97982f27.json ['coop', 'futex'] ['g_futex_waiter_armed', 'g_futex_waiter_uaddr', 'sys_futex'] static unsigned g_guest_futex_log_count;  /*  * Linux 202: f
+4973 hit_014_6c4d83e9.json ['sigframe'] [] static int bfree_user_range_mapped(uint64_t base, size_t nby
+4688 hit_015_6c4d83e9.json ['parked', 'coop', 'futex'] ['g_futex_waiter_armed', 'g_futex_waiter_side', 'g_futex_waiter_uaddr', 'g_futex_waiter_val', 'sys_futex'] static unsigned g_guest_futex_log_count;  /*  * Linux 202: f
+4617 hit_016_97982f27.json ['sigframe'] []     sig = g_sig_deliver_sig;     g_sig_deliver_sig = 0;     
+4469 hit_017_97982f27.json ['as_copy', 'coop'] ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_child', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_parent(void) {     bfree_coo
+3561 hit_018_97982f27.json ['futex'] ['bfree_guest_thread_clone', 'bfree_guest_thread_exit', 'bfree_guest_thread_init', 'bfree_guest_thread_save_parent_ctx', 'g_futex_waiter_armed', 'g_futex_waiter_uaddr'] static uintptr_t g_guest_clear_child_tid; static int g_guest
+3496 hit_019_6c4d83e9.json ['parked', 'coop', 'futex'] ['g_futex_waiter_parked', 'g_futex_waiter_side', 'g_futex_waiter_uaddr', 'g_futex_waiter_val', 'sys_futex'] static unsigned g_guest_futex_log_count;  /* H20: single wai
+3396 hit_020_2a630b0a.json ['timerfd'] ['bfree_timerfd_purge_all']     if (bfree_copy_user_strarray(argv_ptr, argv_buf, 16, &ar
+3314 hit_021_97982f27.json ['as_copy', 'parked', 'coop'] ['bfree_coop_as_switch_to', 'g_guest_fork_was_as_copy', 'g_guest_parent_parked_brk', 'g_guest_parent_parked_cwd', 'g_guest_parent_parked_heap_next', 'g_guest_parent_parked_heap_valid']     return BFREE_SYSRET_FORK_PARENT; }  /* H06: job-control 
+2924 hit_023_97982f27.json ['as_copy', 'coop'] ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_child', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_parent(void) {     bfree_coo
+2877 hit_024_6c4d83e9.json ['sigframe'] [] #define BFREE_SA_SIGINFO 0x4UL #define BFREE_SA_NODEFER 0x40
+2849 hit_026_97982f27.json ['as_copy', 'parked'] ['bfree_guest_as_copy_switch_heap_to_child', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_child_parked_brk', 'g_guest_child_parked_cwd', 'g_guest_child_parked_heap_next', 'g_guest_child_parked_heap_valid', 'g_guest_parent_parked_brk', 'g_guest_parent_parked_cwd'] static void bfree_guest_cwd_copy(char *dst, size_t dst_sz, c
+2734 hit_027_f40d0181.json ['inet', 'unix'] ['bfree_inet_from_fd', 'bfree_inet_is_loopback', 'bfree_inet_ntohl', 'bfree_inet_ntohs', 'bfree_inet_parse_sockaddr', 'g_inet_socks', 'g_unix_socks'] static int bfree_inet_from_fd(int fd) {     int idx;     if 
+2279 hit_030_97982f27.json ['as_copy', 'parked', 'coop'] ['bfree_coop_as_switch_to'] /* Blocking wait with a live coop child: always schedule it.
+2271 hit_031_f40d0181.json ['parked', 'coop'] [] static long sys_linux_waitid(long idtype, long id, long info
+2263 hit_032_97982f27.json ['as_copy', 'parked', 'coop'] ['bfree_coop_as_switch_to', 'g_guest_fork_was_as_copy'] /* Blocking wait with a live AS-copy (parent-first) child: a
+1993 hit_034_97982f27.json ['sigframe'] [] /*  * H01 CATCH delivery: minimal rt_sigframe on user stack 
+1888 hit_035_97982f27.json ['parked', 'coop'] [] static void bfree_coop_save_parent_user(void) {     g_coop_p
+1814 hit_037_2a630b0a.json ['coop', 'timerfd'] ['bfree_timerfd_purge_all']     /* Kernel-only bookkeeping is safe for both paths; do no
+1668 hit_039_97982f27.json ['as_copy', 'coop'] []     bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0
+1593 hit_040_0ce9e498.json ['as_copy', 'coop'] ['g_guest_fork_was_as_copy'] static long bfree_guest_exit_from_fork(long status) {     in
+1515 hit_041_f3663731.json ['inet', 'unix'] ['bfree_inet_from_fd', 'g_inet_socks', 'g_unix_socks'] static int bfree_unix_from_fd(int fd) {     int idx;     if 
+1496 hit_042_97982f27.json ['parked', 'coop'] []     /* Parent may have progressed (AS-copy); publish parked 
+1472 hit_043_97982f27.json ['as_copy', 'parked'] ['g_guest_parent_parked_brk', 'g_guest_parent_parked_cwd', 'g_guest_parent_parked_heap_next', 'g_guest_parent_parked_heap_valid']     return 0; /* vfork: continue as child; parent resumes on
+1469 hit_044_0ce9e498.json ['as_copy', 'coop'] [] static long bfree_guest_exit_from_fork(long status) {     in
+1409 hit_045_f40d0181.json ['inet', 'unix', 'coop'] ['bfree_inet_sock_t', 'g_inet_socks', 'g_unix_socks'] #define BFREE_SYSRET_COOP_SWITCH ((long)-4092) #define BFREE
+1381 hit_046_58bd59de.json ['coop'] ['bfree_coop_as_switch_to']     bfree_coop_as_switch_to(1);     {         uint64_t rip =
+1248 hit_048_cb50afd8.json ['timerfd'] [] #define BFREE_VINTR  0 #define BFREE_VQUIT  1 #define BFREE_
+1218 hit_049_d784a0bb.json ['futex'] ['sys_futex'] static unsigned g_guest_futex_log_count;  // Linux 202: fute
+1196 hit_050_cf433436.json ['coop'] ['bfree_coop_as_switch_to'] static void bfree_coop_save_child_user(void) {     g_coop_ch
+1160 hit_051_58bd59de.json ['coop'] ['bfree_coop_as_switch_to'] static long bfree_coop_yield_to_child(void) {     g_bfree_fo
+1129 hit_052_97982f27.json ['as_copy', 'coop'] []     bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0
+1124 hit_053_5c44f804.json ['coop', 'futex'] ['sys_futex'] /*  * Linux 202: futex 窶・single-threaded guest.  * H20: real
+1122 hit_054_97982f27.json ['inet'] ['bfree_inet_is_guest_routable', 'bfree_inet_is_loopback', 'bfree_inet_listener_matches', 'bfree_inet_match_addr'] static int bfree_inet_is_guest_routable(uint32_t addr) {    
+1121 hit_055_f40d0181.json ['parked', 'coop'] [] static long sys_linux_waitpid(long pid, long status_ptr, lon
+1107 hit_056_cf433436.json ['coop'] ['bfree_coop_as_switch_to']     g_coop_child_blocked = 1;     bfree_coop_fd_switch_to(0)
+1102 hit_057_cf433436.json ['coop'] ['bfree_coop_as_switch_to']     g_coop_child_blocked = 1;     bfree_coop_fd_switch_to(0)
+1070 hit_060_0ce9e498.json ['as_copy', 'coop'] ['g_guest_fork_was_as_copy'] static long bfree_guest_exit_from_fork_signal(int sig) {    
+1054 hit_061_2a630b0a.json ['parked', 'coop'] [] static long sys_linux_waitpid(long pid, long status_ptr, lon
+1048 hit_062_0ce9e498.json ['as_copy', 'coop'] [] static long bfree_guest_exit_from_fork_signal(int sig) {    
+978 hit_066_cf433436.json ['parked', 'coop'] ['bfree_coop_as_switch_to']     bfree_coop_fd_snap_init();     if (copy_as) {         /*
+934 hit_068_58bd59de.json ['coop'] ['bfree_coop_as_switch_to'] static long bfree_coop_yield_to_child(void) {     uart_puts(
+932 hit_069_97982f27.json ['as_copy', 'coop'] ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_parent(void) {     bfree_coo
+877 hit_070_97982f27.json ['as_copy', 'coop'] ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_child', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_child(void) {     /* Park fu
+
+--- by theme ---
+as_copy 21 largest hit_017_97982f27.json
+coop 43 largest hit_006_2a630b0a.json
+exec_transfer 6 largest hit_006_2a630b0a.json
+futex 9 largest hit_012_97982f27.json
+inet 9 largest hit_003_f40d0181.json
+parked 16 largest hit_015_6c4d83e9.json
+sigframe 5 largest hit_007_f3663731.json
+timerfd 7 largest hit_006_2a630b0a.json
+unix 7 largest hit_003_f40d0181.json
+
+--- as_copy/inet/parked/exec ---
+8337 hit_003_f40d0181.json ['bfree_inet_from_fd', 'bfree_inet_is_loopback', 'bfree_inet_parse_sockaddr', 'g_inet_socks', 'g_unix_socks'] static long sys_linux_bind(long sockfd, long addr, long addrlen) {    
+6127 hit_006_2a630b0a.json ['bfree_timerfd_purge_all'] /* vfork child: load BusyBox into a private address space so the suspe
+5735 hit_007_f3663731.json [] /* Signal dispositions: 0=DFL, 1=IGN, 2=CATCH (user handler). */ #defi
+5724 hit_008_fa9a295b.json ['bfree_inet_from_fd', 'bfree_inet_ntohl', 'bfree_inet_ntohs', 'g_inet_socks', 'g_unix_socks'] /* S3-02: readiness for pipe-backed AF_INET/AF_UNIX (fd bases 0x3A00/0
+5397 hit_010_2a630b0a.json ['bfree_timerfd_purge_all'] /* vfork child: load BusyBox into a private address space so the suspe
+5360 hit_011_2a630b0a.json ['bfree_timerfd_purge_all'] /* vfork child: load BusyBox into a private address space so the suspe
+4688 hit_015_6c4d83e9.json ['g_futex_waiter_armed', 'g_futex_waiter_side', 'g_futex_waiter_uaddr', 'g_futex_waiter_val', 'sys_futex'] static unsigned g_guest_futex_log_count;  /*  * Linux 202: futex 窶・sin
+4469 hit_017_97982f27.json ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_child', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_chi
+3496 hit_019_6c4d83e9.json ['g_futex_waiter_parked', 'g_futex_waiter_side', 'g_futex_waiter_uaddr', 'g_futex_waiter_val', 'sys_futex'] static unsigned g_guest_futex_log_count;  /* H20: single waiter slot (
+3314 hit_021_97982f27.json ['bfree_coop_as_switch_to', 'g_guest_fork_was_as_copy', 'g_guest_parent_parked_brk', 'g_guest_parent_parked_cwd', 'g_guest_parent_parked_heap_next', 'g_guest_parent_parked_heap_valid']     return BFREE_SYSRET_FORK_PARENT; }  /* H06: job-control stop 窶・kee
+2924 hit_023_97982f27.json ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_child', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_chi
+2849 hit_026_97982f27.json ['bfree_guest_as_copy_switch_heap_to_child', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_child_parked_brk', 'g_guest_child_parked_cwd', 'g_guest_child_parked_heap_next', 'g_guest_child_parked_heap_valid', 'g_guest_parent_parked_brk', 'g_guest_parent_parked_cwd', 'g_guest_parent_parked_heap_next', 'g_guest_parent_parked_heap_valid'] static void bfree_guest_cwd_copy(char *dst, size_t dst_sz, const char 
+2734 hit_027_f40d0181.json ['bfree_inet_from_fd', 'bfree_inet_is_loopback', 'bfree_inet_ntohl', 'bfree_inet_ntohs', 'bfree_inet_parse_sockaddr', 'g_inet_socks', 'g_unix_socks'] static int bfree_inet_from_fd(int fd) {     int idx;     if (fd < (int
+2279 hit_030_97982f27.json ['bfree_coop_as_switch_to'] /* Blocking wait with a live coop child: always schedule it. Never fal
+2271 hit_031_f40d0181.json [] static long sys_linux_waitid(long idtype, long id, long infop, long op
+2263 hit_032_97982f27.json ['bfree_coop_as_switch_to', 'g_guest_fork_was_as_copy'] /* Blocking wait with a live AS-copy (parent-first) child: always sche
+1888 hit_035_97982f27.json [] static void bfree_coop_save_parent_user(void) {     g_coop_parent_rcx 
+1668 hit_039_97982f27.json []     bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0;     /* S
+1593 hit_040_0ce9e498.json ['g_guest_fork_was_as_copy'] static long bfree_guest_exit_from_fork(long status) {     int *clearti
+1515 hit_041_f3663731.json ['bfree_inet_from_fd', 'g_inet_socks', 'g_unix_socks'] static int bfree_unix_from_fd(int fd) {     int idx;     if (fd < (int
+1496 hit_042_97982f27.json []     /* Parent may have progressed (AS-copy); publish parked parent SYS
+1472 hit_043_97982f27.json ['g_guest_parent_parked_brk', 'g_guest_parent_parked_cwd', 'g_guest_parent_parked_heap_next', 'g_guest_parent_parked_heap_valid']     return 0; /* vfork: continue as child; parent resumes on child exi
+1469 hit_044_0ce9e498.json [] static long bfree_guest_exit_from_fork(long status) {     int *clearti
+1409 hit_045_f40d0181.json ['bfree_inet_sock_t', 'g_inet_socks', 'g_unix_socks'] #define BFREE_SYSRET_COOP_SWITCH ((long)-4092) #define BFREE_LINUX_AF_
+1129 hit_052_97982f27.json []     bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0;     bfre
+1122 hit_054_97982f27.json ['bfree_inet_is_guest_routable', 'bfree_inet_is_loopback', 'bfree_inet_listener_matches', 'bfree_inet_match_addr'] static int bfree_inet_is_guest_routable(uint32_t addr) {     if (addr 
+1121 hit_055_f40d0181.json [] static long sys_linux_waitpid(long pid, long status_ptr, long options)
+1070 hit_060_0ce9e498.json ['g_guest_fork_was_as_copy'] static long bfree_guest_exit_from_fork_signal(int sig) {     int *clea
+1054 hit_061_2a630b0a.json [] static long sys_linux_waitpid(long pid, long status_ptr, long options)
+1048 hit_062_0ce9e498.json [] static long bfree_guest_exit_from_fork_signal(int sig) {     int *clea
+978 hit_066_cf433436.json ['bfree_coop_as_switch_to']     bfree_coop_fd_snap_init();     if (copy_as) {         /*          
+932 hit_069_97982f27.json ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_chi
+877 hit_070_97982f27.json ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_child', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_child(void) {     /* Park full parent 
+672 hit_079_97982f27.json [] static void bfree_guest_ofd_maybe_release(int fd) {     bfree_guest_of
+632 hit_082_97982f27.json []             if (wopts != 0) {                 return 0; /* WNOHANG, no
+632 hit_083_97982f27.json ['g_bfree_exec_transfer_rip']     g_bfree_sysret_exec_rsp = user_rsp;     g_bfree_exec_transfer_rip 
+621 hit_084_f40d0181.json ['bfree_inet_from_fd', 'bfree_inet_sock_release', 'g_inet_socks'] static int bfree_inet_from_fd(int fd) {     int idx;     if (fd < (int
+538 hit_089_f3663731.json ['g_inet_socks', 'g_unix_socks'] #define BFREE_SYSRET_COOP_SWITCH ((long)-4092) #define BFREE_LINUX_AF_
+521 hit_090_97982f27.json []             if (wopts != 0) {                 return 0; /* WNOHANG, no
+504 hit_092_97982f27.json ['g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_child(void) {     g_bfree_fork_saved_r
+478 hit_095_97982f27.json ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_parent', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_parent_done(long ret) {     bfree_coop
+477 hit_096_97982f27.json ['bfree_coop_as_switch_to', 'bfree_guest_as_copy_switch_heap_to_child', 'g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_child_done(long ret) {     bfree_coop_
+428 hit_097_97982f27.json ['g_guest_fork_was_as_copy'] static long bfree_coop_yield_to_child_done(long ret) {     g_bfree_for
+414 hit_098_f3663731.json ['bfree_inet_from_fd'] static long sys_linux_connect(long sockfd, long addr, long addrlen) { 
+341 hit_111_97982f27.json ['g_bfree_exec_transfer_rip'] void bfree_sysret_exec_globals_init(void) {     g_bfree_sysret_exec_rs
+243 hit_118_97982f27.json ['g_guest_fork_was_as_copy'] static long bfree_guest_exit_from_fork(long status) {     int *clearti
+162 hit_135_97982f27.json ['g_guest_fork_was_as_copy'] static long bfree_guest_exit_from_fork_signal(int sig) {     int *clea

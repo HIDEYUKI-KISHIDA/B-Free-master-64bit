@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\c6a289a7-e330-4909-9ba9-edbe59f71b8c\\c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "line": 271,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 124,
+    "new_len": 178
+  },
+  "themes": [
+    "timerfd"
+  ],
+  "old_string": "    bfree_guest_heap_reset();\n    ld = load_elf_image(g_bfree_exec_initrd_kpath, &entry, knl_current_task->page_table_base);",
+  "new_string": "    bfree_guest_heap_reset();\n    timer_purge_all();\n    bfree_timerfd_purge_all();\n    ld = load_elf_image(g_bfree_exec_initrd_kpath, &entry, knl_current_task->page_table_base);"
+}

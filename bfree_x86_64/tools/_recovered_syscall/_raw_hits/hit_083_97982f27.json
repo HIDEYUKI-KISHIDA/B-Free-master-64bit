@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1623,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 361,
+    "new_len": 632
+  },
+  "themes": [
+    "exec_transfer"
+  ],
+  "old_string": "    g_bfree_sysret_exec_rsp = user_rsp;\n    g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;\n    g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;\n    g_bfree_sysret_exec_r11 = 0x202ULL;\n    /* Child: switch CR3 with RSP in assembly. Standalone: already on task CR3. */\n    g_bfree_sysret_exec_cr3 = use_private_as ? (uint64_t)(uintptr_t)child_pt : 0;",
+  "new_string": "    g_bfree_sysret_exec_rsp = user_rsp;\n    g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;\n    g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;\n    g_bfree_sysret_exec_r11 = 0x202ULL;\n    /* Child: switch CR3 with RSP in assembly. Standalone: already on task CR3. */\n    g_bfree_sysret_exec_cr3 = use_private_as ? (uint64_t)(uintptr_t)child_pt : 0;\n    if (g_bfree_exec_transfer_rip == 0ULL) {\n        uart_puts(\"[ELF] FATAL: exec_transfer_rip=0\\n\");\n        if (use_private_as) {\n            knl_current_task->page_table_base = parent_pt;\n            bfree_process_exit_restore_as();\n        }\n        return -2;\n    }"
+}

@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\f40d0181-b472-47d1-88c0-97da64f8c769\\f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 22,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 226,
+    "new_len": 277
+  },
+  "themes": [
+    "inet",
+    "coop"
+  ],
+  "old_string": "static long bfree_coop_yield_to_parent(void);\nstatic long bfree_coop_yield_to_child(void);\nstatic void bfree_coop_fd_snap_init(void);\nstatic void bfree_coop_fd_switch_to(int side);\nstatic void bfree_coop_save_child_user(void);",
+  "new_string": "static long bfree_coop_yield_to_parent(void);\nstatic long bfree_coop_yield_to_child(void);\nstatic void bfree_coop_fd_snap_init(void);\nstatic void bfree_coop_fd_switch_to(int side);\nstatic void bfree_coop_save_child_user(void);\nstatic void bfree_inet_sock_release(int resolved);"
+}

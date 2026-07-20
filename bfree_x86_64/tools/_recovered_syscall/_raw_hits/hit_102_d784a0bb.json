@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\d784a0bb-48dd-4106-8f28-7cf562b4af2c\\d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 184,
+    "tool": "StrReplace",
+    "path": "kernel/sysmain/syscall.c",
+    "old_len": 155,
+    "new_len": 385
+  },
+  "themes": [
+    "futex"
+  ],
+  "old_string": "    switch (cmd) {\n    case 0: /* FUTEX_WAIT */\n        return 0; /* single-threaded guest: pretend woken */\n    case 1: /* FUTEX_WAKE */\n        return 0;",
+  "new_string": "    switch (cmd) {\n    case 0: /* FUTEX_WAIT */\n        if (uaddr != 0 && bfree_user_ptr_mapped(uaddr)) {\n            const int *word = (const int *)(uintptr_t)uaddr;\n            if (*word != (int)val) {\n                return -11; /* EAGAIN */\n            }\n        }\n        return -4; /* EINTR — never block in single-threaded guest */\n    case 1: /* FUTEX_WAKE */\n        return 1;"
+}

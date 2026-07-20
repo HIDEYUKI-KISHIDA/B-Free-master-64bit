@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\f40d0181-b472-47d1-88c0-97da64f8c769\\f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 17,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 362,
+    "new_len": 596
+  },
+  "themes": [
+    "parked",
+    "coop"
+  ],
+  "old_string": "        while (!bfree_stdin_byte_ready()) {\n            /* B-Free: stdin EINTR */\n            bfree_guest_alarm_poll();\n            {\n                int er = bfree_guest_sig_take_eintr();\n                if (er < 0) {\n                    return got > 0 ? got : er;\n                }\n            }\n            __asm__ volatile(\"sti; hlt\" ::: \"memory\");\n        }",
+  "new_string": "        while (!bfree_stdin_byte_ready()) {\n            /* Background AS-copy child parked: run it while shell blocks on tty. */\n            if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {\n                return bfree_coop_yield_to_child();\n            }\n            /* B-Free: stdin EINTR */\n            bfree_guest_alarm_poll();\n            {\n                int er = bfree_guest_sig_take_eintr();\n                if (er < 0) {\n                    return got > 0 ? got : er;\n                }\n            }\n            __asm__ volatile(\"sti; hlt\" ::: \"memory\");\n        }"
+}

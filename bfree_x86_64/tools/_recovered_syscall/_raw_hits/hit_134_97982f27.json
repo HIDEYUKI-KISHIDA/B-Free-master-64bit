@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 305,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 129,
+    "new_len": 170
+  },
+  "themes": [
+    "as_copy",
+    "parked"
+  ],
+  "old_string": "    g_guest_fork_was_as_copy = 0;\n    g_guest_parent_parked_heap_valid = 0;\n    g_guest_next_pid = 2;\n    bfree_process_init();\n}",
+  "new_string": "    g_guest_fork_was_as_copy = 0;\n    g_guest_parent_parked_heap_valid = 0;\n    g_guest_child_parked_heap_valid = 0;\n    g_guest_next_pid = 2;\n    bfree_process_init();\n}"
+}

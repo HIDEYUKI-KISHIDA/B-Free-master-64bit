@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\ffb3d1c7-4016-45bf-be63-92efd4c399df\\ffb3d1c7-4016-45bf-be63-92efd4c399df.jsonl",
+    "line": 26,
+    "tool": "Write",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\tools\\_cmp_syms.sh",
+    "old_len": 0,
+    "new_len": 778
+  },
+  "themes": [
+    "as_copy",
+    "inet",
+    "parked",
+    "exec_transfer",
+    "unix",
+    "coop"
+  ],
+  "old_string": "",
+  "new_string": "#!/usr/bin/env bash\nset -eu\ncd /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64\necho \"=== OBJ symbols (latest compile ~00:22) ===\"\nnm kernel/sysmain/syscall.o | grep -E 'as_copy|inet_|parked|exec_transfer|unix_socks|coop_as' | head -25\necho \"=== SRC (git HEAD restore) marker counts ===\"\nfor s in g_guest_fork_was_as_copy bfree_inet_from_fd g_bfree_exec_transfer_rip g_unix_socks g_inet_socks; do\n  printf \"%5d  %s\\n\" \"$(grep -c -- \"$s\" kernel/sysmain/syscall.c || true)\" \"$s\"\ndone\necho \"=== sizes ===\"\nwc -c kernel/sysmain/syscall.c kernel/sysmain/syscall.o\nif [ -f iso_root/boot/kernel.elf ]; then\n  echo \"=== iso kernel.elf ===\"\n  ls -la iso_root/boot/kernel.elf\n  nm iso_root/boot/kernel.elf | grep -E 'as_copy|inet_|parked|exec_transfer' | head -10 || true\nfi\n"
+}

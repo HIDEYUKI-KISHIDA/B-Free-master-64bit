@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\f40d0181-b472-47d1-88c0-97da64f8c769\\f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 26,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 265,
+    "new_len": 354
+  },
+  "themes": [
+    "parked",
+    "coop"
+  ],
+  "old_string": "            /* Blocking: run parked AS-copy child (same as waitpid). */\n            if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {\n                g_guest_wait_status_ptr = 0;\n                return bfree_coop_yield_to_child();\n            }",
+  "new_string": "            /* Blocking: run parked AS-copy child (same as waitpid). */\n            if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {\n                g_guest_wait_status_ptr = 0;\n                g_guest_waitid_infop = infop;\n                g_guest_waitid_active = 1;\n                return bfree_coop_yield_to_child();\n            }"
+}

@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 272,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 905,
+    "new_len": 1129
+  },
+  "themes": [
+    "as_copy",
+    "coop"
+  ],
+  "old_string": "    bfree_coop_fd_switch_to(0);\n    g_coop_child_blocked = 0;\n    bfree_guest_stdio_heal_pipes();\n    for (i = 0; i < sizeof(g_guest_cwd); ++i) {\n        g_guest_cwd[i] = g_guest_fork_saved_cwd[i];\n        if (g_guest_fork_saved_cwd[i] == '\\0') {\n            break;\n        }\n    }\n    g_guest_cwd[sizeof(g_guest_cwd) - 1U] = '\\0';\n    g_guest_heap_next = g_guest_fork_saved_heap_next;\n    g_guest_brk = g_guest_fork_saved_brk;\n    if (!as_copy) {\n        bfree_guest_vfork_stack_restore();\n    }\n    if (knl_current_task != 0) {\n        knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;\n    }\n    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);\n    g_bfree_sysret_exec_cr3 = 0;\n    if (g_guest_clear_child_tid != 0 &&\n        bfree_user_ptr_mapped((long)g_guest_clear_child_tid)) {\n        cleartid = (int *)(uintptr_t)g_guest_clear_child_tid;\n        *cleartid = 0;\n    }",
+  "new_string": "    bfree_coop_fd_switch_to(0);\n    g_coop_child_blocked = 0;\n    bfree_guest_stdio_heal_pipes();\n    if (!as_copy) {\n        for (i = 0; i < sizeof(g_guest_cwd); ++i) {\n            g_guest_cwd[i] = g_guest_fork_saved_cwd[i];\n            if (g_guest_fork_saved_cwd[i] == '\\0') {\n                break;\n            }\n        }\n        g_guest_cwd[sizeof(g_guest_cwd) - 1U] = '\\0';\n        g_guest_heap_next = g_guest_fork_saved_heap_next;\n        g_guest_brk = g_guest_fork_saved_brk;\n        bfree_guest_vfork_stack_restore();\n    }\n    if (knl_current_task != 0) {\n        knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;\n    }\n    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);\n    if (knl_current_task != 0 && knl_current_task->page_table_base != 0) {\n        g_bfree_sysret_exec_cr3 = (uint64_t)(uintptr_t)knl_current_task->page_table_base;\n    } else {\n        g_bfree_sysret_exec_cr3 = 0;\n    }\n    if (g_guest_clear_child_tid != 0 &&\n        bfree_user_ptr_mapped((long)g_guest_clear_child_tid)) {\n        cleartid = (int *)(uintptr_t)g_guest_clear_child_tid;\n        *cleartid = 0;\n    }"
+}

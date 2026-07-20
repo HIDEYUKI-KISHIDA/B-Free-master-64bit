@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\subagents\\cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "line": 117,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 135,
+    "new_len": 182
+  },
+  "themes": [
+    "coop"
+  ],
+  "old_string": "static void bfree_coop_fd_snap_init(void);\nstatic void bfree_coop_fd_switch_to(int side);\nstatic void bfree_coop_save_child_user(void);",
+  "new_string": "static void bfree_coop_fd_snap_init(void);\nstatic void bfree_coop_fd_switch_to(int side);\nstatic void bfree_coop_as_switch_to(int side);\nstatic void bfree_coop_save_child_user(void);"
+}

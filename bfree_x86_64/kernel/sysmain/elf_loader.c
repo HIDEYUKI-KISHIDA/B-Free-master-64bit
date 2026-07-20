@@ -17,6 +17,125 @@ void uart_puts(const char *s);
 void uart_puthex64(uint64_t val);
 void initrd_register(const char *name, uint8_t *data, uint64_t size);
 
+/* Phys of busybox pages covering 0x521fa0 / 0x522ea0 — watch for clobber. */
+uint64_t g_bfree_elf_watch_phys;
+uint64_t g_bfree_elf_watch_phys2;
+/* Sticky: first shell busybox setvbuf frame — never cleared across child loads. */
+uint64_t g_bfree_shell_text_phys;
+
+#define BFREE_SHELL_PIN_MAX 384
+static uint64_t g_bfree_shell_pin[BFREE_SHELL_PIN_MAX];
+static int g_bfree_shell_pin_count;
+static int g_bfree_shell_pin_done;
+
+void bfree_shell_pin_page(uint64_t phys)
+{
+    uint64_t page = phys & ~(PAGE_SIZE - 1ULL);
+    int i;
+
+    if (page == 0) {
+        return;
+    }
+    for (i = 0; i < g_bfree_shell_pin_count; ++i) {
+        if (g_bfree_shell_pin[i] == page) {
+            return;
+        }
+    }
+    if (g_bfree_shell_pin_count >= BFREE_SHELL_PIN_MAX) {
+        return;
+    }
+    g_bfree_shell_pin[g_bfree_shell_pin_count++] = page;
+}
+
+void bfree_shell_pin_range(page_table_t *pt, uint64_t va_lo, uint64_t va_hi)
+{
+    uint64_t va;
+
+    if (!pt || va_hi <= va_lo) {
+        return;
+    }
+    va_lo &= ~(PAGE_SIZE - 1ULL);
+    va_hi = (va_hi + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+    for (va = va_lo; va < va_hi; va += PAGE_SIZE) {
+        uint64_t phys = 0;
+
+        if (vmm_user_virt_to_phys(pt, va, &phys) == 0) {
+            bfree_shell_pin_page(phys);
+        }
+    }
+}
+
+int bfree_shell_page_pinned(uint64_t phys)
+{
+    uint64_t page = phys & ~(PAGE_SIZE - 1ULL);
+    int i;
+
+    if (page == 0) {
+        return 0;
+    }
+    if (g_bfree_shell_text_phys != 0 && page == g_bfree_shell_text_phys) {
+        return 1;
+    }
+    for (i = 0; i < g_bfree_shell_pin_count; ++i) {
+        if (g_bfree_shell_pin[i] == page) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int bfree_shell_text_check(const char *tag)
+{
+    uint8_t chk[8];
+    uint64_t phys = g_bfree_shell_text_phys;
+
+    if (phys == 0) {
+        uart_puts("[SHELL] ");
+        if (tag) {
+            uart_puts(tag);
+        }
+        uart_puts(" watch unset\n");
+        return -1;
+    }
+    if (bfree_kernel_peek_phys(phys + 0xEA0ULL, chk, 8ULL) != 0) {
+        uart_puts("[SHELL] ");
+        if (tag) {
+            uart_puts(tag);
+        }
+        uart_puts(" peek fail phys=");
+        uart_puthex64(phys);
+        uart_puts("\n");
+        return -1;
+    }
+    uart_puts("[SHELL] ");
+    if (tag) {
+        uart_puts(tag);
+    }
+    uart_puts(" 0x522ea0=");
+    uart_puthex64((uint64_t)chk[0]);
+    uart_puts(" ");
+    uart_puthex64((uint64_t)chk[1]);
+    uart_puts(" ");
+    uart_puthex64((uint64_t)chk[2]);
+    uart_puts(" ");
+    uart_puthex64((uint64_t)chk[3]);
+    uart_puts(" ");
+    uart_puthex64((uint64_t)chk[4]);
+    uart_puts(" ");
+    uart_puthex64((uint64_t)chk[5]);
+    uart_puts(" ");
+    uart_puthex64((uint64_t)chk[6]);
+    uart_puts(" ");
+    uart_puthex64((uint64_t)chk[7]);
+    uart_puts(" phys=");
+    uart_puthex64(phys);
+    uart_puts("\n");
+    if (chk[0] != 0xf3u || chk[1] != 0x0fu || chk[2] != 0x1eu || chk[3] != 0xfau) {
+        return -2;
+    }
+    return 0;
+}
+
 #ifndef BFREE_BOOT_DEBUG
 #define BFREE_BOOT_DEBUG 0
 #endif
@@ -238,59 +357,48 @@ int bfree_initrd_read(const char *filename, uint64_t offset, void *buf, uint64_t
  * above the initrd reservation (~100 MiB low RAM). Only embedded kernel PT slots
  * (PT_EMBEDDED_COUNT*2MiB) are guaranteed identity-mapped; higher phys use staging. */
 #define BFREE_LOADER_STAGING_VA 0x04E00000ULL
-#define BFREE_PHYS_IDENTITY_LIMIT ((uint64_t)PT_EMBEDDED_COUNT * 0x200000ULL)
 static uint8_t g_elf_loader_page_buf[4096];
 static uint64_t g_loader_staging_phys;
 
 static int bfree_loader_write_phys(uint64_t phys, const void *src, uint64_t len);
 static int bfree_loader_zero_phys(uint64_t phys, uint64_t len);
+static int bfree_loader_read_phys(uint64_t phys, void *dst, uint64_t len);
 
-static int bfree_phys_identity_ok(uint64_t phys, uint64_t len)
-{
-    return (len > 0 &&
-            phys < BFREE_PHYS_IDENTITY_LIMIT &&
-            phys + len <= BFREE_PHYS_IDENTITY_LIMIT);
-}
-
+/* Always stage — identity VA==PA stores under kernel CR3 have disagreed with
+ * later task-PT walks of the same phys (child ELF pages stayed zero; ring3
+ * executed 00 00 = add %al,(%rax) then #PF/#GP). */
 static int bfree_loader_poke_phys(uint64_t phys, const void *src, uint64_t len)
 {
-    const uint8_t *s = (const uint8_t *)src;
-    uint8_t *dst;
-
-    if (!bfree_phys_identity_ok(phys, len)) {
-        return bfree_loader_write_phys(phys, src, len);
-    }
-    dst = (uint8_t *)(uintptr_t)phys;
-    for (uint64_t i = 0; i < len; ++i) {
-        dst[i] = s[i];
-    }
-    return 0;
+    return bfree_loader_write_phys(phys, src, len);
 }
 
 static int bfree_loader_clear_phys(uint64_t phys, uint64_t len)
 {
-    uint8_t *dst;
-
-    if (phys >= BFREE_PHYS_IDENTITY_LIMIT || !bfree_phys_identity_ok(phys, len)) {
-        return bfree_loader_zero_phys(phys, len);
-    }
-    dst = (uint8_t *)(uintptr_t)phys;
-    for (uint64_t i = 0; i < len; ++i) {
-        dst[i] = 0;
-    }
-    return 0;
+    return bfree_loader_zero_phys(phys, len);
 }
 
 static int bfree_loader_stage_phys(uint64_t phys)
 {
     uint64_t base = phys & ~(PAGE_SIZE - 1ULL);
+    uint64_t pd_index;
+    uint64_t pt_index;
+    uint64_t pte;
 
-    if (g_loader_staging_phys == base) {
+    pd_index = (BFREE_LOADER_STAGING_VA >> 21) & 0x1FFULL;
+    pt_index = (BFREE_LOADER_STAGING_VA >> 12) & 0x1FFULL;
+    pte = kernel_page_table.pt[pd_index][pt_index];
+    /* Reuse only when the PTE still targets this frame. phys_io_end used to
+     * release staging while a nested begin was live, leaving g_loader_staging_phys
+     * stale so subsequent writes hit the identity staging frame. */
+    if (g_loader_staging_phys == base &&
+        (pte & 0x001ULL) != 0ULL &&
+        (pte & ~(PAGE_SIZE - 1ULL)) == base) {
         return 0;
     }
     if (vmm_map_page(&kernel_page_table, BFREE_LOADER_STAGING_VA, base, 0x003ULL) != 0) {
         return -1;
     }
+    __asm__ volatile("invlpg (%0)" : : "r"(BFREE_LOADER_STAGING_VA) : "memory");
     g_loader_staging_phys = base;
     return 0;
 }
@@ -308,6 +416,7 @@ static void bfree_loader_release_staging(void)
     pt_index = (BFREE_LOADER_STAGING_VA >> 12) & 0x1FFULL;
     id_phys = ((pd_index * (uint64_t)PTE_COUNT) + pt_index) * PAGE_SIZE;
     kernel_page_table.pt[pd_index][pt_index] = id_phys | 0x003ULL;
+    __asm__ volatile("invlpg (%0)" : : "r"(BFREE_LOADER_STAGING_VA) : "memory");
     g_loader_staging_phys = 0;
 }
 
@@ -315,17 +424,48 @@ static int bfree_loader_write_phys(uint64_t phys, const void *src, uint64_t len)
 {
     uint64_t off = phys & (PAGE_SIZE - 1ULL);
     const uint8_t *s = (const uint8_t *)src;
-    uint8_t *dst;
+    volatile uint8_t *dst;
+    uint64_t rflags;
+    uint64_t i;
 
     if (len == 0 || off + len > PAGE_SIZE) {
         return -1;
     }
+    {
+        uint64_t base = phys & ~(PAGE_SIZE - 1ULL);
+        if ((g_bfree_elf_watch_phys != 0 && base == g_bfree_elf_watch_phys) ||
+            (g_bfree_elf_watch_phys2 != 0 && base == g_bfree_elf_watch_phys2) ||
+            (g_bfree_shell_text_phys != 0 && base == g_bfree_shell_text_phys) ||
+            bfree_shell_page_pinned(base)) {
+            uart_puts("[ELF] FATAL: write_phys hits watch phys=");
+            uart_puthex64(base);
+            uart_puts("\n");
+            return -1;
+        }
+    }
+    /* Keep IRQs from running phys_io_end / release_staging mid-write. */
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) : : "memory");
     if (bfree_loader_stage_phys(phys) != 0) {
+        if (rflags & 0x200ULL) {
+            __asm__ volatile("sti" ::: "memory");
+        }
         return -1;
     }
-    dst = (uint8_t *)(uintptr_t)(BFREE_LOADER_STAGING_VA + off);
-    for (uint64_t i = 0; i < len; ++i) {
+    dst = (volatile uint8_t *)(uintptr_t)(BFREE_LOADER_STAGING_VA + off);
+    for (i = 0; i < len; ++i) {
         dst[i] = s[i];
+    }
+    /* Readback: catch a stale staging PTE before the guest executes zeros. */
+    for (i = 0; i < len; ++i) {
+        if (dst[i] != s[i]) {
+            if (rflags & 0x200ULL) {
+                __asm__ volatile("sti" ::: "memory");
+            }
+            return -1;
+        }
+    }
+    if (rflags & 0x200ULL) {
+        __asm__ volatile("sti" ::: "memory");
     }
     return 0;
 }
@@ -333,17 +473,36 @@ static int bfree_loader_write_phys(uint64_t phys, const void *src, uint64_t len)
 static int bfree_loader_zero_phys(uint64_t phys, uint64_t len)
 {
     uint64_t off = phys & (PAGE_SIZE - 1ULL);
-    uint8_t *dst;
+    volatile uint8_t *dst;
+    uint64_t rflags;
+    uint64_t i;
+    uint64_t base = phys & ~(PAGE_SIZE - 1ULL);
 
     if (len == 0 || off + len > PAGE_SIZE) {
         return -1;
     }
-    if (bfree_loader_stage_phys(phys) != 0) {
+    if ((g_bfree_elf_watch_phys != 0 && base == g_bfree_elf_watch_phys) ||
+        (g_bfree_elf_watch_phys2 != 0 && base == g_bfree_elf_watch_phys2) ||
+        (g_bfree_shell_text_phys != 0 && base == g_bfree_shell_text_phys) ||
+        bfree_shell_page_pinned(base)) {
+        uart_puts("[ELF] FATAL: zero_phys hits watch phys=");
+        uart_puthex64(base);
+        uart_puts("\n");
         return -1;
     }
-    dst = (uint8_t *)(uintptr_t)(BFREE_LOADER_STAGING_VA + off);
-    for (uint64_t i = 0; i < len; ++i) {
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) : : "memory");
+    if (bfree_loader_stage_phys(phys) != 0) {
+        if (rflags & 0x200ULL) {
+            __asm__ volatile("sti" ::: "memory");
+        }
+        return -1;
+    }
+    dst = (volatile uint8_t *)(uintptr_t)(BFREE_LOADER_STAGING_VA + off);
+    for (i = 0; i < len; ++i) {
         dst[i] = 0;
+    }
+    if (rflags & 0x200ULL) {
+        __asm__ volatile("sti" ::: "memory");
     }
     return 0;
 }
@@ -354,6 +513,9 @@ static int load_elf_image_inner(const char *filename, void **entry, void *page_t
     int res = -1;
 
     g_last_loaded_elf.valid = 0;
+    g_bfree_elf_watch_phys = 0;
+    /* Keep sticky shell .text protection across vfork+exec child loads. */
+    g_bfree_elf_watch_phys2 = g_bfree_shell_text_phys;
 
     if (read_file(filename, 0, &ehdr, sizeof(ehdr)) < 0) {
         res = -1;
@@ -443,20 +605,36 @@ static int load_elf_image_inner(const char *filename, void **entry, void *page_t
                 res = -4;
                 goto out;
             }
-            if (vmm_map_page(page_table_base, va, (uint64_t)page, pte_flags) != 0) {
+            /* Map Writable for fill: with CR0.WP=1, supervisor stores into a
+             * User|RO PTE fault. Final RO/RX flags are applied after populate. */
+            if (vmm_map_page(page_table_base, va, (uint64_t)page,
+                             (pte_flags | 0x002ULL)) != 0) {
                 res = -5;
                 goto out;
             }
-            if (bfree_loader_clear_phys((uint64_t)(uintptr_t)page, PAGE_SIZE) != 0) {
-                uart_puts("[ELF] page zero failed phys=");
-                uart_puthex64((uint64_t)(uintptr_t)page);
-                uart_puts("\n");
-                res = -6;
-                goto out;
-            }
+            /* Drop VA==phys identity on destination AND kernel_page_table so
+             * ring0 identity stores cannot clobber this frame. */
+            vmm_drop_identity_alias((page_table_t *)page_table_base,
+                                    (uint64_t)(uintptr_t)page);
+            vmm_drop_identity_alias(&kernel_page_table,
+                                    (uint64_t)(uintptr_t)page);
+            /*
+             * Populate via staging under kernel CR3 into the PTE's frame.
+             * CR3-VA fills can disagree with later staging peeks of the same
+             * phys for some pages (shell .text @0x522ea0 was 06 00.. on AS-copy
+             * while fopen @0x521fa0 stayed good). Staging write+readback is the
+             * same path guest phys walks use after identity is dropped.
+             */
             {
                 uint64_t copy_start = va;
                 uint64_t copy_end = va + PAGE_SIZE;
+                uint64_t page_off = 0;
+                uint64_t to_copy = 0;
+                int have_file = 0;
+                int did_verify = 0;
+                uint8_t verify_b0 = 0, verify_b1 = 0, verify_b2 = 0, verify_b3 = 0;
+                uint64_t phys = (uint64_t)(uintptr_t)page;
+
                 if (copy_start < seg_start) {
                     copy_start = seg_start;
                 }
@@ -464,20 +642,101 @@ static int load_elf_image_inner(const char *filename, void **entry, void *page_t
                     copy_end = seg_file_end;
                 }
                 if (copy_start < copy_end) {
-                    uint64_t page_off = copy_start - va;
                     uint64_t file_off = offset + (copy_start - seg_start);
-                    uint64_t to_copy = copy_end - copy_start;
+                    page_off = copy_start - va;
+                    to_copy = copy_end - copy_start;
                     if (read_file(filename, file_off, g_elf_loader_page_buf, to_copy) < 0) {
                         res = -6;
                         goto out;
                     }
-                    if (bfree_loader_poke_phys((uint64_t)(uintptr_t)page + page_off,
-                                               g_elf_loader_page_buf, to_copy) != 0) {
-                        uart_puts("[ELF] page write failed phys=");
-                        uart_puthex64((uint64_t)(uintptr_t)page + page_off);
-                        uart_puts("\n");
+                    have_file = 1;
+                }
+
+                bfree_kernel_phys_io_begin();
+                if (bfree_loader_clear_phys(phys, PAGE_SIZE) != 0) {
+                    bfree_kernel_phys_io_end();
+                    res = -6;
+                    goto out;
+                }
+                if (have_file) {
+                    if (bfree_loader_poke_phys(phys + page_off, g_elf_loader_page_buf,
+                                               to_copy) != 0) {
+                        bfree_kernel_phys_io_end();
                         res = -6;
                         goto out;
+                    }
+                    if (va == 0x521000ULL && page_off == 0ULL && to_copy >= 0xFB0ULL) {
+                        uint8_t chk[4];
+                        if (bfree_loader_read_phys(phys + 0xFA0ULL, chk, 4ULL) == 0) {
+                            verify_b0 = chk[0];
+                            verify_b1 = chk[1];
+                            verify_b2 = chk[2];
+                            verify_b3 = chk[3];
+                            did_verify = 1;
+                        }
+                    }
+                    if (va == 0x522000ULL && page_off == 0ULL && to_copy >= 0xEA4ULL) {
+                        uint8_t chk[4];
+                        if (bfree_loader_read_phys(phys + 0xEA0ULL, chk, 4ULL) == 0) {
+                            verify_b0 = chk[0];
+                            verify_b1 = chk[1];
+                            verify_b2 = chk[2];
+                            verify_b3 = chk[3];
+                            did_verify = 2;
+                        }
+                    }
+                }
+                bfree_kernel_phys_io_end();
+
+                /* Restore final PTE flags (drop temporary Writable on RO text). */
+                if ((pte_flags & 0x002ULL) == 0ULL) {
+                    if (vmm_map_page(page_table_base, va, (uint64_t)page, pte_flags) != 0) {
+                        res = -5;
+                        goto out;
+                    }
+                }
+                /*
+                 * Pin RO/RX frames of the first BusyBox image as they are filled.
+                 * After poke so fill itself is never refused; pin_done latches once
+                 * the sticky setvbuf frame has been recorded for this image.
+                 */
+                if (!g_bfree_shell_pin_done && (pte_flags & 0x002ULL) == 0ULL &&
+                    va >= 0x500000ULL && va < 0x575000ULL &&
+                    filename && filename[0] == 'b' /* busybox.elf */) {
+                    bfree_shell_pin_page(phys);
+                }
+                if (did_verify) {
+                    uart_puts(did_verify == 2
+                                  ? "[ELF] verify 0x522ea0 bytes="
+                                  : "[ELF] verify 0x521fa0 bytes=");
+                    uart_puthex64((uint64_t)verify_b0);
+                    uart_puts(" ");
+                    uart_puthex64((uint64_t)verify_b1);
+                    uart_puts(" ");
+                    uart_puthex64((uint64_t)verify_b2);
+                    uart_puts(" ");
+                    uart_puthex64((uint64_t)verify_b3);
+                    uart_puts(" phys=");
+                    uart_puthex64(phys);
+                    uart_puts("\n");
+                    if (verify_b0 != 0xf3u || verify_b1 != 0x0fu ||
+                        verify_b2 != 0x1eu || verify_b3 != 0xfau) {
+                        uart_puts(did_verify == 2
+                                      ? "[ELF] FATAL: 0x522ea0 fill mismatch\n"
+                                      : "[ELF] FATAL: 0x521fa0 fill mismatch\n");
+                        res = -6;
+                        goto out;
+                    }
+                    if (did_verify == 1) {
+                        g_bfree_elf_watch_phys = phys;
+                    } else if (did_verify == 2) {
+                        if (g_bfree_shell_text_phys == 0) {
+                            g_bfree_shell_text_phys = phys;
+                            uart_puts("[ELF] shell text watch phys=");
+                            uart_puthex64(phys);
+                            uart_puts("\n");
+                        }
+                        g_bfree_elf_watch_phys2 = g_bfree_shell_text_phys;
                     }
                 }
             }
@@ -511,6 +770,70 @@ static int load_elf_image_inner(const char *filename, void **entry, void *page_t
     }
     g_last_loaded_elf.valid = 1;
     res = 0;
+
+    /* Re-check wc-fault page after ALL segments — catches later fills
+     * clobbering phys already installed for .text. */
+    if (page_table_base) {
+        uint64_t pd_index = (0x521000ULL >> 21) & 0x1FFULL;
+        uint64_t pt_index = (0x521000ULL >> 12) & 0x1FFULL;
+        page_table_t *pt = (page_table_t *)page_table_base;
+        uint64_t pte = 0;
+        if (pd_index < PT_EMBEDDED_COUNT) {
+            pte = pt->pt[pd_index][pt_index];
+        }
+        if ((pte & 0x001ULL) != 0ULL) {
+            uint64_t phys = pte & ~(PAGE_SIZE - 1ULL);
+            uint8_t chk[4];
+            bfree_kernel_phys_io_begin();
+            if (bfree_kernel_peek_phys(phys + 0xFA0ULL, chk, 4ULL) == 0) {
+                uart_puts("[ELF] post-load 0x521fa0 bytes=");
+                uart_puthex64((uint64_t)chk[0]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)chk[1]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)chk[2]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)chk[3]);
+                uart_puts(" phys=");
+                uart_puthex64(phys);
+                uart_puts("\n");
+            }
+            bfree_kernel_phys_io_end();
+        }
+        pd_index = (0x522000ULL >> 21) & 0x1FFULL;
+        pt_index = (0x522000ULL >> 12) & 0x1FFULL;
+        pte = 0;
+        if (pd_index < PT_EMBEDDED_COUNT) {
+            pte = pt->pt[pd_index][pt_index];
+        }
+        if ((pte & 0x001ULL) != 0ULL) {
+            uint64_t phys2 = pte & ~(PAGE_SIZE - 1ULL);
+            uint8_t chk2[4];
+            bfree_kernel_phys_io_begin();
+            if (bfree_kernel_peek_phys(phys2 + 0xEA0ULL, chk2, 4ULL) == 0) {
+                uart_puts("[ELF] post-load 0x522ea0 bytes=");
+                uart_puthex64((uint64_t)chk2[0]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)chk2[1]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)chk2[2]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)chk2[3]);
+                uart_puts(" phys=");
+                uart_puthex64(phys2);
+                uart_puts("\n");
+            }
+            bfree_kernel_phys_io_end();
+        }
+    }
+
+    if (res == 0 && !g_bfree_shell_pin_done && g_bfree_shell_text_phys != 0 &&
+        g_bfree_shell_pin_count > 0) {
+        g_bfree_shell_pin_done = 1;
+        uart_puts("[ELF] shell pinned pages=");
+        uart_puthex64((uint64_t)(unsigned)g_bfree_shell_pin_count);
+        uart_puts("\n");
+    }
 
 out:
     bfree_loader_release_staging();
@@ -632,20 +955,40 @@ void bfree_kernel_phys_io_end(void)
         return;
     }
     g_kernel_phys_io_depth--;
-    bfree_loader_release_staging();
+    /* Only tear down staging when the outermost phys_io scope ends. Nested
+     * end() used to release STAGING_VA while the outer scope still expected
+     * g_loader_staging_phys → silent writes into the wrong frame. */
     if (g_kernel_phys_io_depth == 0) {
+        bfree_loader_release_staging();
         __asm__ volatile("mov %0, %%cr3" :: "r"(g_kernel_phys_io_saved_cr3) : "memory");
     }
 }
 
 int bfree_kernel_clear_phys(uint64_t phys, uint64_t len)
 {
-    return bfree_loader_clear_phys(phys, len);
+    int rc;
+    bfree_kernel_phys_io_begin();
+    rc = bfree_loader_clear_phys(phys, len);
+    bfree_kernel_phys_io_end();
+    return rc;
 }
 
 int bfree_kernel_poke_phys(uint64_t phys, const void *src, uint64_t len)
 {
-    return bfree_loader_poke_phys(phys, src, len);
+    int rc;
+    bfree_kernel_phys_io_begin();
+    rc = bfree_loader_poke_phys(phys, src, len);
+    bfree_kernel_phys_io_end();
+    return rc;
+}
+
+int bfree_kernel_poke_phys_staged(uint64_t phys, const void *src, uint64_t len)
+{
+    int rc;
+    bfree_kernel_phys_io_begin();
+    rc = bfree_loader_write_phys(phys, src, len);
+    bfree_kernel_phys_io_end();
+    return rc;
 }
 
 static int bfree_loader_read_phys(uint64_t phys, void *dst, uint64_t len)
@@ -669,7 +1012,14 @@ static int bfree_loader_read_phys(uint64_t phys, void *dst, uint64_t len)
 
 int bfree_kernel_peek_phys(uint64_t phys, void *dst, uint64_t len)
 {
-    return bfree_loader_read_phys(phys, dst, len);
+    int rc;
+
+    /* Staging updates kernel_page_table only; without kernel CR3, a child
+     * CR3 walk hits the identity STAGING_VA hole and returns false zeros. */
+    bfree_kernel_phys_io_begin();
+    rc = bfree_loader_read_phys(phys, dst, len);
+    bfree_kernel_phys_io_end();
+    return rc;
 }
 
 void bfree_kernel_zero_phys_page(uint64_t phys)

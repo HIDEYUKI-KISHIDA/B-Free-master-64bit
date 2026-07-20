@@ -1,0 +1,669 @@
+make: Entering directory '/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel'
+/home/h_kis/x86_64-elf-toolchain/bin/x86_64-elf-gcc -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-pic -ffreestanding -nostdlib -Wall -Wextra -Werror=implicit-function-declaration -mno-sse -mno-mmx -mno-3dnow -I../include -Iinclude -Isysmain -Isysdepend -I../../../kernel -DENABLE_RUNTIME_NET=0 -DBFREE_STRICT_BOOT_VERIFY=0 -DBFREE_ENFORCE_WX=0 -DBFREE_ENABLE_ASLR=0 -DBFREE_BOOT_GUI_FIRST=0 -DBFREE_WAYLAND_INPUT_STRICT=0 -DDEBUG=1 -DRELEASE=0 -c sysmain/syscall.c -o sysmain/syscall.o
+sysmain/syscall.c: In function 'sys_linux_syscall_dispatch_exit_reenter':
+sysmain/syscall.c:320:12: error: implicit declaration of function 'bfree_guest_exit_from_fork'; did you mean 'bfree_guest_exit_from_fork_signal'? [-Werror=implicit-function-declaration]
+  320 |     return bfree_guest_exit_from_fork(status);
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+      |            bfree_guest_exit_from_fork_signal
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:596:13: error: conflicting types for 'bfree_guest_exit_from_fork'; have 'long int(long int)'
+  596 | static long bfree_guest_exit_from_fork(long status)
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:320:12: note: previous implicit declaration of 'bfree_guest_exit_from_fork' with type 'int()'
+  320 |     return bfree_guest_exit_from_fork(status);
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_copy_user_cstr':
+sysmain/syscall.c:1083:36: warning: passing argument 1 of 'bfree_linux_user_kva' makes integer from pointer without a cast [-Wint-conversion]
+ 1083 |         kva = bfree_linux_user_kva(pt, uva);
+      |                                    ^~
+      |                                    |
+      |                                    page_table_t * {aka struct page_table *}
+sysmain/syscall.c:312:44: note: expected 'uint64_t' {aka 'long unsigned int'} but argument is of type 'page_table_t *' {aka 'struct page_table *'}
+  312 | static void *bfree_linux_user_kva(uint64_t uaddr)
+      |                                   ~~~~~~~~~^~~~~
+sysmain/syscall.c:1083:15: error: too many arguments to function 'bfree_linux_user_kva'
+ 1083 |         kva = bfree_linux_user_kva(pt, uva);
+      |               ^~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:312:14: note: declared here
+  312 | static void *bfree_linux_user_kva(uint64_t uaddr)
+      |              ^~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1083:13: warning: assignment to 'uintptr_t' {aka 'long unsigned int'} from 'void *' makes integer from pointer without a cast [-Wint-conversion]
+ 1083 |         kva = bfree_linux_user_kva(pt, uva);
+      |             ^
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:1934:8: error: unknown type name 'bfree_guest_vfile_t'
+ 1934 | static bfree_guest_vfile_t g_guest_vfiles[BFREE_GUEST_VFILE_SLOTS];
+      |        ^~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1948:8: error: unknown type name 'bfree_guest_vfile_t'
+ 1948 | static bfree_guest_vfile_t *bfree_guest_vfile_from_fd(int fd)
+      |        ^~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_vfile_from_fd':
+sysmain/syscall.c:1956:74: error: request for member 'used' in something not a structure or union
+ 1956 |     if (idx < 0 || idx >= BFREE_GUEST_VFILE_SLOTS || !g_guest_vfiles[idx].used) {
+      |                                                                          ^
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:1962:8: error: unknown type name 'bfree_guest_vfile_t'
+ 1962 | static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
+      |        ^~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_vfile_find_by_name':
+sysmain/syscall.c:1967:30: error: request for member 'used' in something not a structure or union
+ 1967 |         if (g_guest_vfiles[i].used && strcmp(g_guest_vfiles[i].name, name) == 0) {
+      |                              ^
+sysmain/syscall.c:1967:63: error: request for member 'name' in something not a structure or union
+ 1967 |         if (g_guest_vfiles[i].used && strcmp(g_guest_vfiles[i].name, name) == 0) {
+      |                                                               ^
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:2058: warning: "BFREE_GUEST_VFILE_SLOTS" redefined
+ 2058 | #define BFREE_GUEST_VFILE_SLOTS     16
+      | 
+sysmain/syscall.c:1920: note: this is the location of the previous definition
+ 1920 | #define BFREE_GUEST_VFILE_SLOTS     8
+      | 
+sysmain/syscall.c:2059: warning: "BFREE_GUEST_VFILE_SIZE" redefined
+ 2059 | #define BFREE_GUEST_VFILE_SIZE      16384
+      | 
+sysmain/syscall.c:1921: note: this is the location of the previous definition
+ 1921 | #define BFREE_GUEST_VFILE_SIZE      4096
+      | 
+sysmain/syscall.c:2284:29: error: conflicting types for 'bfree_guest_vfile_from_fd'; have 'bfree_guest_vfile_t *(int)'
+ 2284 | static bfree_guest_vfile_t *bfree_guest_vfile_from_fd(int fd)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1948:29: note: previous definition of 'bfree_guest_vfile_from_fd' with type 'int *(int)'
+ 1948 | static bfree_guest_vfile_t *bfree_guest_vfile_from_fd(int fd)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_vfile_from_fd':
+sysmain/syscall.c:2292:74: error: request for member 'used' in something not a structure or union
+ 2292 |     if (idx < 0 || idx >= BFREE_GUEST_VFILE_SLOTS || !g_guest_vfiles[idx].used) {
+      |                                                                          ^
+sysmain/syscall.c:2295:12: warning: returning 'int *' from a function with incompatible return type 'bfree_guest_vfile_t *' [-Wincompatible-pointer-types]
+ 2295 |     return &g_guest_vfiles[idx];
+      |            ^~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_vfile_clear_slot':
+sysmain/syscall.c:2330:21: error: invalid operands to binary - (have 'bfree_guest_vfile_t *' and 'int *')
+ 2330 |     vidx = (int)(vf - g_guest_vfiles);
+      |                     ^
+      |                     |
+      |                     int *
+sysmain/syscall.c: In function 'bfree_guest_ofd_maybe_release':
+sysmain/syscall.c:2380:13: error: 'g_fd_snap_parent' undeclared (first use in this function)
+ 2380 |         if (g_fd_snap_parent[i] == fd || g_fd_dup_save_snap_parent[i] == fd ||
+      |             ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:2380:13: note: each undeclared identifier is reported only once for each function it appears in
+sysmain/syscall.c:2380:42: error: 'g_fd_dup_save_snap_parent' undeclared (first use in this function)
+ 2380 |         if (g_fd_snap_parent[i] == fd || g_fd_dup_save_snap_parent[i] == fd ||
+      |                                          ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2381:13: error: 'g_fd_snap_child' undeclared (first use in this function)
+ 2381 |             g_fd_snap_child[i] == fd || g_fd_dup_save_snap_child[i] == fd) {
+      |             ^~~~~~~~~~~~~~~
+sysmain/syscall.c:2381:41: error: 'g_fd_dup_save_snap_child' undeclared (first use in this function)
+ 2381 |             g_fd_snap_child[i] == fd || g_fd_dup_save_snap_child[i] == fd) {
+      |                                         ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:2413:29: error: conflicting types for 'bfree_guest_vfile_find_by_name'; have 'bfree_guest_vfile_t *(const char *)'
+ 2413 | static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1962:29: note: previous definition of 'bfree_guest_vfile_find_by_name' with type 'int *(const char *)'
+ 1962 | static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_vfile_find_by_name':
+sysmain/syscall.c:2418:30: error: request for member 'used' in something not a structure or union
+ 2418 |         if (g_guest_vfiles[i].used &&
+      |                              ^
+sysmain/syscall.c:2419:31: error: request for member 'orphaned' in something not a structure or union
+ 2419 |             !g_guest_vfiles[i].orphaned &&
+      |                               ^
+sysmain/syscall.c:2420:37: error: request for member 'name' in something not a structure or union
+ 2420 |             strcmp(g_guest_vfiles[i].name, name) == 0) {
+      |                                     ^
+sysmain/syscall.c:2421:20: warning: returning 'int *' from a function with incompatible return type 'bfree_guest_vfile_t *' [-Wincompatible-pointer-types]
+ 2421 |             return &g_guest_vfiles[i];
+      |                    ^~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_vfile_alloc_slot':
+sysmain/syscall.c:2438:58: error: invalid operands to binary - (have 'bfree_guest_vfile_t *' and 'int *')
+ 2438 |         return (int)BFREE_GUEST_VFILE_FD_BASE + (int)(vf - g_guest_vfiles);
+      |                                                          ^
+      |                                                          |
+      |                                                          int *
+sysmain/syscall.c:2441:31: error: request for member 'used' in something not a structure or union
+ 2441 |         if (!g_guest_vfiles[i].used) {
+      |                               ^
+sysmain/syscall.c:2444:30: error: request for member 'used' in something not a structure or union
+ 2444 |             g_guest_vfiles[i].used = 1;
+      |                              ^
+sysmain/syscall.c:2445:30: error: request for member 'orphaned' in something not a structure or union
+ 2445 |             g_guest_vfiles[i].orphaned = 0;
+      |                              ^
+sysmain/syscall.c:2446:30: error: request for member 'open_refs' in something not a structure or union
+ 2446 |             g_guest_vfiles[i].open_refs = 0;
+      |                              ^
+sysmain/syscall.c:2447:72: error: request for member 'name' in something not a structure or union
+ 2447 |             while (name[n] != '\0' && n + 1U < sizeof(g_guest_vfiles[i].name)) {
+      |                                                                        ^
+sysmain/syscall.c:2448:34: error: request for member 'name' in something not a structure or union
+ 2448 |                 g_guest_vfiles[i].name[n] = name[n];
+      |                                  ^
+sysmain/syscall.c:2451:30: error: request for member 'name' in something not a structure or union
+ 2451 |             g_guest_vfiles[i].name[n] = '\0';
+      |                              ^
+sysmain/syscall.c:2452:30: error: request for member 'len' in something not a structure or union
+ 2452 |             g_guest_vfiles[i].len = 0;
+      |                              ^
+sysmain/syscall.c:2453:30: error: request for member 'pos' in something not a structure or union
+ 2453 |             g_guest_vfiles[i].pos = 0;
+      |                              ^
+sysmain/syscall.c:2454:30: error: request for member 'is_symlink' in something not a structure or union
+ 2454 |             g_guest_vfiles[i].is_symlink = 0;
+      |                              ^
+sysmain/syscall.c:2455:30: error: request for member 'is_dir' in something not a structure or union
+ 2455 |             g_guest_vfiles[i].is_dir = 0;
+      |                              ^
+sysmain/syscall.c: In function 'bfree_guest_tmp_parents_exist':
+sysmain/syscall.c:2609:30: error: request for member 'used' in something not a structure or union
+ 2609 |         if (g_guest_vfiles[i].used &&
+      |                              ^
+sysmain/syscall.c:2610:31: error: request for member 'orphaned' in something not a structure or union
+ 2610 |             !g_guest_vfiles[i].orphaned &&
+      |                               ^
+sysmain/syscall.c:2611:30: error: request for member 'is_dir' in something not a structure or union
+ 2611 |             g_guest_vfiles[i].is_dir &&
+      |                              ^
+sysmain/syscall.c:2612:37: error: request for member 'name' in something not a structure or union
+ 2612 |             strcmp(g_guest_vfiles[i].name, parent) == 0) {
+      |                                     ^
+sysmain/syscall.c: In function 'bfree_guest_tmp_has_children':
+sysmain/syscall.c:2629:31: error: request for member 'used' in something not a structure or union
+ 2629 |         if (!g_guest_vfiles[i].used || g_guest_vfiles[i].orphaned) {
+      |                               ^
+sysmain/syscall.c:2629:57: error: request for member 'orphaned' in something not a structure or union
+ 2629 |         if (!g_guest_vfiles[i].used || g_guest_vfiles[i].orphaned) {
+      |                                                         ^
+sysmain/syscall.c:2632:38: error: request for member 'name' in something not a structure or union
+ 2632 |         if (strncmp(g_guest_vfiles[i].name, dirname, n) == 0 &&
+      |                                      ^
+sysmain/syscall.c:2633:30: error: request for member 'name' in something not a structure or union
+ 2633 |             g_guest_vfiles[i].name[n] == '/') {
+      |                              ^
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:2641:12: error: redefinition of 'bfree_guest_tmp_child_basename'
+ 2641 | static int bfree_guest_tmp_child_basename(const char *entry_name,
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1980:12: note: previous definition of 'bfree_guest_tmp_child_basename' with type 'int(const char *, const char *, char *, size_t)' {aka 'int(const char *, const char *, char *, long unsigned int)'}
+ 1980 | static int bfree_guest_tmp_child_basename(const char *entry_name,
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2934:19: error: redefinition of 'g_guest_proc_maps_desktop'
+ 2934 | static const char g_guest_proc_maps_desktop[] =
+      |                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2031:19: note: previous definition of 'g_guest_proc_maps_desktop' with type 'const char[261]'
+ 2031 | static const char g_guest_proc_maps_desktop[] =
+      |                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2940:19: error: redefinition of 'g_guest_proc_maps_busybox'
+ 2940 | static const char g_guest_proc_maps_busybox[] =
+      |                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2037:19: note: previous definition of 'g_guest_proc_maps_busybox' with type 'const char[270]'
+ 2037 | static const char g_guest_proc_maps_busybox[] =
+      |                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2945:20: error: redefinition of 'g_guest_proc_maps'
+ 2945 | static const char *g_guest_proc_maps = g_guest_proc_maps_desktop;
+      |                    ^~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2042:20: note: previous definition of 'g_guest_proc_maps' with type 'const char *'
+ 2042 | static const char *g_guest_proc_maps = g_guest_proc_maps_desktop;
+      |                    ^~~~~~~~~~~~~~~~~
+sysmain/syscall.c:3043:5: error: expected identifier or '(' before string constant
+ 3043 |     "# B-Free guest profile\n"
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_kill':
+sysmain/syscall.c:3320:20: error: too few arguments to function 'sys_linux_syscall_dispatch_exit_reenter'
+ 3320 |             return sys_linux_syscall_dispatch_exit_reenter();
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:318:13: note: declared here
+  318 | static long sys_linux_syscall_dispatch_exit_reenter(long status)
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_openat':
+sysmain/syscall.c:4008:26: error: invalid operands to binary - (have 'bfree_guest_vfile_t *' and 'int *')
+ 4008 |                 (int)(vf - g_guest_vfiles);
+      |                          ^
+      |                          |
+      |                          int *
+sysmain/syscall.c:4058:26: error: invalid operands to binary - (have 'bfree_guest_vfile_t *' and 'int *')
+ 4058 |                 (int)(vf - g_guest_vfiles);
+      |                          ^
+      |                          |
+      |                          int *
+sysmain/syscall.c: In function 'bfree_linux_stat_fill_vfile':
+sysmain/syscall.c:5062:11: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5062 |     ret = bfree_linux_stat_fill(statbuf, mode, size);
+      |           ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5066:45: error: invalid operands to binary - (have 'const bfree_guest_vfile_t *' and 'int *')
+ 5066 |         st->st_ino = 100ULL + (uint64_t)(vf - g_guest_vfiles);
+      |                                             ^
+      |                                             |
+      |                                             int *
+sysmain/syscall.c: In function 'bfree_linux_stat_for_path':
+sysmain/syscall.c:5079:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5079 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5082:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5082 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFCHR | 0666U, 0);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5086:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5086 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5093:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5093 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFLNK | 0777U, (int64_t)exe_len);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5102:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5102 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0555U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5105:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5105 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5109:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5109 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5113:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5113 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5117:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5117 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5121:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5121 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5125:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5125 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5129:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5129 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5133:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5133 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5137:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5137 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5141:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5141 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5145:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5145 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5153:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5153 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5157:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5157 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5160:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5160 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5163:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5163 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0700U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5166:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5166 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5170:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5170 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5174:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5174 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5178:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5178 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5182:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5182 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5186:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5186 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5189:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5189 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5194:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5194 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5197:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5197 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5200:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5200 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5204:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5204 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5207:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5207 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5212:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5212 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5215:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5215 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5218:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5218 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 167424);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5221:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5221 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 8192);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5224:16: error: too few arguments to function 'bfree_linux_stat_fill'
+ 5224 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 01777U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: declared here
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:5322:3: error: conflicting types for 'bfree_linux_stat_t'; have 'struct <anonymous>'
+ 5322 | } bfree_linux_stat_t;
+      |   ^~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5032:3: note: previous declaration of 'bfree_linux_stat_t' with type 'bfree_linux_stat_t'
+ 5032 | } bfree_linux_stat_t;
+      |   ^~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5341:13: error: conflicting types for 'bfree_linux_stat_fill'; have 'long int(long int,  uint32_t)' {aka 'long int(long int,  unsigned int)'}
+ 5341 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode)
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:200:13: note: previous declaration of 'bfree_linux_stat_fill' with type 'long int(long int,  uint32_t,  uint64_t,  uint64_t)' {aka 'long int(long int,  unsigned int,  long unsigned int,  long unsigned int)'}
+  200 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode, uint64_t size, uint64_t ino);
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_fstat':
+sysmain/syscall.c:5386:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5386 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5341:13: note: declared here
+ 5341 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode)
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5389:16: error: too many arguments to function 'bfree_linux_stat_fill'
+ 5389 |         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFCHR | 0666U, 0);
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:5341:13: note: declared here
+ 5341 | static long bfree_linux_stat_fill(long statbuf, uint32_t mode)
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_getdents64':
+sysmain/syscall.c:5452:30: error: redefinition of 'k_usr_names'
+ 5452 |     static const char *const k_usr_names[] = {
+      |                              ^~~~~~~~~~~
+sysmain/syscall.c:5446:30: note: previous definition of 'k_usr_names' with type 'const char * const[3]'
+ 5446 |     static const char *const k_usr_names[] = {
+      |                              ^~~~~~~~~~~
+sysmain/syscall.c:5455:30: error: redefinition of 'k_var_names'
+ 5455 |     static const char *const k_var_names[] = {
+      |                              ^~~~~~~~~~~
+sysmain/syscall.c:5449:30: note: previous definition of 'k_var_names' with type 'const char * const[2]'
+ 5449 |     static const char *const k_var_names[] = {
+      |                              ^~~~~~~~~~~
+sysmain/syscall.c:5572:34: error: request for member 'used' in something not a structure or union
+ 5572 |             if (g_guest_vfiles[i].used &&
+      |                                  ^
+sysmain/syscall.c:5573:34: error: request for member 'name' in something not a structure or union
+ 5573 |                 g_guest_vfiles[i].name[0] != '\0' &&
+      |                                  ^
+sysmain/syscall.c:5574:65: error: request for member 'name' in something not a structure or union
+ 5574 |                 bfree_guest_tmp_child_basename(g_guest_vfiles[i].name, tmp_parent,
+      |                                                                 ^
+sysmain/syscall.c:5603:39: error: request for member 'used' in something not a structure or union
+ 5603 |                 if (!g_guest_vfiles[i].used || g_guest_vfiles[i].name[0] == '\0') {
+      |                                       ^
+sysmain/syscall.c:5603:65: error: request for member 'name' in something not a structure or union
+ 5603 |                 if (!g_guest_vfiles[i].used || g_guest_vfiles[i].name[0] == '\0') {
+      |                                                                 ^
+sysmain/syscall.c:5606:70: error: request for member 'name' in something not a structure or union
+ 5606 |                 if (!bfree_guest_tmp_child_basename(g_guest_vfiles[i].name, tmp_parent,
+      |                                                                      ^
+sysmain/syscall.c:5637:37: error: request for member 'is_dir' in something not a structure or union
+ 5637 |             if (g_guest_vfiles[vidx].is_dir) {
+      |                                     ^
+sysmain/syscall.c:5639:44: error: request for member 'is_symlink' in something not a structure or union
+ 5639 |             } else if (g_guest_vfiles[vidx].is_symlink) {
+      |                                            ^
+sysmain/syscall.c: In function 'bfree_guest_tmp_rename_descendants':
+sysmain/syscall.c:5962:31: error: request for member 'used' in something not a structure or union
+ 5962 |         if (!g_guest_vfiles[i].used || g_guest_vfiles[i].name[0] == '\0') {
+      |                               ^
+sysmain/syscall.c:5962:57: error: request for member 'name' in something not a structure or union
+ 5962 |         if (!g_guest_vfiles[i].used || g_guest_vfiles[i].name[0] == '\0') {
+      |                                                         ^
+sysmain/syscall.c:5965:38: error: request for member 'name' in something not a structure or union
+ 5965 |         if (strncmp(g_guest_vfiles[i].name, oldname, oldn) != 0 ||
+      |                                      ^
+sysmain/syscall.c:5966:30: error: request for member 'name' in something not a structure or union
+ 5966 |             g_guest_vfiles[i].name[oldn] != '/') {
+      |                              ^
+sysmain/syscall.c:5969:33: error: request for member 'name' in something not a structure or union
+ 5969 |         rest = g_guest_vfiles[i].name + oldn;
+      |                                 ^
+sysmain/syscall.c:5981:49: error: request for member 'name' in something not a structure or union
+ 5981 |         for (j = 0; j < sizeof(g_guest_vfiles[i].name); ++j) {
+      |                                                 ^
+sysmain/syscall.c:5982:30: error: request for member 'name' in something not a structure or union
+ 5982 |             g_guest_vfiles[i].name[j] = rebuilt[j];
+      |                              ^
+sysmain/syscall.c: In function 'bfree_guest_shm_open':
+sysmain/syscall.c:6365:60: error: invalid operands to binary - (have 'bfree_guest_vfile_t *' and 'int *')
+ 6365 |         target = (int)BFREE_GUEST_VFILE_FD_BASE + (int)(vf - g_guest_vfiles);
+      |                                                            ^
+      |                                                            |
+      |                                                            int *
+sysmain/syscall.c: In function 'sys_linux_link':
+sysmain/syscall.c:6507:22: error: invalid operands to binary - (have 'bfree_guest_vfile_t *' and 'int *')
+ 6507 |     vidx = (int)(src - g_guest_vfiles);
+      |                      ^
+      |                      |
+      |                      int *
+sysmain/syscall.c:6508:32: warning: passing argument 1 of 'bfree_guest_alias_add' makes integer from pointer without a cast [-Wint-conversion]
+ 6508 |     rc = bfree_guest_alias_add(nname, vidx);
+      |                                ^~~~~
+      |                                |
+      |                                char *
+sysmain/syscall.c:197:38: note: expected 'int' but argument is of type 'char *'
+  197 | static int bfree_guest_alias_add(int vnode, const char *name);
+      |                                  ~~~~^~~~~
+sysmain/syscall.c:6508:39: warning: passing argument 2 of 'bfree_guest_alias_add' makes pointer from integer without a cast [-Wint-conversion]
+ 6508 |     rc = bfree_guest_alias_add(nname, vidx);
+      |                                       ^~~~
+      |                                       |
+      |                                       int
+sysmain/syscall.c:197:57: note: expected 'const char *' but argument is of type 'int'
+  197 | static int bfree_guest_alias_add(int vnode, const char *name);
+      |                                             ~~~~~~~~~~~~^~~~
+sysmain/syscall.c: In function 'sys_isatty':
+sysmain/syscall.c:6709:26: error: 'BFREE_GUEST_DEV_TTY_FD' undeclared (first use in this function); did you mean 'BFREE_GUEST_DEV_NULL_FD'?
+ 6709 |     if (resolved == (int)BFREE_GUEST_DEV_TTY_FD) {
+      |                          ^~~~~~~~~~~~~~~~~~~~~~
+      |                          BFREE_GUEST_DEV_NULL_FD
+sysmain/syscall.c:6718:9: error: implicit declaration of function 'bfree_pty_slot_from_fd' [-Werror=implicit-function-declaration]
+ 6718 |     if (bfree_pty_slot_from_fd(resolved) >= 0) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_get_tk2_snapshot':
+sysmain/syscall.c:7324:18: error: implicit declaration of function 'initrd_presence_mask' [-Werror=implicit-function-declaration]
+ 7324 |     out->flags = initrd_presence_mask();
+      |                  ^~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:7398: warning: "BFREE_USER_STACK_PAGES_BUSYBOX" redefined
+ 7398 | #define BFREE_USER_STACK_PAGES_BUSYBOX 512
+      | 
+sysmain/syscall.c:7397: note: this is the location of the previous definition
+ 7397 | #define BFREE_USER_STACK_PAGES_BUSYBOX 128
+      | 
+sysmain/syscall.c:7404: warning: "BFREE_USER_STACK_MIN_VADDR" redefined
+ 7404 | #define BFREE_USER_STACK_MIN_VADDR   0x00C00000ULL
+      | 
+sysmain/syscall.c:7393: note: this is the location of the previous definition
+ 7393 | #define BFREE_USER_STACK_MIN_VADDR   0x00200000ULL
+      | 
+sysmain/syscall.c:7408: warning: "BFREE_USER_STACK_PAGES_EXEC" redefined
+ 7408 | #define BFREE_USER_STACK_PAGES_EXEC 2048
+      | 
+sysmain/syscall.c:7396: note: this is the location of the previous definition
+ 7396 | #define BFREE_USER_STACK_PAGES_EXEC 4608
+      | 
+sysmain/syscall.c: In function 'sys_linux_clone':
+sysmain/syscall.c:8225:16: error: too many arguments to function 'bfree_guest_fork_enter'
+ 8225 |         return bfree_guest_fork_enter(0);
+      |                ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:553:13: note: declared here
+  553 | static long bfree_guest_fork_enter(void)
+      |             ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8230:12: error: too many arguments to function 'bfree_guest_fork_enter'
+ 8230 |     return bfree_guest_fork_enter(1);
+      |            ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:553:13: note: declared here
+  553 | static long bfree_guest_fork_enter(void)
+      |             ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_arm_parent_resume':
+sysmain/syscall.c:8673:9: error: 'g_coop_parent_resume_mode' undeclared (first use in this function); did you mean 'g_coop_parent_started'?
+ 8673 |     if (g_coop_parent_resume_mode == 2) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |         g_coop_parent_started
+sysmain/syscall.c:8675:34: error: 'g_coop_parent_rcx' undeclared (first use in this function)
+ 8675 |         g_bfree_fork_saved_rcx = g_coop_parent_rcx;
+      |                                  ^~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8676:35: error: 'g_coop_parent_resume_rax' undeclared (first use in this function)
+ 8676 |         g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_arm_child_resume':
+sysmain/syscall.c:8694:9: error: 'g_coop_child_resume_mode' undeclared (first use in this function)
+ 8694 |     if (g_coop_child_resume_mode == 1 || g_coop_child_resume_mode == 2) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8695:35: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8695 |         g_bfree_fork_parent_ret = g_coop_child_resume_rax;
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_coop_child_rdx
+sysmain/syscall.c: In function 'bfree_coop_yield_to_parent':
+sysmain/syscall.c:8709:5: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8709 |     g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_child_rdx
+sysmain/syscall.c:8709:41: error: 'g_coop_cur_nr' undeclared (first use in this function)
+ 8709 |     g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;
+      |                                         ^~~~~~~~~~~~~
+sysmain/syscall.c:8710:5: error: 'g_coop_child_resume_mode' undeclared (first use in this function)
+ 8710 |     g_coop_child_resume_mode = 1;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_yield_to_child':
+sysmain/syscall.c:8733:5: error: 'g_coop_parent_resume_rax' undeclared (first use in this function)
+ 8733 |     g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8733:42: error: 'g_coop_cur_nr' undeclared (first use in this function)
+ 8733 |     g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;
+      |                                          ^~~~~~~~~~~~~
+sysmain/syscall.c:8734:5: error: 'g_coop_parent_resume_mode' undeclared (first use in this function); did you mean 'g_coop_parent_started'?
+ 8734 |     g_coop_parent_resume_mode = 1;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_parent_started
+sysmain/syscall.c: In function 'bfree_coop_yield_to_parent_done':
+sysmain/syscall.c:8757:5: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8757 |     g_coop_child_resume_rax = (uint64_t)(long)ret;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_child_rdx

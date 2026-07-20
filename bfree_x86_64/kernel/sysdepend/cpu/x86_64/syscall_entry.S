@@ -54,7 +54,9 @@
 
 	.extern g_bfree_sysret_exec_rdx
 
-	.extern g_bfree_sysret_exec_cr3
+	.extern g_bfree_exec_transfer_rip
+
+	.extern g_bfree_sysret_sig_rax
 
 	.extern g_bfree_user_sysret_rcx
 
@@ -91,6 +93,14 @@
 	.extern g_bfree_fork_saved_r15
 
 	.extern g_bfree_fork_saved_rdx
+
+	.extern g_bfree_fork_saved_rcx
+
+	.extern g_bfree_fork_saved_r11
+
+	.extern g_bfree_fork_saved_rsp
+
+	.extern g_bfree_sysret_exec_cr3
 
 
 
@@ -198,6 +208,18 @@ syscall_entry:
 
 	je .bfree_syscall_fork_parent
 
+	cmpq $-4092, %rax
+
+	je .bfree_syscall_fork_parent
+
+	cmpq $-4091, %rax
+
+	je .bfree_syscall_signal_deliver
+
+	cmpq $-4090, %rax
+
+	je .bfree_syscall_thread_child
+
 
 
 .bfree_syscall_normal_return:
@@ -246,7 +268,10 @@ syscall_entry:
 
 	pop %r10
 
-	/* Restore parent callee-saved regs frozen at vfork (child clobbered them). */
+	/* Restore parent callee-saved regs frozen at vfork (child clobbered them).
+	 * Load RAX/RCX/R11 before switching to the user RSP: an IRQ after
+	 * `mov user_rsp,%rsp` while still CPL0 would push onto the user stack and
+	 * can leave RAX=0 (AS-copy fork parent got pid=0 → NULL PF in syscall()). */
 	movq g_bfree_fork_saved_rbx(%rip), %rbx
 
 	movq g_bfree_fork_saved_rbp(%rip), %rbp
@@ -261,13 +286,19 @@ syscall_entry:
 
 	movq g_bfree_fork_saved_rdx(%rip), %rdx
 
-	movq g_bfree_sysret_exec_rsp(%rip), %rsp
+	movq g_bfree_fork_saved_rcx(%rip), %rcx
 
-	movq g_bfree_sysret_exec_rcx(%rip), %rcx
-
-	movq g_bfree_sysret_exec_r11(%rip), %r11
+	movq g_bfree_fork_saved_r11(%rip), %r11
 
 	movq g_bfree_fork_parent_ret(%rip), %rax
+
+	/* CR3 is switched in C (bfree_coop_as_switch_to / exit_restore).
+	 * Do NOT consume g_bfree_sysret_exec_cr3 here — that belongs to
+	 * EXEC_TRANSFER only; a leftover child_pt poisoned parent resume
+	 * (late-suite cat|grep RIP=0 / RSP=parent). */
+.bfree_syscall_fork_parent_rsp:
+
+	movq g_bfree_fork_saved_rsp(%rip), %rsp
 
 	sysretq
 
@@ -302,7 +333,11 @@ syscall_entry:
 
 	movq g_bfree_sysret_exec_rsp(%rip), %rsp
 
+	movq g_bfree_exec_transfer_rip(%rip), %rcx
+	testq %rcx, %rcx
+	jnz .bfree_syscall_exec_transfer_rip_ok
 	movq g_bfree_sysret_exec_rcx(%rip), %rcx
+.bfree_syscall_exec_transfer_rip_ok:
 
 	movq g_bfree_sysret_exec_r11(%rip), %r11
 
@@ -315,6 +350,92 @@ syscall_entry:
 	/* Do not inherit init's syscall args / magic return in the new ring3 image. */
 
 	xorq %rax, %rax
+
+	xorq %r8, %r8
+
+	xorq %r9, %r9
+
+	xorq %r10, %r10
+
+	sysretq
+
+
+
+.bfree_syscall_thread_child:
+
+	pop %rcx
+
+	pop %r11
+
+	pop %r15
+
+	pop %rdi
+
+	pop %rsi
+
+	pop %rdx
+
+	pop %r8
+
+	pop %r9
+
+	pop %r10
+
+	xorq %rax, %rax
+
+	movq g_bfree_sysret_exec_rsp(%rip), %rsp
+
+	sysretq
+
+
+
+# Minimal CATCH delivery / rt_sigreturn restore: RIP/RSP/RFLAGS/RDI/RSI/RDX/RAX
+# plus callee-saved rbx/rbp/r12–r15 from g_bfree_sig_saved_* (H01).
+.bfree_syscall_signal_deliver:
+
+	pop %rcx
+
+	pop %r11
+
+	pop %r15
+
+	pop %rdi
+
+	pop %rsi
+
+	pop %rdx
+
+	pop %r8
+
+	pop %r9
+
+	pop %r10
+
+	movq g_bfree_sig_saved_rbx(%rip), %rbx
+
+	movq g_bfree_sig_saved_rbp(%rip), %rbp
+
+	movq g_bfree_sig_saved_r12(%rip), %r12
+
+	movq g_bfree_sig_saved_r13(%rip), %r13
+
+	movq g_bfree_sig_saved_r14(%rip), %r14
+
+	movq g_bfree_sig_saved_r15(%rip), %r15
+
+	movq g_bfree_sysret_exec_rsp(%rip), %rsp
+
+	movq g_bfree_sysret_exec_rcx(%rip), %rcx
+
+	movq g_bfree_sysret_exec_r11(%rip), %r11
+
+	movq g_bfree_sysret_exec_rdi(%rip), %rdi
+
+	movq g_bfree_sysret_exec_rsi(%rip), %rsi
+
+	movq g_bfree_sysret_exec_rdx(%rip), %rdx
+
+	movq g_bfree_sysret_sig_rax(%rip), %rax
 
 	xorq %r8, %r8
 

@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\subagents\\0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 38,
+    "tool": "Write",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/tools/_rebuild_bb_pipe_ascopy.sh",
+    "old_len": 0,
+    "new_len": 2294
+  },
+  "themes": [
+    "as_copy"
+  ],
+  "old_string": "",
+  "new_string": "#!/usr/bin/env bash\nset -eu\nROOT=/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64\ncd \"$ROOT\"\nexport PATH=\"${HOME}/x86_64-elf-toolchain/bin:/usr/bin:/bin:${PATH:-}\"\nBB=\"$ROOT/.cache/busybox-src\"\nBB_VER=1.36.1\nTAR=\"$ROOT/.cache/busybox-${BB_VER}.tar.bz2\"\n\necho \"[1] restore ash.c from tarball\"\ntmp=$(mktemp -d)\ntar -xjf \"$TAR\" -C \"$tmp\" \"busybox-${BB_VER}/shell/ash.c\"\ncp -f \"$tmp/busybox-${BB_VER}/shell/ash.c\" \"$BB/shell/ash.c\"\nrm -rf \"$tmp\"\n\n# Re-apply B-Free ash prerequisites that build_guest_busybox does\nsed -i 's/depends on !NOMMU//g' \"$BB/shell/ash.c\" \"$BB/shell/Config.src\" 2>/dev/null || true\nsed -i 's/if !NOMMU &&/if/g' \"$BB/shell/ash.c\" \"$BB/shell/Config.src\" 2>/dev/null || true\nsed -i 's/# error \"Do not even bother, ash will not run on NOMMU machine\"//' \"$BB/shell/ash.c\" || true\nsed -i 's/pid = fork();/pid = vfork();/g' \"$BB/shell/ash.c\" || true\n# skip freejob under vfork (from bfree_patch_ash_vfork_support) — optional if present in patcher\nif ! grep -q 'skip freejob under shared-AS vfork' \"$BB/shell/ash.c\"; then\n  # soft: leave freejob as upstream; prior builds had `if (0) for`\n  :\nfi\n\n# Ensure NOEXEC force-exec for cat etc. if previously applied via other means — leave as-is from config\n\necho \"[2] apply seq-fork + pipe-scoped AS-copy\"\nsed -i 's/\\r$//' tools/bfree_patch_ash_pipe_seq_fork.py\npython3 tools/bfree_patch_ash_pipe_seq_fork.py \"$BB/shell/ash.c\"\n\nif ! grep -q 'bfree_linux_fork' \"$BB/libbb/appletlib.c\"; then\n  cat >> \"$BB/libbb/appletlib.c\" <<'EOF'\n\n#include <sys/syscall.h>\n/* B-Free: real Linux fork for ash pipelines (AS-copy in guest kernel). */\npid_t bfree_linux_fork(void)\n{\n\treturn (pid_t)syscall(SYS_fork);\n}\nEOF\nfi\n\necho \"markers:\"\ngrep -n 'seq fork pipe\\|pipe AS-copy\\|bfree_ash_pipe_as_copy\\|bfree_linux_fork\\|pid = vfork' \"$BB/shell/ash.c\" | head -30\n\necho \"[3] rebuild ash+busybox\"\ncd \"$BB\"\nrm -f shell/ash.o\nmake -j\"$(nproc 2>/dev/null || echo 4)\" CC=musl-gcc \\\n  EXTRA_CFLAGS=\"-Dfork=vfork -Dexit=bfree_safe_exit\" \\\n  LDFLAGS=\"-static -Wl,-z,norelro -Wl,-Ttext-segment=0x500000\" \\\n  shell/ash.o busybox\nnm shell/ash.o | grep bfree_linux_fork\ncp -f busybox \"$ROOT/userland/busybox_guest/busybox.elf\"\ncp -f busybox \"$ROOT/iso_root/boot/busybox.elf\"\ncp -f \"$ROOT/kernel/kernel.elf\" \"$ROOT/iso_root/boot/kernel.elf\"\necho REBUILD_OK\n"
+}

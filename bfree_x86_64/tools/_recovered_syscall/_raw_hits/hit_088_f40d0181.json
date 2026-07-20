@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\f40d0181-b472-47d1-88c0-97da64f8c769\\f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 20,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 174,
+    "new_len": 540
+  },
+  "themes": [
+    "inet"
+  ],
+  "old_string": "    resolved = bfree_guest_fd_resolve(orig);\n    if (bfree_guest_is_pipe_wr(resolved) || bfree_guest_is_pipe_rd(resolved)) {\n        bfree_guest_pipe_ref(resolved, -1);\n    }",
+  "new_string": "    resolved = bfree_guest_fd_resolve(orig);\n    {\n        int iidx = bfree_inet_from_fd(resolved);\n        if (iidx >= 0) {\n            g_inet_socks[iidx].used = 0;\n            g_inet_socks[iidx].listening = 0;\n            g_inet_socks[iidx].connected = 0;\n            g_inet_socks[iidx].bound = 0;\n            g_inet_socks[iidx].accept_rd = -1;\n            g_inet_socks[iidx].pipe_magic = -1;\n        }\n    }\n    if (bfree_guest_is_pipe_wr(resolved) || bfree_guest_is_pipe_rd(resolved)) {\n        bfree_guest_pipe_ref(resolved, -1);\n    }"
+}

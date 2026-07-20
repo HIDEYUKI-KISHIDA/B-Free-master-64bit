@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1570,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 33,
+    "new_len": 150
+  },
+  "themes": [
+    "exec_transfer",
+    "coop"
+  ],
+  "old_string": "uint64_t g_bfree_sysret_exec_cr3;",
+  "new_string": "uint64_t g_bfree_sysret_exec_cr3;\n/* Exec-only user RIP for BFREE_SYSRET_EXEC_TRANSFER (coop must not clobber). */\nuint64_t g_bfree_exec_transfer_rip;"
+}

@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1392,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 143,
+    "new_len": 235
+  },
+  "themes": [
+    "CLONE_THREAD"
+  ],
+  "old_string": "    if ((f & (unsigned long)BFREE_LINUX_CLONE_THREAD) != 0UL) {\n        (void)BFREE_LINUX_CLONE_SIGHAND;\n        return -38; /* ENOSYS */\n    }",
+  "new_string": "    if ((f & (unsigned long)BFREE_LINUX_CLONE_THREAD) != 0UL) {\n        if ((f & (unsigned long)BFREE_LINUX_CLONE_VM) == 0UL) {\n            return -38;\n        }\n        return bfree_guest_thread_clone(f, newsp, ptid, ctid, tls);\n    }"
+}

@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\subagents\\b26acc1c-b36c-4bb3-959f-9192fb354aa8.jsonl",
+    "line": 17,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 277,
+    "new_len": 500
+  },
+  "themes": [
+    "inet",
+    "coop"
+  ],
+  "old_string": "static void bfree_coop_fd_snap_init(void);\nstatic void bfree_coop_fd_switch_to(int side);\nstatic void bfree_coop_save_child_user(void);\nstatic void bfree_inet_sock_release(int resolved);\nstatic int g_coop_side;\nstatic int g_coop_child_blocked;\nstatic int g_coop_parent_started;",
+  "new_string": "static void bfree_coop_fd_snap_init(void);\nstatic void bfree_coop_fd_switch_to(int side);\nstatic void bfree_coop_save_child_user(void);\nstatic long bfree_coop_yield_to_parent_done(long ret);\nstatic long bfree_coop_yield_to_child_done(long ret);\nstatic void bfree_inet_sock_release(int resolved);\nstatic int g_coop_side;\nstatic int g_coop_child_blocked;\nstatic int g_coop_parent_started;\n/* Linux NR of the in-flight guest syscall (for coop re-exec RAX restore). */\nstatic unsigned long g_coop_cur_nr;"
+}

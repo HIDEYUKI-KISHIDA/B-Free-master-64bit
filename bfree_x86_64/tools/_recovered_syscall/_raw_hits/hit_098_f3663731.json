@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\subagents\\f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "line": 30,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 258,
+    "new_len": 414
+  },
+  "themes": [
+    "inet",
+    "unix"
+  ],
+  "old_string": "static long sys_linux_connect(long sockfd, long addr, long addrlen)\n{\n    int idx, li, i, slot = -1, rd, wr;\n    const uint8_t *raw;\n    char path[96];\n    size_t n;\n    sockfd = bfree_guest_fd_resolve((int)sockfd);\n    idx = bfree_unix_from_fd((int)sockfd);",
+  "new_string": "static long sys_linux_connect(long sockfd, long addr, long addrlen)\n{\n    int idx, li, i, slot = -1, rd, wr;\n    const uint8_t *raw;\n    char path[96];\n    size_t n;\n    sockfd = bfree_guest_fd_resolve((int)sockfd);\n    if (bfree_inet_from_fd((int)sockfd) >= 0) {\n        (void)addr;\n        (void)addrlen;\n        return -101; /* ENETUNREACH — no IPv4 stack yet */\n    }\n    idx = bfree_unix_from_fd((int)sockfd);"
+}

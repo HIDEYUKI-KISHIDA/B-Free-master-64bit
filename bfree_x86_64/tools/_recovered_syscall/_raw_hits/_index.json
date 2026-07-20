@@ -1,0 +1,2005 @@
+[
+  {
+    "i": 0,
+    "themes": [
+      "parked",
+      "unix",
+      "coop"
+    ],
+    "new_len": 21316,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\tools\\_patch_stage1_ash.py",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 1587,
+    "snip": "#!/usr/bin/env python3 \"\"\"Stage 1 ash-fatten: cloexec, /home, fork-return-to-parent, stdin/wait yield.\"\"\" from __future_"
+  },
+  {
+    "i": 1,
+    "themes": [
+      "ptmx"
+    ],
+    "new_len": 16434,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\tools\\_patch_pty_stage2.py",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 1615,
+    "snip": "#!/usr/bin/env python3 \"\"\"PTY minimal + Stage2 floor: CATCH handlers, uid/gid, TTOU.\"\"\" from pathlib import Path  ROOT ="
+  },
+  {
+    "i": 2,
+    "themes": [
+      "unix",
+      "coop"
+    ],
+    "new_len": 10350,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 1496,
+    "snip": "#!/usr/bin/env python3 \"\"\"AF_UNIX + cooperative yield + fd isolation.\"\"\" from pathlib import Path  PATH = Path(__file__)"
+  },
+  {
+    "i": 3,
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "new_len": 8337,
+    "old_len": 4808,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 19,
+    "snip": "static long sys_linux_bind(long sockfd, long addr, long addrlen) {     int idx, i;     const uint8_t *raw;     size_t n;"
+  },
+  {
+    "i": 4,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 6832,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\tools\\count_work_units.py",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 874,
+    "snip": "#!/usr/bin/env python3 \"\"\"Accurate work-unit inventory: guest Linux ABI + ENOSYS stub files.\"\"\" from __future__ import a"
+  },
+  {
+    "i": 5,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 6380,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\docs\\AI_HANDOFF_P3_DESKTOP_QT_DEBUG.ja.md",
+    "src": "c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "line": 166,
+    "snip": "# B-Free P3: Qt guest desktop.elf デバッグ — 他 AI 向け引き継ぎ  **作成日**: 2026-06-04   **プロジェクト**: `Program/bfree_x86_64`（WSL2 + QE"
+  },
+  {
+    "i": 6,
+    "themes": [
+      "exec_transfer",
+      "coop",
+      "timerfd"
+    ],
+    "new_len": 6127,
+    "old_len": 5398,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 947,
+    "snip": "/* vfork child: load BusyBox into a private address space so the suspended  * parent's mappings survive. Standalone exec"
+  },
+  {
+    "i": 7,
+    "themes": [
+      "exec_transfer",
+      "sigframe"
+    ],
+    "new_len": 5735,
+    "old_len": 1961,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "line": 23,
+    "snip": "/* Signal dispositions: 0=DFL, 1=IGN, 2=CATCH (user handler). */ #define BFREE_SIG_DFL   0 #define BFREE_SIG_IGN   1 #de"
+  },
+  {
+    "i": 8,
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "new_len": 5724,
+    "old_len": 362,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "fa9a295b-4c10-43b0-a5c0-745ba02c9972.jsonl",
+    "line": 24,
+    "snip": "/* S3-02: readiness for pipe-backed AF_INET/AF_UNIX (fd bases 0x3A00/0x3900). */ static uint32_t bfree_guest_sock_ready_"
+  },
+  {
+    "i": 9,
+    "themes": [
+      "timerfd",
+      "futex"
+    ],
+    "new_len": 5418,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\docs\\GUEST_ABI_WORKLIST.ja.md",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 885,
+    "snip": "# ゲスト Linux ABI 作業リスト（9 + ~40–80）  更新: 2026-07-18   対象: `kernel/sysmain/syscall.c` ほか process/vmm   ゴール: Phase 5（NOFORK "
+  },
+  {
+    "i": 10,
+    "themes": [
+      "exec_transfer",
+      "coop",
+      "timerfd"
+    ],
+    "new_len": 5397,
+    "old_len": 3213,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 719,
+    "snip": "/* vfork child: load BusyBox into a private address space so the suspended  * parent's mappings survive. Falls back to t"
+  },
+  {
+    "i": 11,
+    "themes": [
+      "exec_transfer",
+      "timerfd"
+    ],
+    "new_len": 5360,
+    "old_len": 4868,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 893,
+    "snip": "/* vfork child: load BusyBox into a private address space so the suspended  * parent's mappings survive. Standalone exec"
+  },
+  {
+    "i": 12,
+    "themes": [
+      "coop",
+      "futex"
+    ],
+    "new_len": 5342,
+    "old_len": 4408,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 955,
+    "snip": "static unsigned g_guest_futex_log_count;  /*  * Linux 202: futex — guest coop (H20).  * - timeout_ptr set: poll until de"
+  },
+  {
+    "i": 13,
+    "themes": [
+      "futex",
+      "CLONE_THREAD"
+    ],
+    "new_len": 5289,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\bfree_guest_thread.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1385,
+    "snip": "#include \"bfree_guest_thread.h\" #include \"syscall.h\" #include \"vmm.h\" #include <stddef.h> #include <stdint.h>  extern ui"
+  },
+  {
+    "i": 14,
+    "themes": [
+      "sigframe"
+    ],
+    "new_len": 4973,
+    "old_len": 2252,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "6c4d83e9-a562-4f1a-97b2-6fe71ef5e3ea.jsonl",
+    "line": 14,
+    "snip": "static int bfree_user_range_mapped(uint64_t base, size_t nbytes) {     uint64_t a;     uint64_t end;      if (nbytes == "
+  },
+  {
+    "i": 15,
+    "themes": [
+      "parked",
+      "coop",
+      "futex"
+    ],
+    "new_len": 4688,
+    "old_len": 4408,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "6c4d83e9-a562-4f1a-97b2-6fe71ef5e3ea.jsonl",
+    "line": 19,
+    "snip": "static unsigned g_guest_futex_log_count;  /*  * Linux 202: futex — single-waiter guest (H20 partial↑).  * - Timed WAIT: "
+  },
+  {
+    "i": 16,
+    "themes": [
+      "sigframe"
+    ],
+    "new_len": 4617,
+    "old_len": 4346,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 957,
+    "snip": "    sig = g_sig_deliver_sig;     g_sig_deliver_sig = 0;     handler = g_guest_sig_handler[sig];     restorer = g_guest_s"
+  },
+  {
+    "i": 17,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 4469,
+    "old_len": 4255,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 306,
+    "snip": "static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_child_user();     if (g_coop_child_rcx >= 2) {       "
+  },
+  {
+    "i": 18,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 3561,
+    "old_len": 41,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1389,
+    "snip": "static uintptr_t g_guest_clear_child_tid; static int g_guest_thread_active; static int g_guest_thread_tid; static int g_"
+  },
+  {
+    "i": 19,
+    "themes": [
+      "parked",
+      "coop",
+      "futex"
+    ],
+    "new_len": 3496,
+    "old_len": 2750,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "6c4d83e9-a562-4f1a-97b2-6fe71ef5e3ea.jsonl",
+    "line": 16,
+    "snip": "static unsigned g_guest_futex_log_count;  /* H20: single waiter slot (no multi-waiter queue). */ static long g_futex_wai"
+  },
+  {
+    "i": 20,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 3396,
+    "old_len": 3241,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 1530,
+    "snip": "    if (bfree_copy_user_strarray(argv_ptr, argv_buf, 16, &argc) != 0 || argc <= 0) {         return -14;     }     {    "
+  },
+  {
+    "i": 21,
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "new_len": 3314,
+    "old_len": 269,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1283,
+    "snip": "    return BFREE_SYSRET_FORK_PARENT; }  /* H06: job-control stop — keep child AS/session, yield parent with WIFSTOPPED. "
+  },
+  {
+    "i": 22,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 3045,
+    "old_len": 1115,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\tools\\guest_link_compat.cpp",
+    "src": "b350e33a-b62c-4062-b87a-9748531bb65c.jsonl",
+    "line": 3135,
+    "snip": "#define BFREE_LINUX_SYS_ARCH_PRCTL 158L #define BFREE_ARCH_SET_FS          0x1002L #define BFREE_LINUX_SYS_FUTEX      20"
+  },
+  {
+    "i": 23,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 2924,
+    "old_len": 4469,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 330,
+    "snip": "static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_child_user();     if (g_coop_child_rcx >= 2) {       "
+  },
+  {
+    "i": 24,
+    "themes": [
+      "sigframe"
+    ],
+    "new_len": 2877,
+    "old_len": 1451,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "6c4d83e9-a562-4f1a-97b2-6fe71ef5e3ea.jsonl",
+    "line": 13,
+    "snip": "#define BFREE_SA_SIGINFO 0x4UL #define BFREE_SA_NODEFER 0x40000000UL #define BFREE_SA_ONSTACK 0x08000000UL /* Linux x86_"
+  },
+  {
+    "i": 25,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 2866,
+    "old_len": 70,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\SMARTPHONE TRON OS\\SMARTPHONE_TRON_OS_仕様書_v0.4.md",
+    "src": "dc5da4bc-3c54-4564-8ce8-1e5e74f5696a.jsonl",
+    "line": 269,
+    "snip": "| フル KDE Mobile on TRON のみ | 非推奨（1.5〜3 年級・別プロジェクト） | | Linux/Android syscall ブリッジ（§17.7） | 任意・研究。製品 MVP とは別レーン |  ---  #"
+  },
+  {
+    "i": 26,
+    "themes": [
+      "as_copy",
+      "parked"
+    ],
+    "new_len": 2849,
+    "old_len": 1341,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 305,
+    "snip": "static void bfree_guest_cwd_copy(char *dst, size_t dst_sz, const char *src) {     size_t i;      for (i = 0; i < dst_sz;"
+  },
+  {
+    "i": 27,
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "new_len": 2734,
+    "old_len": 1256,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 18,
+    "snip": "static int bfree_inet_from_fd(int fd) {     int idx;     if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BA"
+  },
+  {
+    "i": 28,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 2502,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "C:\\Users\\h_kis\\AppData\\Local\\Temp\\bfree-posix-pr\\docs\\POSIX_FULL_COMPAT_ROADMAP.ja.md",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 762,
+    "snip": "# B-Free x86_64 — Linux/POSIX 完全互換トラッキング  > **目的:** BusyBox / musl ゲストが「通常の Linux CLI」として動く状態を経て、最終的に Linux ABI / POSIX "
+  },
+  {
+    "i": 29,
+    "themes": [
+      "as_copy"
+    ],
+    "new_len": 2294,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/tools/_rebuild_bb_pipe_ascopy.sh",
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 38,
+    "snip": "#!/usr/bin/env bash set -eu ROOT=/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64 cd \"$ROOT\" export PATH=\"$"
+  },
+  {
+    "i": 30,
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "new_len": 2279,
+    "old_len": 2263,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 412,
+    "snip": "/* Blocking wait with a live coop child: always schedule it. Never fall through  * to sti;hlt while a VFORK/RUNNING chil"
+  },
+  {
+    "i": 31,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 2271,
+    "old_len": 1654,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 13,
+    "snip": "static long sys_linux_waitid(long idtype, long id, long infop, long options) {     long pid;     int status = 0;     int"
+  },
+  {
+    "i": 32,
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "new_len": 2263,
+    "old_len": 1160,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 393,
+    "snip": "/* Blocking wait with a live AS-copy (parent-first) child: always schedule it.  * A too-strict check (side/blocked) used"
+  },
+  {
+    "i": 33,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 2215,
+    "old_len": 451,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\SMARTPHONE TRON OS\\SMARTPHONE_TRON_OS_仕様書_v0.4.md",
+    "src": "dc5da4bc-3c54-4564-8ce8-1e5e74f5696a.jsonl",
+    "line": 272,
+    "snip": "| フル KDE Mobile on TRON のみ | 非推奨（1.5〜3 年級・別プロジェクト） | | 薄い POSIX / Linux syscall ブリッジ | 任意・研究（§17.7）。MVP 後 |  ### 17.6 弱点"
+  },
+  {
+    "i": 34,
+    "themes": [
+      "sigframe"
+    ],
+    "new_len": 1993,
+    "old_len": 1688,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 957,
+    "snip": "/*  * H01 CATCH delivery: minimal rt_sigframe on user stack  * (pretcode=restorer + padded ucontext/mcontext gregs + opt"
+  },
+  {
+    "i": 35,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 1888,
+    "old_len": 1105,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 330,
+    "snip": "static void bfree_coop_save_parent_user(void) {     g_coop_parent_rcx = g_bfree_user_sysret_rcx;     g_coop_parent_r11 ="
+  },
+  {
+    "i": 36,
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "new_len": 1860,
+    "old_len": 1996,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 283,
+    "snip": "    bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0;     /* Shared fd table: a pipeline child may leave stdin/s"
+  },
+  {
+    "i": 37,
+    "themes": [
+      "coop",
+      "timerfd"
+    ],
+    "new_len": 1814,
+    "old_len": 1901,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 928,
+    "snip": "    /* Kernel-only bookkeeping is safe for both paths; do not remap ELF yet. */     g_guest_proc_maps_off = 0;     g_gue"
+  },
+  {
+    "i": 38,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 1698,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\.cache\\POSIX685_UNIMPL_20260718.md",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 861,
+    "snip": "# POSIX 685 未実装洗い出し（2026-07-18）  ## 結論（3層で見る）  | 層 | 結果 | 意味 | |----|------|------| | **A. シンボル存在** | **fail=0**（685=678"
+  },
+  {
+    "i": 39,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 1668,
+    "old_len": 1346,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 270,
+    "snip": "    bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0;     /* Shared fd table: a pipeline child may leave stdin/s"
+  },
+  {
+    "i": 40,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 1593,
+    "old_len": 1469,
+    "tool": "StrReplace",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 46,
+    "snip": "static long bfree_guest_exit_from_fork(long status) {     int *cleartid;     size_t i;     /* Use enter-time AS-copy fla"
+  },
+  {
+    "i": 41,
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "new_len": 1515,
+    "old_len": 887,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "line": 30,
+    "snip": "static int bfree_unix_from_fd(int fd) {     int idx;     if (fd < (int)BFREE_UNIX_FD_BASE || fd >= (int)BFREE_UNIX_FD_BA"
+  },
+  {
+    "i": 42,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 1496,
+    "old_len": 1678,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 329,
+    "snip": "    /* Parent may have progressed (AS-copy); publish parked parent SYSRET. */     bfree_coop_publish_parent_resume();   "
+  },
+  {
+    "i": 43,
+    "themes": [
+      "as_copy",
+      "parked"
+    ],
+    "new_len": 1472,
+    "old_len": 129,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 298,
+    "snip": "    return 0; /* vfork: continue as child; parent resumes on child exit */ }  /* Snapshot parent heap/cwd at park time ("
+  },
+  {
+    "i": 44,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 1469,
+    "old_len": 1184,
+    "tool": "StrReplace",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 25,
+    "snip": "static long bfree_guest_exit_from_fork(long status) {     int *cleartid;     size_t i;     /* Capture before exit_child "
+  },
+  {
+    "i": 45,
+    "themes": [
+      "inet",
+      "unix",
+      "coop"
+    ],
+    "new_len": 1409,
+    "old_len": 1085,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 18,
+    "snip": "#define BFREE_SYSRET_COOP_SWITCH ((long)-4092) #define BFREE_LINUX_AF_UNIX 1 #define BFREE_LINUX_AF_INET 2 #define BFREE"
+  },
+  {
+    "i": 46,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 1381,
+    "old_len": 987,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "line": 71,
+    "snip": "    bfree_coop_as_switch_to(1);     {         uint64_t rip = g_coop_child_rcx;         page_table_t *cpt = bfree_process"
+  },
+  {
+    "i": 47,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 1335,
+    "old_len": 1371,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 283,
+    "snip": "    bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0;     bfree_guest_stdio_heal_pipes();     for (i = 0; i < si"
+  },
+  {
+    "i": 48,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 1248,
+    "old_len": 159,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 2700,
+    "snip": "#define BFREE_VINTR  0 #define BFREE_VQUIT  1 #define BFREE_VERASE 2 #define BFREE_VEOF   4 #define BFREE_VMIN   6 #defi"
+  },
+  {
+    "i": 49,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 1218,
+    "old_len": 922,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 1175,
+    "snip": "static unsigned g_guest_futex_log_count;  // Linux 202: futex — single-threaded guest; never block, satisfy musl/Qt mute"
+  },
+  {
+    "i": 50,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 1196,
+    "old_len": 576,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "line": 114,
+    "snip": "static void bfree_coop_save_child_user(void) {     g_coop_child_rcx = g_bfree_user_sysret_rcx;     g_coop_child_r11 = g_"
+  },
+  {
+    "i": 51,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 1160,
+    "old_len": 486,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "line": 46,
+    "snip": "static long bfree_coop_yield_to_child(void) {     g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;     g_bfree_fork_sav"
+  },
+  {
+    "i": 52,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 1129,
+    "old_len": 905,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 272,
+    "snip": "    bfree_coop_fd_switch_to(0);     g_coop_child_blocked = 0;     bfree_guest_stdio_heal_pipes();     if (!as_copy) {   "
+  },
+  {
+    "i": 53,
+    "themes": [
+      "coop",
+      "futex"
+    ],
+    "new_len": 1124,
+    "old_len": 920,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "5c44f804-a588-440e-ac50-0b36379eca43.jsonl",
+    "line": 25,
+    "snip": "/*  * Linux 202: futex — single-threaded guest.  * H20: real blocking / timeout-bounded coop yield left partial: clearin"
+  },
+  {
+    "i": 54,
+    "themes": [
+      "inet"
+    ],
+    "new_len": 1122,
+    "old_len": 122,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1433,
+    "snip": "static int bfree_inet_is_guest_routable(uint32_t addr) {     if (addr == BFREE_INADDR_ANY) {         return 1;     }    "
+  },
+  {
+    "i": 55,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 1121,
+    "old_len": 1053,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 13,
+    "snip": "static long sys_linux_waitpid(long pid, long status_ptr, long options) {     int status = 0;     long rc;      for (;;) "
+  },
+  {
+    "i": 56,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 1107,
+    "old_len": 1043,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "line": 117,
+    "snip": "    g_coop_child_blocked = 1;     bfree_coop_fd_switch_to(0);     bfree_coop_as_switch_to(0);     g_bfree_sysret_exec_rs"
+  },
+  {
+    "i": 57,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 1102,
+    "old_len": 1038,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "line": 114,
+    "snip": "    g_coop_child_blocked = 1;     bfree_coop_fd_switch_to(0);     bfree_coop_as_switch_to(0);     g_bfree_sysret_exec_rs"
+  },
+  {
+    "i": 58,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 1098,
+    "old_len": 319,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1164,
+    "snip": "    bfree_guest_pipe_reset_all();     bfree_guest_fd_ensure_init();     /* Image boundary: drop any stale redirects / pi"
+  },
+  {
+    "i": 59,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 1084,
+    "old_len": 1270,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 277,
+    "snip": "    /* Child execve cleared FS/TLS; restore the frozen parent's TLS base. */     if (knl_current_task != 0) {         kn"
+  },
+  {
+    "i": 60,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 1070,
+    "old_len": 1048,
+    "tool": "StrReplace",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 46,
+    "snip": "static long bfree_guest_exit_from_fork_signal(int sig) {     int *cleartid;     size_t i;     int as_copy = g_guest_fork"
+  },
+  {
+    "i": 61,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 1054,
+    "old_len": 452,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 1595,
+    "snip": "static long sys_linux_waitpid(long pid, long status_ptr, long options) {     int status = 0;     long rc;      for (;;) "
+  },
+  {
+    "i": 62,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 1048,
+    "old_len": 962,
+    "tool": "StrReplace",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 25,
+    "snip": "static long bfree_guest_exit_from_fork_signal(int sig) {     int *cleartid;     size_t i;     int as_copy = bfree_proces"
+  },
+  {
+    "i": 63,
+    "themes": [
+      "inet"
+    ],
+    "new_len": 1033,
+    "old_len": 980,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "fa9a295b-4c10-43b0-a5c0-745ba02c9972.jsonl",
+    "line": 27,
+    "snip": "    sockfd = bfree_guest_fd_resolve((int)sockfd);     idx = bfree_inet_from_fd((int)sockfd);     if (idx < 0) {         "
+  },
+  {
+    "i": 64,
+    "themes": [
+      "as_copy",
+      "coop",
+      "timerfd"
+    ],
+    "new_len": 993,
+    "old_len": 209,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1535,
+    "snip": "        } else {             bfree_guest_heap_reset();             timer_purge_all();             bfree_timerfd_purge_al"
+  },
+  {
+    "i": 65,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 989,
+    "old_len": 1273,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 298,
+    "snip": "    bfree_guest_stdio_heal_pipes();     bfree_guest_restore_parent_isol(as_copy);     if (!as_copy) {         bfree_gues"
+  },
+  {
+    "i": 66,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 978,
+    "old_len": 804,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "line": 113,
+    "snip": "    bfree_coop_fd_snap_init();     if (copy_as) {         /*          * AS-copy fork: return to parent immediately so `c"
+  },
+  {
+    "i": 67,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 975,
+    "old_len": 1016,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\docs\\POSIX_FULL_COMPAT_ROADMAP.ja.md",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 782,
+    "snip": "### Phase 4 / M1+M2 — FS + プロセス土台  - [x] 独立 OFD（別 `open` = 別オフセット、`dup` = 共有） - [x] `/tmp` 実ディレクトリ（mkdir/rmdir/ネスト/chdir"
+  },
+  {
+    "i": 68,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 934,
+    "old_len": 1190,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "line": 52,
+    "snip": "static long bfree_coop_yield_to_child(void) {     uart_puts(\"[COOP] yield_child enter\\n\");     g_bfree_fork_saved_rcx = "
+  },
+  {
+    "i": 69,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 932,
+    "old_len": 1100,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 334,
+    "snip": "static long bfree_coop_yield_to_parent(void) {     bfree_coop_save_child_user();     if (g_coop_child_rcx >= 2) {       "
+  },
+  {
+    "i": 70,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 877,
+    "old_len": 1482,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 335,
+    "snip": "static long bfree_coop_yield_to_child(void) {     /* Park full parent user context before staging child into fork_saved_"
+  },
+  {
+    "i": 71,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 836,
+    "old_len": 1098,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1214,
+    "snip": "    bfree_guest_pipe_reset_all();     bfree_guest_fd_ensure_init();     /* Drop stale fork/coop only — full process_init"
+  },
+  {
+    "i": 72,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 830,
+    "old_len": 109,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "line": 63,
+    "snip": "    bfree_coop_as_switch_to(1);     uart_puts(\"[COOP] yield_child switched insn=\");     {         uint64_t w = 0;       "
+  },
+  {
+    "i": 73,
+    "themes": [
+      "as_copy",
+      "inet",
+      "parked",
+      "exec_transfer",
+      "unix",
+      "coop"
+    ],
+    "new_len": 778,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\tools\\_cmp_syms.sh",
+    "src": "ffb3d1c7-4016-45bf-be63-92efd4c399df.jsonl",
+    "line": 26,
+    "snip": "#!/usr/bin/env bash set -eu cd /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64 echo \"=== OBJ symbols (late"
+  },
+  {
+    "i": 74,
+    "themes": [
+      "inet"
+    ],
+    "new_len": 755,
+    "old_len": 623,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "line": 30,
+    "snip": "    pslot = bfree_pty_slot_from_fd(resolved);     if (pslot >= 0 && g_guest_ptys[pslot].used) {         if (bfree_pty_is"
+  },
+  {
+    "i": 75,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 698,
+    "old_len": 391,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "58bd59de-14ef-492b-82f2-2a3a5151901e.jsonl",
+    "line": 48,
+    "snip": "    bfree_coop_fd_switch_to(0);     bfree_coop_as_switch_to(0);     /* Parent TLS — child execve may have cleared FS_BAS"
+  },
+  {
+    "i": 76,
+    "themes": [
+      "parked"
+    ],
+    "new_len": 695,
+    "old_len": 274,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 297,
+    "snip": "static char g_guest_fork_saved_cwd[256]; static uint64_t g_guest_fork_saved_heap_next; static uint64_t g_guest_fork_save"
+  },
+  {
+    "i": 77,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 691,
+    "old_len": 0,
+    "tool": "Write",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\docs\\ATTACH_FILES_FOR_AI.txt",
+    "src": "c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "line": 166,
+    "snip": "B-Free P3 — 他 AI へ添付するファイル一覧 ============================================  【必ず添付】 1. docs/AI_HANDOFF_P3_DESKTOP_QT_DEBUG"
+  },
+  {
+    "i": 78,
+    "themes": [
+      "sigframe"
+    ],
+    "new_len": 672,
+    "old_len": 482,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "5c44f804-a588-440e-ac50-0b36379eca43.jsonl",
+    "line": 25,
+    "snip": "/*  * Minimal one-level CATCH delivery: redirect SYSRET to sa_handler with rdi=sig  * and restorer as return address; rt"
+  },
+  {
+    "i": 79,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 672,
+    "old_len": 403,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1331,
+    "snip": "static void bfree_guest_ofd_maybe_release(int fd) {     bfree_guest_ofd_t *ofd = bfree_guest_ofd_from_fd(fd);     int i;"
+  },
+  {
+    "i": 80,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 656,
+    "old_len": 420,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 303,
+    "snip": "/* AS-copy: kernel brk/cwd are global. Dual-park across coop switches so each  * side resumes its own markers. On child "
+  },
+  {
+    "i": 81,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 633,
+    "old_len": 283,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "line": 271,
+    "snip": "static bfree_timerfd_entry_t *bfree_find_timerfd(int fd) {     int index = fd - BFREE_TIMERFD_FD_BASE;     if (index < 0"
+  },
+  {
+    "i": 82,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 632,
+    "old_len": 453,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 394,
+    "snip": "            if (wopts != 0) {                 return 0; /* WNOHANG, nothing ready */             }             {        "
+  },
+  {
+    "i": 83,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 632,
+    "old_len": 361,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1623,
+    "snip": "    g_bfree_sysret_exec_rsp = user_rsp;     g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;     g_bfree_sysret_e"
+  },
+  {
+    "i": 84,
+    "themes": [
+      "inet"
+    ],
+    "new_len": 621,
+    "old_len": 257,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 22,
+    "snip": "static int bfree_inet_from_fd(int fd) {     int idx;     if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BA"
+  },
+  {
+    "i": 85,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 596,
+    "old_len": 362,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 17,
+    "snip": "        while (!bfree_stdin_byte_ready()) {             /* Background AS-copy child parked: run it while shell blocks on"
+  },
+  {
+    "i": 86,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 550,
+    "old_len": 242,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 328,
+    "snip": "/* Parked parent user context across coop child runs (see yield_to_child).  * Must NOT share slots with child staging in"
+  },
+  {
+    "i": 87,
+    "themes": [
+      "parked"
+    ],
+    "new_len": 549,
+    "old_len": 132,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 293,
+    "snip": "static uint64_t g_guest_fork_saved_heap_next; static uint64_t g_guest_fork_saved_brk; /* AS-copy: parent keeps running a"
+  },
+  {
+    "i": 88,
+    "themes": [
+      "inet"
+    ],
+    "new_len": 540,
+    "old_len": 174,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 20,
+    "snip": "    resolved = bfree_guest_fd_resolve(orig);     {         int iidx = bfree_inet_from_fd(resolved);         if (iidx >= "
+  },
+  {
+    "i": 89,
+    "themes": [
+      "inet",
+      "unix",
+      "coop"
+    ],
+    "new_len": 538,
+    "old_len": 400,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "line": 29,
+    "snip": "#define BFREE_SYSRET_COOP_SWITCH ((long)-4092) #define BFREE_LINUX_AF_UNIX 1 #define BFREE_LINUX_AF_INET 2 #define BFREE"
+  },
+  {
+    "i": 90,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 521,
+    "old_len": 871,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 412,
+    "snip": "            if (wopts != 0) {                 return 0; /* WNOHANG, nothing ready */             }             {        "
+  },
+  {
+    "i": 91,
+    "themes": [
+      "as_copy"
+    ],
+    "new_len": 520,
+    "old_len": 409,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 700,
+    "snip": "    bfree_guest_restore_parent_isol(as_copy);     /* AS-copy: parent stack was never shared — do not poke the vfork stac"
+  },
+  {
+    "i": 92,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 504,
+    "old_len": 422,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 300,
+    "snip": "static long bfree_coop_yield_to_child(void) {     g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;     g_bfree_fork_sav"
+  },
+  {
+    "i": 93,
+    "themes": [
+      "inet",
+      "coop"
+    ],
+    "new_len": 500,
+    "old_len": 277,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "b26acc1c-b36c-4bb3-959f-9192fb354aa8.jsonl",
+    "line": 17,
+    "snip": "static void bfree_coop_fd_snap_init(void); static void bfree_coop_fd_switch_to(int side); static void bfree_coop_save_ch"
+  },
+  {
+    "i": 94,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 493,
+    "old_len": 428,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 1916,
+    "snip": "    uart_puts(\"[SYSCALL] exec_initrd: loading \");     uart_puts(g_bfree_exec_initrd_kpath);     uart_puts(\" ...\\n\");    "
+  },
+  {
+    "i": 95,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 478,
+    "old_len": 646,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 335,
+    "snip": "static long bfree_coop_yield_to_parent_done(long ret) {     bfree_coop_save_child_user();     g_coop_child_resume_rax = "
+  },
+  {
+    "i": 96,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 477,
+    "old_len": 1081,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 335,
+    "snip": "static long bfree_coop_yield_to_child_done(long ret) {     bfree_coop_save_parent_user();     if (g_guest_fork_was_as_co"
+  },
+  {
+    "i": 97,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 428,
+    "old_len": 346,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 300,
+    "snip": "static long bfree_coop_yield_to_child_done(long ret) {     g_bfree_fork_saved_rcx = g_bfree_user_sysret_rcx;     g_bfree"
+  },
+  {
+    "i": 98,
+    "themes": [
+      "inet",
+      "unix"
+    ],
+    "new_len": 414,
+    "old_len": 258,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "line": 30,
+    "snip": "static long sys_linux_connect(long sockfd, long addr, long addrlen) {     int idx, li, i, slot = -1, rd, wr;     const u"
+  },
+  {
+    "i": 99,
+    "themes": [
+      "as_copy"
+    ],
+    "new_len": 409,
+    "old_len": 520,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 725,
+    "snip": "    bfree_guest_restore_parent_isol(as_copy);     /* AS-copy: parent stack was never shared — do not poke the vfork stac"
+  },
+  {
+    "i": 100,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 408,
+    "old_len": 361,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 1017,
+    "snip": "    switch (cmd) {     case 0: /* FUTEX_WAIT */         if (uaddr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)u"
+  },
+  {
+    "i": 101,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 403,
+    "old_len": 130,
+    "tool": "StrReplace",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 45,
+    "snip": "static int g_guest_fork_active; static int g_guest_fork_pid; static int g_guest_fork_status; static int g_guest_fork_sta"
+  },
+  {
+    "i": 102,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 385,
+    "old_len": 155,
+    "tool": "StrReplace",
+    "path": "kernel/sysmain/syscall.c",
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 184,
+    "snip": "    switch (cmd) {     case 0: /* FUTEX_WAIT */         if (uaddr != 0 && bfree_user_ptr_mapped(uaddr)) {             co"
+  },
+  {
+    "i": 103,
+    "themes": [
+      "exec_transfer",
+      "coop"
+    ],
+    "new_len": 375,
+    "old_len": 352,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysdepend\\cpu\\x86_64\\syscall_entry.S",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1623,
+    "snip": "\tmovq g_bfree_fork_parent_ret(%rip), %rax  \t/* CR3 is switched in C (bfree_coop_as_switch_to / exit_restore). \t * Do NOT"
+  },
+  {
+    "i": 104,
+    "themes": [
+      "as_copy"
+    ],
+    "new_len": 368,
+    "old_len": 652,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 298,
+    "snip": "    bfree_guest_stdio_heal_pipes();     bfree_guest_restore_parent_isol(as_copy);     /* AS-copy: parent stack was never"
+  },
+  {
+    "i": 105,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 355,
+    "old_len": 262,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 2755,
+    "snip": "    bfree_guest_exec_reset_subsystems(         bfree_guest_basename_eq(g_bfree_exec_initrd_kpath, \"busybox.elf\") ? 1 : 0"
+  },
+  {
+    "i": 106,
+    "themes": [
+      "parked",
+      "coop"
+    ],
+    "new_len": 354,
+    "old_len": 265,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 26,
+    "snip": "            /* Blocking: run parked AS-copy child (same as waitpid). */             if (g_guest_fork_active && g_coop_si"
+  },
+  {
+    "i": 107,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 351,
+    "old_len": 211,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 2501,
+    "snip": "// Linux 218: set_tid_address — remember cleartid; do not poke TLS memory on set. long sys_set_tid_address(long tid_ptr)"
+  },
+  {
+    "i": 108,
+    "themes": [
+      "unix",
+      "timerfd"
+    ],
+    "new_len": 346,
+    "old_len": 65,
+    "tool": "StrReplace",
+    "path": "userland/libc/bfree_epoll.h",
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 141,
+    "snip": "#define BFREE_TIMERFD_FD_BASE 0x3200 #define BFREE_MAX_TIMERFD 16 /* Qt QEventDispatcherUNIX wakeup pipe + epoll (Linux "
+  },
+  {
+    "i": 109,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 345,
+    "old_len": 205,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysdepend\\cpu\\x86_64\\syscall_entry.S",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1575,
+    "snip": ".bfree_syscall_exec_transfer_rsp:  \tmovq g_bfree_sysret_exec_rsp(%rip), %rsp  \tmovq g_bfree_exec_transfer_rip(%rip), %rc"
+  },
+  {
+    "i": 110,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 342,
+    "old_len": 319,
+    "tool": "StrReplace",
+    "path": "kernel/sysmain/syscall.c",
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 188,
+    "snip": "    case 0: /* FUTEX_WAIT */         if (uaddr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uaddr)) {           "
+  },
+  {
+    "i": 111,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 341,
+    "old_len": 306,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1574,
+    "snip": "void bfree_sysret_exec_globals_init(void) {     g_bfree_sysret_exec_rsp = 0;     g_bfree_sysret_exec_rcx = 0;     g_bfre"
+  },
+  {
+    "i": 112,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 331,
+    "old_len": 408,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 1152,
+    "snip": "    switch (cmd) {     case 0: /* FUTEX_WAIT */         /*          * Single-threaded guest: EAGAIN makes Qt QBasicMutex"
+  },
+  {
+    "i": 113,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 310,
+    "old_len": 173,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\userland\\desktop_qt\\desktop_qt_guest.pro",
+    "src": "dc5da4bc-3c54-4564-8ce8-1e5e74f5696a.jsonl",
+    "line": 67,
+    "snip": "DEFINES += BFREE_GUEST_HAS_QT6 QT_STATIC # Guest Qt was built with linux-g++ / CROSS_COMPILE; bare x86_64-elf-g++ needs "
+  },
+  {
+    "i": 114,
+    "themes": [
+      "inet"
+    ],
+    "new_len": 300,
+    "old_len": 390,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1433,
+    "snip": "        for (li = 0; li < BFREE_INET_SLOTS; ++li) {             if (g_inet_socks[li].used && g_inet_socks[li].listening "
+  },
+  {
+    "i": 115,
+    "themes": [
+      "inet",
+      "coop"
+    ],
+    "new_len": 277,
+    "old_len": 226,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 22,
+    "snip": "static long bfree_coop_yield_to_parent(void); static long bfree_coop_yield_to_child(void); static void bfree_coop_fd_sna"
+  },
+  {
+    "i": 116,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 267,
+    "old_len": 127,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysdepend\\cpu\\x86_64\\syscall_entry.S",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1573,
+    "snip": "\tmovq g_bfree_sysret_exec_rsp(%rip), %rsp  \tmovq g_bfree_exec_transfer_rip(%rip), %rcx \ttestq %rcx, %rcx \tjnz .bfree_sys"
+  },
+  {
+    "i": 117,
+    "themes": [
+      "inet"
+    ],
+    "new_len": 249,
+    "old_len": 381,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f3663731-a4ad-41a6-b00a-745d3f49a399.jsonl",
+    "line": 31,
+    "snip": "        if (g_guest_ptys[pslot].master_open <= 0 &&             g_guest_ptys[pslot].slave_open <= 0) {             memse"
+  },
+  {
+    "i": 118,
+    "themes": [
+      "as_copy"
+    ],
+    "new_len": 243,
+    "old_len": 257,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 300,
+    "snip": "static long bfree_guest_exit_from_fork(long status) {     int *cleartid;     /* Use enter-time AS-copy flag — NOT has_pr"
+  },
+  {
+    "i": 119,
+    "themes": [
+      "as_copy",
+      "coop"
+    ],
+    "new_len": 238,
+    "old_len": 190,
+    "tool": "StrReplace",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 46,
+    "snip": "    if (rc < 0) {         return rc;     }     g_guest_fork_pid = child_pid;     g_guest_fork_active = 1;     g_guest_fo"
+  },
+  {
+    "i": 120,
+    "themes": [
+      "CLONE_THREAD"
+    ],
+    "new_len": 235,
+    "old_len": 143,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1392,
+    "snip": "    if ((f & (unsigned long)BFREE_LINUX_CLONE_THREAD) != 0UL) {         if ((f & (unsigned long)BFREE_LINUX_CLONE_VM) =="
+  },
+  {
+    "i": 121,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 235,
+    "old_len": 96,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "line": 320,
+    "snip": "    bfree_guest_serial_reset_boot_logs();      /* Last-chance drop: nothing must fire between purge-at-load and ring3 ma"
+  },
+  {
+    "i": 122,
+    "themes": [
+      "inet"
+    ],
+    "new_len": 213,
+    "old_len": 540,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 22,
+    "snip": "    resolved = bfree_guest_fd_resolve(orig);     bfree_inet_sock_release(resolved);     if (bfree_guest_is_pipe_wr(resol"
+  },
+  {
+    "i": 123,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 211,
+    "old_len": 144,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1574,
+    "snip": "            g_bfree_sysret_exec_rsp = user_rsp;             g_bfree_exec_transfer_rip = elf.entry;             g_bfree_s"
+  },
+  {
+    "i": 124,
+    "themes": [
+      "unix",
+      "coop"
+    ],
+    "new_len": 202,
+    "old_len": 259,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 1502,
+    "snip": "static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS]; static int g_coop_parent_started; static int g_fd_snap_parent[B"
+  },
+  {
+    "i": 125,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 202,
+    "old_len": 128,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "8a081553-299d-4ec7-9ddb-fd6475540045.jsonl",
+    "line": 371,
+    "snip": "    case 200:         return sys_linux_get_robust_list(arg1, arg2, arg3);     case 202:         return sys_futex(arg1, a"
+  },
+  {
+    "i": 126,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 198,
+    "old_len": 130,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 2704,
+    "snip": "    memcpy(&g_guest_tty_termios, src, sizeof(g_guest_tty_termios));     return 0; }  static bfree_timerfd_entry_t g_time"
+  },
+  {
+    "i": 127,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 196,
+    "old_len": 137,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1570,
+    "snip": "    g_bfree_sysret_exec_rsp = user_rsp;     g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;     g_bfree_sysret_e"
+  },
+  {
+    "i": 128,
+    "themes": [
+      "inet",
+      "unix",
+      "coop"
+    ],
+    "new_len": 183,
+    "old_len": 558,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1331,
+    "snip": "static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS]; static bfree_inet_sock_t g_inet_socks[BFREE_INET_SLOTS]; static"
+  },
+  {
+    "i": 129,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 182,
+    "old_len": 135,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "line": 117,
+    "snip": "static void bfree_coop_fd_snap_init(void); static void bfree_coop_fd_switch_to(int side); static void bfree_coop_as_swit"
+  },
+  {
+    "i": 130,
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "new_len": 180,
+    "old_len": 139,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 305,
+    "snip": "    g_guest_fork_was_as_copy = copy_as ? 1 : 0;     g_guest_parent_parked_heap_valid = 0;     g_guest_child_parked_heap_"
+  },
+  {
+    "i": 131,
+    "themes": [
+      "coop"
+    ],
+    "new_len": 180,
+    "old_len": 133,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "line": 114,
+    "snip": "static long bfree_coop_yield_to_parent(void); static long bfree_coop_yield_to_child(void); static void bfree_coop_as_swi"
+  },
+  {
+    "i": 132,
+    "themes": [
+      "timerfd"
+    ],
+    "new_len": 178,
+    "old_len": 124,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "line": 271,
+    "snip": "    bfree_guest_heap_reset();     timer_purge_all();     bfree_timerfd_purge_all();     ld = load_elf_image(g_bfree_exec"
+  },
+  {
+    "i": 133,
+    "themes": [
+      "as_copy"
+    ],
+    "new_len": 178,
+    "old_len": 144,
+    "tool": "StrReplace",
+    "path": "c:/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel/sysmain/syscall.c",
+    "src": "0ce9e498-2047-4756-b300-5356effbd474.jsonl",
+    "line": 46,
+    "snip": "    g_guest_fork_active = 0;     g_guest_fork_pid = 0;     g_guest_fork_status = 0;     g_guest_fork_status_ready = 0;  "
+  },
+  {
+    "i": 134,
+    "themes": [
+      "as_copy",
+      "parked"
+    ],
+    "new_len": 170,
+    "old_len": 129,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 305,
+    "snip": "    g_guest_fork_was_as_copy = 0;     g_guest_parent_parked_heap_valid = 0;     g_guest_child_parked_heap_valid = 0;    "
+  },
+  {
+    "i": 135,
+    "themes": [
+      "as_copy"
+    ],
+    "new_len": 162,
+    "old_len": 176,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 300,
+    "snip": "static long bfree_guest_exit_from_fork_signal(int sig) {     int *cleartid;     int as_copy = g_guest_fork_was_as_copy; "
+  },
+  {
+    "i": 136,
+    "themes": [
+      "exec_transfer",
+      "coop"
+    ],
+    "new_len": 150,
+    "old_len": 33,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1570,
+    "snip": "uint64_t g_bfree_sysret_exec_cr3; /* Exec-only user RIP for BFREE_SYSRET_EXEC_TRANSFER (coop must not clobber). */ uint6"
+  },
+  {
+    "i": 137,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 144,
+    "old_len": 102,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 2505,
+    "snip": "    return 1; }  static unsigned g_guest_futex_log_count;  // Linux 202: futex — single-threaded guest; never block, sat"
+  },
+  {
+    "i": 138,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 124,
+    "old_len": 349,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 2499,
+    "snip": "static uintptr_t g_guest_clear_child_tid;  // Linux 218: set_tid_address — remember cleartid; do not poke TLS memory on "
+  },
+  {
+    "i": 139,
+    "themes": [
+      "as_copy",
+      "parked",
+      "coop"
+    ],
+    "new_len": 120,
+    "old_len": 78,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 297,
+    "snip": "    g_guest_fork_was_as_copy = copy_as ? 1 : 0;     g_guest_parent_parked_heap_valid = 0;     bfree_coop_fd_snap_init();"
+  },
+  {
+    "i": 140,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 108,
+    "old_len": 106,
+    "tool": "StrReplace",
+    "path": "kernel/sysmain/syscall.c",
+    "src": "d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 155,
+    "snip": "    switch (cmd) {     case 0: /* FUTEX_WAIT */         return 0; /* single-threaded guest: pretend woken */"
+  },
+  {
+    "i": 141,
+    "themes": [
+      "as_copy",
+      "parked"
+    ],
+    "new_len": 101,
+    "old_len": 59,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 297,
+    "snip": "    g_guest_fork_was_as_copy = 0;     g_guest_parent_parked_heap_valid = 0;     g_guest_next_pid = 2;"
+  },
+  {
+    "i": 142,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 99,
+    "old_len": 64,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1573,
+    "snip": "    g_bfree_sysret_exec_cr3 = 0;     g_bfree_exec_transfer_rip = 0;     g_bfree_sysret_sig_rax = 0;"
+  },
+  {
+    "i": 143,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 67,
+    "old_len": 32,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1570,
+    "snip": "    g_bfree_sysret_exec_cr3 = 0;     g_bfree_exec_transfer_rip = 0;"
+  },
+  {
+    "i": 144,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 65,
+    "old_len": 128,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1392,
+    "snip": "        *cleartid = 0;         g_guest_clear_child_tid = 0;     }"
+  },
+  {
+    "i": 145,
+    "themes": [
+      "futex"
+    ],
+    "new_len": 53,
+    "old_len": 391,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1392,
+    "snip": " static void bfree_guest_thread_save_parent_ctx(void)"
+  },
+  {
+    "i": 146,
+    "themes": [
+      "exec_transfer"
+    ],
+    "new_len": 34,
+    "old_len": 32,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysdepend\\cpu\\x86_64\\syscall_entry.S",
+    "src": "97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1573,
+    "snip": "\t.extern g_bfree_exec_transfer_rip"
+  }
+]

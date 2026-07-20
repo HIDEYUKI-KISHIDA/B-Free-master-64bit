@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 725,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 520,
+    "new_len": 409
+  },
+  "themes": [
+    "as_copy"
+  ],
+  "old_string": "    bfree_guest_restore_parent_isol(as_copy);\n    /* AS-copy: parent stack was never shared — do not poke the vfork stack\n     * save over the parent's progressed frames (seq-fork echo|cat).\n     * vfork (+exec): parent was frozen; always restore the snapshot. */\n    (void)bfree_shell_text_check(\"pre-stack-restore\");\n    if (!as_copy) {\n        bfree_guest_vfork_stack_restore();\n    }\n    (void)bfree_shell_text_check(\"post-stack-restore\");\n    /* Child execve cleared FS/TLS; restore the frozen parent's TLS base. */",
+  "new_string": "    bfree_guest_restore_parent_isol(as_copy);\n    /* AS-copy: parent stack was never shared — do not poke the vfork stack\n     * save over the parent's progressed frames (seq-fork echo|cat).\n     * vfork (+exec): parent was frozen; always restore the snapshot. */\n    if (!as_copy) {\n        bfree_guest_vfork_stack_restore();\n    }\n    /* Child execve cleared FS/TLS; restore the frozen parent's TLS base. */"
+}

@@ -348,7 +348,7 @@ void setup_task_stack(TCB *tcb, void (*entry)(void), uint64_t *stack, size_t sta
 }
 
 static void init_task_page_table(TCB *tcb) {
-    static page_table_t task_page_tables[2] __attribute__((aligned(4096), section(".bss.page_table")));
+    static page_table_t task_page_tables[2] __attribute__((aligned(4096), section(".bfree_page_table")));
     static int next_slot = 0;
 
     if (tcb->page_table_base) {
@@ -758,9 +758,17 @@ extern uint8_t _pmm_bitmap_start[];
 #define IOAPIC_BASE 0xFEC00000ULL
 #define APIC_LEN   0x100000ULL // 1MB確保（十分な余裕）
 #define KERNEL_RESERVED_BASE 0x00000000ULL
-#define KERNEL_RESERVED_LEN  0x00400000ULL // 低位4MiBはカーネル/スタック/静的表を丸ごと確保
+/* Legacy floor; reservations below also cover .bss past 4MiB (page_table_t ~0.65MiB
+ * each) through _pmm_bitmap_end so pmm_free rewind cannot hand BSS frames to
+ * guests (wipes PT / page_buf → zero text / #UD on pipe AS-copy). */
+#define KERNEL_RESERVED_LEN  0x00400000ULL
 #define KERNEL_STACK_BASE 0x110000ULL
 #define KERNEL_STACK_LEN  0x10000ULL
+
+extern uint8_t _bss_start[];
+extern uint8_t _bss_end[];
+extern uint8_t _stack_start[];
+extern uint8_t _stack_end[];
 
 static uint64_t g_pmm_alloc_start_page = 0;
 
@@ -838,13 +846,25 @@ void *pmm_alloc_pt_page(void)
 }
 
 void* pmm_alloc(void) {
+    extern uint64_t g_bfree_shell_text_phys;
+    extern int bfree_shell_page_pinned(uint64_t phys);
     for (uint64_t i = g_pmm_alloc_start_page; i < BITMAP_SIZE * 8; ++i) {
         if (!(_pmm_bitmap_start[i / 8] & (1 << (i % 8)))) {
+            uint64_t page = i * PAGE_SIZE;
+            if ((g_bfree_shell_text_phys != 0 && page == g_bfree_shell_text_phys) ||
+                bfree_shell_page_pinned(page)) {
+                uart_puts("[PMM] FATAL: alloc reuses shell text phys=");
+                uart_puthex64(page);
+                uart_puts("\n");
+                pmm_set_bit(i);
+                g_pmm_alloc_start_page = i + 1;
+                continue;
+            }
 #if BFREE_BOOT_DEBUG
             uart_puts("[PMM][ALLOC] idx=");
             uart_puthex64(i);
             uart_puts(" addr=");
-            uart_puthex64(i * PAGE_SIZE);
+            uart_puthex64(page);
             uart_puts(" before=");
             uart_puthex64(_pmm_bitmap_start[i / 8]);
             uart_puts("\n");
@@ -858,7 +878,7 @@ void* pmm_alloc(void) {
             uart_puthex64(_pmm_bitmap_start[i / 8]);
             uart_puts("\n");
 #endif
-            return (void*)(i * PAGE_SIZE);
+            return (void*)page;
         }
     }
     return 0; // 空きなし
@@ -866,6 +886,24 @@ void* pmm_alloc(void) {
 
 void pmm_free(void* addr) {
     uint64_t idx = ((uint64_t)addr) / PAGE_SIZE;
+    {
+        extern uint64_t g_bfree_elf_watch_phys;
+        extern uint64_t g_bfree_shell_text_phys;
+        extern int bfree_shell_page_pinned(uint64_t phys);
+        uint64_t page = (uint64_t)(uintptr_t)addr & ~(4096ULL - 1ULL);
+        if (g_bfree_elf_watch_phys != 0 && page == g_bfree_elf_watch_phys) {
+            /* Expected when a vfork+exec child's private AS is destroyed —
+             * drop the watch so AS-copy can reuse the frame. */
+            g_bfree_elf_watch_phys = 0;
+        }
+        if ((g_bfree_shell_text_phys != 0 && page == g_bfree_shell_text_phys) ||
+            bfree_shell_page_pinned(page)) {
+            uart_puts("[PMM] FATAL: refuse free shell text phys=");
+            uart_puthex64(page);
+            uart_puts("\n");
+            return;
+        }
+    }
     pmm_clear_bit(idx);
     /* Allow pmm_alloc to reuse this page; otherwise the bump cursor only
      * advances and private-AS execve exhausts the pool after ~dozens of loads. */
@@ -877,21 +915,51 @@ void pmm_free(void* addr) {
 void pmm_init_reservations(void) {
     uint64_t reserved_end = KERNEL_RESERVED_LEN;
     uint64_t bitmap_end = (uint64_t)(uintptr_t)_pmm_bitmap_end;
+    uint64_t bss_end = (uint64_t)(uintptr_t)_bss_end;
+    uint64_t stack_end = (uint64_t)(uintptr_t)_stack_end;
+    extern uint8_t _bfree_khi_start[];
+    extern uint8_t _bfree_khi_end[];
+    uint64_t khi_start = (uint64_t)(uintptr_t)_bfree_khi_start;
+    uint64_t khi_end = (uint64_t)(uintptr_t)_bfree_khi_end;
 
     if (bitmap_end > reserved_end) {
         reserved_end = bitmap_end;
     }
+    if (bss_end > reserved_end) {
+        reserved_end = bss_end;
+    }
+    if (stack_end > reserved_end) {
+        reserved_end = stack_end;
+    }
+    if (khi_end > reserved_end) {
+        reserved_end = khi_end;
+    }
     g_pmm_alloc_start_page = (reserved_end + PAGE_SIZE - 1) / PAGE_SIZE;
 
     pmm_reserve_range(KERNEL_RESERVED_BASE, KERNEL_RESERVED_LEN, "KERNEL-LOW");
+    /* Catch BSS that overflows the legacy 4MiB floor. */
+    if (bss_end > KERNEL_RESERVED_LEN) {
+        pmm_reserve_range(KERNEL_RESERVED_LEN, bss_end - KERNEL_RESERVED_LEN, "KERNEL-BSS");
+    }
+    if (khi_end > khi_start) {
+        pmm_reserve_range(khi_start, khi_end - khi_start, "KERNEL-HI");
+    }
     pmm_reserve_range((uint64_t)(uintptr_t)_pmm_bitmap_start,
         (uint64_t)(uintptr_t)(_pmm_bitmap_end - _pmm_bitmap_start),
         "PMM-BITMAP");
+    if (stack_end > (uint64_t)(uintptr_t)_stack_start) {
+        pmm_reserve_range((uint64_t)(uintptr_t)_stack_start,
+            stack_end - (uint64_t)(uintptr_t)_stack_start, "KSTACK-LNK");
+    }
     pmm_reserve_range(APIC_BASE, APIC_LEN, "APIC");
     pmm_reserve_range(IOAPIC_BASE, 0x1000, "IOAPIC");
     pmm_reserve_range(KERNEL_STACK_BASE, KERNEL_STACK_LEN, "KSTACK");
     uart_puts("[PMM] Alloc start=");
     uart_puthex64(g_pmm_alloc_start_page * PAGE_SIZE);
+    uart_puts(" bss_end=");
+    uart_puthex64(bss_end);
+    uart_puts(" khi_end=");
+    uart_puthex64(khi_end);
     uart_puts("\n");
 }
 void knl_dispatch_main(void *regs) {

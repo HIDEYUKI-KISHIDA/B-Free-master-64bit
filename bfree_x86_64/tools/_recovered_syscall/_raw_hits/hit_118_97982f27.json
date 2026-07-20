@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 300,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 257,
+    "new_len": 243
+  },
+  "themes": [
+    "as_copy"
+  ],
+  "old_string": "static long bfree_guest_exit_from_fork(long status)\n{\n    int *cleartid;\n    size_t i;\n    /* Use enter-time AS-copy flag — NOT has_private_as (vfork+exec sets that). */\n    int as_copy = g_guest_fork_was_as_copy;\n\n    bfree_process_exit_child((int)status);",
+  "new_string": "static long bfree_guest_exit_from_fork(long status)\n{\n    int *cleartid;\n    /* Use enter-time AS-copy flag — NOT has_private_as (vfork+exec sets that). */\n    int as_copy = g_guest_fork_was_as_copy;\n\n    bfree_process_exit_child((int)status);"
+}

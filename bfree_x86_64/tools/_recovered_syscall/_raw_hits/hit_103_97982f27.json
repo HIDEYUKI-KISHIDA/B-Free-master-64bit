@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1623,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysdepend\\cpu\\x86_64\\syscall_entry.S",
+    "old_len": 352,
+    "new_len": 375
+  },
+  "themes": [
+    "exec_transfer",
+    "coop"
+  ],
+  "old_string": "\tmovq g_bfree_fork_parent_ret(%rip), %rax\n\n\t/* Optional AS switch (AS-copy fork parent must not resume on child CR3). */\n\tmovq g_bfree_sysret_exec_cr3(%rip), %r8\n\ttestq %r8, %r8\n\tjz .bfree_syscall_fork_parent_rsp\n\tmovq %r8, %cr3\n\tmovq $0, g_bfree_sysret_exec_cr3(%rip)\n.bfree_syscall_fork_parent_rsp:\n\n\tmovq g_bfree_fork_saved_rsp(%rip), %rsp\n\n\tsysretq",
+  "new_string": "\tmovq g_bfree_fork_parent_ret(%rip), %rax\n\n\t/* CR3 is switched in C (bfree_coop_as_switch_to / exit_restore).\n\t * Do NOT consume g_bfree_sysret_exec_cr3 here — that belongs to\n\t * EXEC_TRANSFER only; a leftover child_pt poisoned parent resume\n\t * (late-suite cat|grep RIP=0 / RSP=parent). */\n.bfree_syscall_fork_parent_rsp:\n\n\tmovq g_bfree_fork_saved_rsp(%rip), %rsp\n\n\tsysretq"
+}

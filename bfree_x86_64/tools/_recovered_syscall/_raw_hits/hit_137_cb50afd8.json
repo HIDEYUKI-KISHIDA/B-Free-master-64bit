@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\cb50afd8-b946-4a3f-b32e-11c7737bb9d9\\cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 2505,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 102,
+    "new_len": 144
+  },
+  "themes": [
+    "futex"
+  ],
+  "old_string": "    return 1;\n}\n\n// Linux 202: futex — single-threaded guest; never block, satisfy musl/Qt mutex init.",
+  "new_string": "    return 1;\n}\n\nstatic unsigned g_guest_futex_log_count;\n\n// Linux 202: futex — single-threaded guest; never block, satisfy musl/Qt mutex init."
+}

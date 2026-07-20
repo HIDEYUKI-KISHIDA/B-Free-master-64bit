@@ -289,6 +289,40 @@ void vmm_page_fault_handler(void* frame) {
             uart_puts("\n");
         }
 
+        /* FS_BASE / TLS: errno is typically *(FS:0)+0x34 for musl. */
+        {
+            uint32_t fs_lo = 0;
+            uint32_t fs_hi = 0;
+            uint64_t fsbase = 0;
+            __asm__ volatile("rdmsr" : "=a"(fs_lo), "=d"(fs_hi) : "c"(0xC0000100u));
+            fsbase = ((uint64_t)fs_hi << 32) | (uint64_t)fs_lo;
+            uart_puts("[EXCEPTION] FS_BASE=");
+            uart_puthex64(fsbase);
+            uart_puts("\n");
+        }
+
+        /* Decode-aid: bytes at faulting RIP (temporarily clear SMAP). */
+        {
+            uint64_t cr4v = 0;
+            __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4v));
+            if ((cs & 0x3U) == 0x3U && rip < 0x0000800000000000ULL) {
+                const volatile unsigned char *bp =
+                    (const volatile unsigned char *)(uintptr_t)rip;
+                unsigned bi;
+                if (cr4v & (1ULL << 21)) {
+                    __asm__ volatile("stac" ::: "memory", "cc");
+                }
+                uart_puts("[EXCEPTION] bytes@RIP=");
+                for (bi = 0; bi < 8u; ++bi) {
+                    uart_puthex64((uint64_t)bp[bi]);
+                    uart_puts(bi + 1u < 8u ? " " : "\n");
+                }
+                if (cr4v & (1ULL << 21)) {
+                    __asm__ volatile("clac" ::: "memory", "cc");
+                }
+            }
+        }
+
     }
 
 
@@ -355,10 +389,45 @@ void vmm_page_fault_handler(void* frame) {
                 }
 
                 uart_puts("[EXCEPTION] PTE=");
-
                 uart_puthex64(pte);
-
                 uart_puts("\n");
+
+                /* PTE covering faulting RIP — empty text pages decode as add (%rax). */
+                {
+                    uint64_t rip_va = save ? save[16] : 0;
+                    uint64_t rpd = (rip_va >> 21) & 0x1FFULL;
+                    uint64_t rpt = (rip_va >> 12) & 0x1FFULL;
+                    uint64_t rpde = pd[rpd];
+                    uint64_t rpte = 0;
+                    if ((rpde & 0x001ULL) != 0ULL) {
+                        uint64_t rpt_phys = rpde & ~0xFFFULL;
+                        if (vmm_pte_direct(rpt_phys)) {
+                            rpte = ((uint64_t *)(uintptr_t)rpt_phys)[rpt];
+                        } else {
+                            (void)bfree_kernel_peek_phys(rpt_phys + rpt * 8ULL, &rpte, 8ULL);
+                        }
+                    }
+                uart_puts("[EXCEPTION] RIP_PTE=");
+                uart_puthex64(rpte);
+                uart_puts("\n");
+                if ((rpte & 0x001ULL) != 0ULL) {
+                    uint64_t rphys = rpte & ~0xFFFULL;
+                    uint8_t rchk[4];
+                    if (bfree_kernel_peek_phys(rphys + (rip_va & 0xFFFULL), rchk, 4ULL) == 0) {
+                        uart_puts("[EXCEPTION] RIP_PHYS_bytes=");
+                        uart_puthex64((uint64_t)rchk[0]);
+                        uart_puts(" ");
+                        uart_puthex64((uint64_t)rchk[1]);
+                        uart_puts(" ");
+                        uart_puthex64((uint64_t)rchk[2]);
+                        uart_puts(" ");
+                        uart_puthex64((uint64_t)rchk[3]);
+                        uart_puts(" phys=");
+                        uart_puthex64(rphys);
+                        uart_puts("\n");
+                    }
+                }
+                }
 
             }
 
@@ -455,9 +524,10 @@ int vmm_map_page(page_table_t *pt, uint64_t vaddr, uint64_t paddr, uint64_t flag
 
         pt->pml4[0] |= 0x004ULL;
 
-        __asm__ volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
-
     }
+
+    /* Always shoot down this VA: supervisor remaps (loader staging) need it too. */
+    __asm__ volatile("invlpg (%0)" : : "r"(vaddr) : "memory");
 
 #if BFREE_BOOT_DEBUG
 
@@ -523,6 +593,47 @@ int vmm_unmap_page(page_table_t *pt, uint64_t vaddr) {
 
     return 0;
 
+}
+
+void vmm_drop_identity_alias(page_table_t *pt, uint64_t phys)
+{
+    uint64_t pd_index;
+    uint64_t pt_index;
+    uint64_t pte = 0;
+    pte_t *pt_slot;
+    uint64_t pt_phys;
+    int embedded;
+
+    if (!pt) {
+        return;
+    }
+    phys &= ~(PAGE_SIZE - 1ULL);
+    if (phys == 0ULL || phys >= VMM_USER_VA_BYTES) {
+        return;
+    }
+    if (vmm_get_indices(phys, &pd_index, &pt_index) != 0) {
+        return;
+    }
+    pt_slot = vmm_pt_slot_existing(pt, pd_index);
+    if (!pt_slot) {
+        return;
+    }
+    pt_phys = (uint64_t)(uintptr_t)pt_slot;
+    embedded = (pd_index < PT_EMBEDDED_COUNT) ? 1 : 0;
+    if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) != 0) {
+        return;
+    }
+    /* Only supervisor identity Present|RW, VA==PA (no User bit). */
+    if ((pte & 0x001ULL) == 0ULL) {
+        return;
+    }
+    if ((pte & 0x004ULL) != 0ULL) {
+        return;
+    }
+    if ((pte & ~(PAGE_SIZE - 1ULL)) != phys) {
+        return;
+    }
+    (void)vmm_unmap_page(pt, phys);
 }
 
 
@@ -639,11 +750,51 @@ int vmm_user_virt_to_phys(page_table_t *pt, uint64_t vaddr, uint64_t *paddr_out)
     return 0;
 }
 
+int vmm_user_maps_phys(page_table_t *pt, uint64_t paddr)
+{
+    uint64_t pd_index;
+    uint64_t pt_index;
+
+    if (!pt || paddr == 0) {
+        return 0;
+    }
+    paddr &= ~(PAGE_SIZE - 1ULL);
+    for (pd_index = 0; pd_index < (uint64_t)PT_LEVEL_MAX; ++pd_index) {
+        pte_t *pt_slot = vmm_pt_slot_existing(pt, pd_index);
+        uint64_t pt_phys;
+        int embedded;
+
+        if (!pt_slot) {
+            continue;
+        }
+        pt_phys = (uint64_t)(uintptr_t)pt_slot;
+        embedded = (pd_index < PT_EMBEDDED_COUNT) ? 1 : 0;
+        for (pt_index = 0; pt_index < PTE_COUNT; ++pt_index) {
+            uint64_t pte = 0;
+            uint64_t pp;
+
+            if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) != 0) {
+                continue;
+            }
+            if ((pte & 0x005ULL) != 0x005ULL && (pte & 0x007ULL) != 0x007ULL) {
+                continue;
+            }
+            pp = pte & ~(PAGE_SIZE - 1ULL);
+            if (pp == paddr) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 void vmm_destroy_user_mappings(page_table_t *pt)
 {
     uint64_t va;
     uint64_t pd_index;
     uint64_t pt_index;
+    extern uint64_t g_bfree_shell_text_phys;
+    extern int bfree_shell_page_pinned(uint64_t phys);
 
     if (!pt) {
         return;
@@ -667,19 +818,82 @@ void vmm_destroy_user_mappings(page_table_t *pt)
             if ((pte & 0x001ULL) == 0ULL) {
                 continue;
             }
-            /* Present|User with either RW (0x007) or RO (0x005); skip identity. */
+            /* Present|User with either RW (0x007) or RO (0x005); skip identity
+             * only when the mapping is supervisor (no User bit). */
             if ((pte & 0x004ULL) == 0ULL) {
                 continue;
             }
             paddr = pte & ~(PAGE_SIZE - 1ULL);
             va = (pd_index * 0x200000ULL) + (pt_index * PAGE_SIZE);
-            if (paddr == va) {
-                continue;
-            }
             {
                 uint64_t zero = 0;
 
                 (void)vmm_pte_store(pt_phys, pt_index, zero, embedded);
+            }
+            /* Identity-backed user pages were never pmm_alloc'd — do not free. */
+            if (paddr == va) {
+                continue;
+            }
+            /* Never free sticky / pinned shell image frames. */
+            if ((g_bfree_shell_text_phys != 0 && paddr == g_bfree_shell_text_phys) ||
+                bfree_shell_page_pinned(paddr)) {
+                continue;
+            }
+            pmm_free((void *)(uintptr_t)paddr);
+        }
+    }
+}
+
+void vmm_destroy_user_mappings_keep(page_table_t *pt, page_table_t *keep)
+{
+    uint64_t va;
+    uint64_t pd_index;
+    uint64_t pt_index;
+    extern uint64_t g_bfree_shell_text_phys;
+    extern int bfree_shell_page_pinned(uint64_t phys);
+
+    if (!pt) {
+        return;
+    }
+    if (!keep) {
+        vmm_destroy_user_mappings(pt);
+        return;
+    }
+    for (pd_index = 0; pd_index < (uint64_t)PT_LEVEL_MAX; ++pd_index) {
+        pte_t *pt_slot = vmm_pt_slot_existing(pt, pd_index);
+
+        if (!pt_slot) {
+            continue;
+        }
+        for (pt_index = 0; pt_index < PTE_COUNT; ++pt_index) {
+            uint64_t paddr = 0;
+            uint64_t pte = 0;
+            uint64_t pt_phys = (uint64_t)(uintptr_t)pt_slot;
+            int embedded = (pd_index < PT_EMBEDDED_COUNT) ? 1 : 0;
+
+            if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) != 0) {
+                continue;
+            }
+            if ((pte & 0x001ULL) == 0ULL) {
+                continue;
+            }
+            if ((pte & 0x004ULL) == 0ULL) {
+                continue;
+            }
+            paddr = pte & ~(PAGE_SIZE - 1ULL);
+            va = (pd_index * 0x200000ULL) + (pt_index * PAGE_SIZE);
+            {
+                uint64_t zero = 0;
+
+                (void)vmm_pte_store(pt_phys, pt_index, zero, embedded);
+            }
+            if (paddr == va) {
+                continue;
+            }
+            if ((g_bfree_shell_text_phys != 0 && paddr == g_bfree_shell_text_phys) ||
+                bfree_shell_page_pinned(paddr) ||
+                vmm_user_maps_phys(keep, paddr)) {
+                continue;
             }
             pmm_free((void *)(uintptr_t)paddr);
         }
@@ -696,7 +910,12 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
         return -1;
     }
 
-    bfree_kernel_phys_io_begin();
+    /*
+     * Source: staging peek of the PTE frame (what the ELF loader wrote).
+     * Dest: CR3-VA store under a temporary RW PTE (WP-safe). Staging destination
+     * pokes previously disagreed with later guest walks; source peeks of ELF
+     * frames have matched post-load verify.
+     */
     for (pd_index = 0; pd_index < (uint64_t)PT_LEVEL_MAX; ++pd_index) {
         pte_t *pt_slot = vmm_pt_slot_existing(src, pd_index);
         uint64_t pt_phys;
@@ -713,6 +932,11 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
             uint64_t va;
             uint64_t flags;
             void *newpage;
+            uint64_t saved_cr3 = 0;
+            uint64_t rflags = 0;
+            uint64_t cr4v = 0;
+            volatile uint8_t *vp;
+            uint64_t i;
 
             if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) != 0) {
                 continue;
@@ -723,34 +947,132 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
             if ((pte & 0x004ULL) == 0ULL) {
                 continue; /* supervisor identity / kernel */
             }
-            paddr = pte & ~(PAGE_SIZE - 1ULL);
+            paddr = pte & 0x000FFFFFFFFFF000ULL;
             va = (pd_index * 0x200000ULL) + (pt_index * PAGE_SIZE);
-            if (paddr == va) {
+            if (paddr == va && (pte & 0x004ULL) == 0ULL) {
                 continue;
             }
-            if (bfree_kernel_peek_phys(paddr, page_buf, PAGE_SIZE) != 0) {
-                bfree_kernel_phys_io_end();
-                return -1;
-            }
+
             newpage = pmm_alloc();
             if (!newpage) {
-                bfree_kernel_phys_io_end();
-                return -1;
-            }
-            if (bfree_kernel_poke_phys((uint64_t)(uintptr_t)newpage, page_buf, PAGE_SIZE) != 0) {
-                pmm_free(newpage);
-                bfree_kernel_phys_io_end();
                 return -1;
             }
             flags = (pte & 0x007ULL) | (pte & (1ULL << 63));
-            if (vmm_map_page(dst, va, (uint64_t)(uintptr_t)newpage, flags) != 0) {
+            /* Map RW while copying so ring0 can store into RO text pages. */
+            if (vmm_map_page(dst, va, (uint64_t)(uintptr_t)newpage, 0x007ULL) != 0) {
                 pmm_free(newpage);
-                bfree_kernel_phys_io_end();
                 return -1;
+            }
+            vmm_drop_identity_alias(dst, (uint64_t)(uintptr_t)newpage);
+            vmm_drop_identity_alias(&kernel_page_table,
+                                    (uint64_t)(uintptr_t)newpage);
+
+            /* Prefer source CR3-VA (what the guest executes). Staging peeks of
+             * the same phys have disagreed after shell init (setvbuf page). */
+            {
+                uint64_t saved_cr3_rd = 0;
+                uint64_t rflags_rd = 0;
+                uint64_t cr4_rd = 0;
+                volatile uint8_t *vp_rd;
+                uint64_t j;
+
+                __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags_rd) : : "memory");
+                __asm__ volatile("mov %%cr4, %0" : "=r"(cr4_rd));
+                __asm__ volatile("mov %%cr3, %0" : "=r"(saved_cr3_rd) : : "memory");
+                __asm__ volatile("mov %0, %%cr3" :: "r"(src) : "memory");
+                if (cr4_rd & (1ULL << 21)) {
+                    __asm__ volatile("stac" ::: "memory", "cc");
+                }
+                vp_rd = (volatile uint8_t *)(uintptr_t)va;
+                for (j = 0; j < PAGE_SIZE; ++j) {
+                    page_buf[j] = vp_rd[j];
+                }
+                if (cr4_rd & (1ULL << 21)) {
+                    __asm__ volatile("clac" ::: "memory", "cc");
+                }
+                __asm__ volatile("mov %0, %%cr3" :: "r"(saved_cr3_rd) : "memory");
+                if (rflags_rd & 0x200ULL) {
+                    __asm__ volatile("sti" ::: "memory");
+                }
+            }
+            if (va == 0x522000ULL) {
+                uint8_t stg[4];
+                bfree_kernel_phys_io_begin();
+                (void)bfree_kernel_peek_phys(paddr + 0xEA0ULL, stg, 4ULL);
+                bfree_kernel_phys_io_end();
+                uart_puts("[FORK] va_vs_stg 0x522ea0 va=");
+                uart_puthex64((uint64_t)page_buf[0xEA0]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)page_buf[0xEA1]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)page_buf[0xEA2]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)page_buf[0xEA3]);
+                uart_puts(" stg=");
+                uart_puthex64((uint64_t)stg[0]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)stg[1]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)stg[2]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)stg[3]);
+                uart_puts(" src_phys=");
+                uart_puthex64(paddr);
+                uart_puts("\n");
+            }
+
+            __asm__ volatile("pushfq; popq %0; cli" : "=r"(rflags) : : "memory");
+            __asm__ volatile("mov %%cr4, %0" : "=r"(cr4v));
+            __asm__ volatile("mov %%cr3, %0" : "=r"(saved_cr3) : : "memory");
+
+            /* Write into destination VA under dst CR3. */
+            __asm__ volatile("mov %0, %%cr3" :: "r"(dst) : "memory");
+            if (cr4v & (1ULL << 21)) {
+                __asm__ volatile("stac" ::: "memory", "cc");
+            }
+            vp = (volatile uint8_t *)(uintptr_t)va;
+            for (i = 0; i < PAGE_SIZE; ++i) {
+                vp[i] = page_buf[i];
+            }
+            if (cr4v & (1ULL << 21)) {
+                __asm__ volatile("clac" ::: "memory", "cc");
+            }
+
+            __asm__ volatile("mov %0, %%cr3" :: "r"(saved_cr3) : "memory");
+            if (rflags & 0x200ULL) {
+                __asm__ volatile("sti" ::: "memory");
+            }
+
+            /* Restore destination PTE flags (RO text must stay RO). */
+            if ((flags & 0x007ULL) != 0x007ULL) {
+                if (vmm_map_page(dst, va, (uint64_t)(uintptr_t)newpage, flags) != 0) {
+                    pmm_free(newpage);
+                    return -1;
+                }
+            }
+
+            if (va == 0x522000ULL) {
+                uart_puts("[FORK] clone 0x522ea0 bytes=");
+                uart_puthex64((uint64_t)page_buf[0xEA0]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)page_buf[0xEA1]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)page_buf[0xEA2]);
+                uart_puts(" ");
+                uart_puthex64((uint64_t)page_buf[0xEA3]);
+                uart_puts(" src_phys=");
+                uart_puthex64(paddr);
+                uart_puts(" dst_phys=");
+                uart_puthex64((uint64_t)(uintptr_t)newpage);
+                uart_puts("\n");
+                if (page_buf[0xEA0] != 0xf3u || page_buf[0xEA1] != 0x0fu ||
+                    page_buf[0xEA2] != 0x1eu || page_buf[0xEA3] != 0xfau) {
+                    uart_puts("[FORK] FATAL: source setvbuf page already bad\n");
+                    return -1;
+                }
             }
         }
     }
-    bfree_kernel_phys_io_end();
     return 0;
 }
 
@@ -758,7 +1080,7 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
 
 // カーネル用ページテーブルインスタンス
 
-page_table_t kernel_page_table __attribute__((aligned(4096), section(".bss.page_table")));
+page_table_t kernel_page_table __attribute__((aligned(4096), section(".bfree_page_table")));
 
 
 

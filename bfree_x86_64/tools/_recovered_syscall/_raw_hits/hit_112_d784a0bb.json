@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\d784a0bb-48dd-4106-8f28-7cf562b4af2c\\d784a0bb-48dd-4106-8f28-7cf562b4af2c.jsonl",
+    "line": 1152,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 408,
+    "new_len": 331
+  },
+  "themes": [
+    "futex"
+  ],
+  "old_string": "    switch (cmd) {\n    case 0: /* FUTEX_WAIT */\n        if (uaddr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uaddr)) {\n            int *word = (int *)(uintptr_t)uaddr;\n            if (*word != (int)val) {\n                return -11; /* EAGAIN */\n            }\n            /* Single-threaded guest: musl __wait spins if lock stays 1 after EINTR. */\n            *word = 0;\n        }\n        return 0;",
+  "new_string": "    switch (cmd) {\n    case 0: /* FUTEX_WAIT */\n        /*\n         * Single-threaded guest: EAGAIN makes Qt QBasicMutex / musl spin at 100% CPU\n         * (futex_wait → EAGAIN → retry with no other thread ever changing *uaddr).\n         * Always succeed immediately; no blocking, no EAGAIN busy-loop.\n         */\n        return 0;"
+}

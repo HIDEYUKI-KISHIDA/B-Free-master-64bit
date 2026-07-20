@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1331,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 558,
+    "new_len": 183
+  },
+  "themes": [
+    "inet",
+    "unix",
+    "coop"
+  ],
+  "old_string": "static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];\nstatic bfree_inet_sock_t g_inet_socks[BFREE_INET_SLOTS];\nstatic int g_fd_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];\nstatic int g_fd_snap_child[BFREE_GUEST_FD_TABLE_SIZE];\nstatic uint8_t g_fd_cloexec_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];\nstatic uint8_t g_fd_cloexec_snap_child[BFREE_GUEST_FD_TABLE_SIZE];\nstatic int g_fd_dup_save_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];\nstatic int g_fd_dup_save_snap_child[BFREE_GUEST_FD_TABLE_SIZE];\nstatic uint64_t g_coop_child_rcx, g_coop_child_r11, g_coop_child_rsp;",
+  "new_string": "static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];\nstatic bfree_inet_sock_t g_inet_socks[BFREE_INET_SLOTS];\nstatic uint64_t g_coop_child_rcx, g_coop_child_r11, g_coop_child_rsp;"
+}

@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\2a630b0a-aa9d-40d2-9d10-839aec4ecb20\\2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 1502,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 259,
+    "new_len": 202
+  },
+  "themes": [
+    "unix",
+    "coop"
+  ],
+  "old_string": "static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];\nstatic int g_coop_side;\nstatic int g_coop_child_blocked;\nstatic int g_coop_parent_started;\nstatic int g_fd_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];\nstatic int g_fd_snap_child[BFREE_GUEST_FD_TABLE_SIZE];\n",
+  "new_string": "static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];\nstatic int g_coop_parent_started;\nstatic int g_fd_snap_parent[BFREE_GUEST_FD_TABLE_SIZE];\nstatic int g_fd_snap_child[BFREE_GUEST_FD_TABLE_SIZE];\n"
+}

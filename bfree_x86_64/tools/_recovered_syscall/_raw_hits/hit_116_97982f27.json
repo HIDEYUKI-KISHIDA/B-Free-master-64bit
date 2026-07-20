@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1573,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysdepend\\cpu\\x86_64\\syscall_entry.S",
+    "old_len": 127,
+    "new_len": 267
+  },
+  "themes": [
+    "exec_transfer"
+  ],
+  "old_string": "\tmovq g_bfree_sysret_exec_rsp(%rip), %rsp\n\n\tmovq g_bfree_sysret_exec_rcx(%rip), %rcx\n\n\tmovq g_bfree_sysret_exec_r11(%rip), %r11",
+  "new_string": "\tmovq g_bfree_sysret_exec_rsp(%rip), %rsp\n\n\tmovq g_bfree_exec_transfer_rip(%rip), %rcx\n\ttestq %rcx, %rcx\n\tjnz .bfree_syscall_exec_transfer_rip_ok\n\tmovq g_bfree_sysret_exec_rcx(%rip), %rcx\n.bfree_syscall_exec_transfer_rip_ok:\n\n\tmovq g_bfree_sysret_exec_r11(%rip), %r11"
+}

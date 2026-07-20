@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\fa9a295b-4c10-43b0-a5c0-745ba02c9972\\fa9a295b-4c10-43b0-a5c0-745ba02c9972.jsonl",
+    "line": 27,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 980,
+    "new_len": 1033
+  },
+  "themes": [
+    "inet"
+  ],
+  "old_string": "    sockfd = bfree_guest_fd_resolve((int)sockfd);\n    idx = bfree_inet_from_fd((int)sockfd);\n    if (idx < 0 || (!g_inet_socks[idx].bound && !g_inet_socks[idx].connected)) {\n        return -88; /* ENOTSOCK / not bound */\n    }\n    if (want < 8 || !bfree_user_ptr_mapped(addr)) {\n        return -14;\n    }\n    a = g_inet_socks[idx].addr;\n    if (a == BFREE_INADDR_ANY) {\n        a = BFREE_INADDR_LOOPBACK;\n    }\n    port_be = bfree_inet_ntohs(g_inet_socks[idx].port); /* host→be via same swap */\n    addr_be = bfree_inet_ntohl(a);\n    raw = (uint8_t *)(uintptr_t)addr;\n    raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);\n    raw[1] = (uint8_t)((BFREE_LINUX_AF_INET >> 8) & 0xff);\n    raw[2] = (uint8_t)(port_be & 0xff);\n    raw[3] = (uint8_t)((port_be >> 8) & 0xff);\n    raw[4] = (uint8_t)(addr_be & 0xff);\n    raw[5] = (uint8_t)((addr_be >> 8) & 0xff);\n    raw[6] = (uint8_t)((addr_be >> 16) & 0xff);\n    raw[7] = (uint8_t)((addr_be >> 24) & 0xff);\n    *alen = 16;\n    return 0;\n}",
+  "new_string": "    sockfd = bfree_guest_fd_resolve((int)sockfd);\n    idx = bfree_inet_from_fd((int)sockfd);\n    if (idx < 0) {\n        return -88; /* ENOTSOCK */\n    }\n    if (want < 8 || !bfree_user_ptr_mapped(addr)) {\n        return -14;\n    }\n    a = g_inet_socks[idx].addr;\n    if (!g_inet_socks[idx].bound && !g_inet_socks[idx].connected) {\n        a = BFREE_INADDR_ANY;\n    } else if (a == BFREE_INADDR_ANY && g_inet_socks[idx].connected) {\n        a = BFREE_INADDR_LOOPBACK;\n    }\n    port_be = bfree_inet_ntohs(g_inet_socks[idx].port); /* host↔be swap */\n    addr_be = bfree_inet_ntohl(a);\n    raw = (uint8_t *)(uintptr_t)addr;\n    raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);\n    raw[1] = (uint8_t)((BFREE_LINUX_AF_INET >> 8) & 0xff);\n    raw[2] = (uint8_t)(port_be & 0xff);\n    raw[3] = (uint8_t)((port_be >> 8) & 0xff);\n    raw[4] = (uint8_t)(addr_be & 0xff);\n    raw[5] = (uint8_t)((addr_be >> 8) & 0xff);\n    raw[6] = (uint8_t)((addr_be >> 16) & 0xff);\n    raw[7] = (uint8_t)((addr_be >> 24) & 0xff);\n    *alen = 16;\n    return 0;\n}"
+}

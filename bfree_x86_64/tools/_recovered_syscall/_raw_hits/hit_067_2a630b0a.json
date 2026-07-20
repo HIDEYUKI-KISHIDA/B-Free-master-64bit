@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\2a630b0a-aa9d-40d2-9d10-839aec4ecb20\\2a630b0a-aa9d-40d2-9d10-839aec4ecb20.jsonl",
+    "line": 782,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\docs\\POSIX_FULL_COMPAT_ROADMAP.ja.md",
+    "old_len": 1016,
+    "new_len": 975
+  },
+  "themes": [
+    "futex"
+  ],
+  "old_string": "### M1 — ファイルシステム（Phase 4A–D）\n\n- [x] 独立 OFD（別 `open` = 別オフセット、`dup` = 共有）\n- [x] `/tmp` 実ディレクトリ（mkdir/rmdir/ネスト/chdir）\n- [ ] dirent カーソルをすべて OFD へ\n- [ ] unlink-while-open / vnode 寿命\n- [ ] `openat`/`*at` の dirfd 相対解決\n- [ ] 永続ブロック FS（後段）\n\n### M2 — プロセス（最小の正直なモデル）\n\n- [x] 1 子・child-first `vfork`\n- [x] 子専用ページテーブルへの `execve`（失敗時フォールバックあり）\n- [x] `fork` = `ENOSYS`（コピー無しを偽らない）\n- [ ] BusyBox NOFORK-all 緩和 → 本物の applet reexec 回帰\n- [ ] 複数 zombie / 正しい `waitid`\n- [ ] eager-copy または COW の `fork`\n- [ ] プリエンプティブな複数 runnable + パイプ両端同時実行\n- [ ] シグナル配送（SIGCHLD / SIGINT / SIGPIPE / ジョブ制御）\n\n### M3 — 通常 CLI（BusyBox パッチ巻き戻し）\n\n- [ ] inproc pipe / bg-inline の撤去（M2 の複数子が前提）\n- [ ] NOFORK-all 撤去、upstream NOFORK のみ\n- [ ] 外部コマンド・コマンド置換・サブシェルの回帰\n\n### M4 — musl / 一般静的バイナリ\n\n- [ ] 主要 syscall の意味論を stub → 実実装へ\n- [ ] スレッド（`clone` スレッドフラグ）、robust futex\n- [ ] tty ジョブ制御、セッション / プロセスグループ\n\n### M5 — POSIX / Linux 完全互換（最終 PR 群）\n\n- [ ] ネット・IPC・権限・マウント・デバイスノード\n- [ ] 未実装 syscall の `ENOSYS` を意図的 residual 以外ゼロへ\n- [ ] POSIX テストスイート / LTP のゲート（範囲は別途定義）",
+  "new_string": "### Phase 4 / M1+M2 — FS + プロセス土台\n\n- [x] 独立 OFD（別 `open` = 別オフセット、`dup` = 共有）\n- [x] `/tmp` 実ディレクトリ（mkdir/rmdir/ネスト/chdir）\n- [x] dirent カーソルを OFD へ（ディレクトリ open は OFD 必須）\n- [x] 1 子・child-first `vfork` + 子 AS `execve` + `wait4`\n- [x] `fork` = `ENOSYS`（コピー無しを偽らない）\n- [x] BusyBox NOFORK-all 既定オフ（NOEXEC が vfork+execve）\n- [ ] unlink-while-open / vnode 寿命\n- [ ] `openat`/`*at` の dirfd 相対解決\n- [ ] 複数 zombie / 正しい `waitid`\n- [ ] eager-copy または COW の `fork`\n- [ ] プリエンプティブな複数 runnable + パイプ両端同時実行\n- [ ] シグナル配送（SIGCHLD / SIGINT / SIGPIPE / ジョブ制御）\n\n### Phase 5 / M3 — 通常 CLI（BusyBox パッチ巻き戻し）\n\n- [ ] inproc pipe / bg-inline の撤去（複数子が前提）\n- [ ] 外部コマンド・コマンド置換・サブシェルの回帰\n\n### Phase 6 / M4 — musl / 一般静的バイナリ\n\n- [ ] 主要 syscall の意味論を stub → 実実装へ\n- [ ] スレッド（`clone` スレッドフラグ）、robust futex\n- [ ] tty ジョブ制御、セッション / プロセスグループ\n\n### Phase 7 / M5 — POSIX / Linux 完全互換（最終 PR 群）\n\n- [ ] 永続ブロック FS・ネット・IPC・権限・マウント・デバイスノード\n- [ ] 未実装 syscall の `ENOSYS` を意図的 residual 以外ゼロへ\n- [ ] POSIX テストスイート / LTP のゲート（範囲は別途定義）"
+}

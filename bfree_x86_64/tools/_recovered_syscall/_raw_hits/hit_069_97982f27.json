@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 334,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 1100,
+    "new_len": 932
+  },
+  "themes": [
+    "as_copy",
+    "coop"
+  ],
+  "old_string": "static long bfree_coop_yield_to_parent(void)\n{\n    bfree_coop_save_child_user();\n    if (g_coop_child_rcx >= 2) {\n        g_coop_child_rcx -= 2;\n    }\n    /* Park child for re-exec of the in-flight Linux NR (write=1, wait=61, …). */\n    g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;\n    g_coop_child_resume_mode = 1;\n    g_coop_child_blocked = 1;\n    if (g_guest_fork_was_as_copy) {\n        bfree_guest_as_copy_switch_heap_to_parent();\n    }\n    bfree_coop_fd_switch_to(0);\n    bfree_coop_as_switch_to(0);\n    /* Parent TLS — child execve may have cleared FS_BASE. */\n    if (g_guest_fork_saved_fsbase != 0) {\n        if (knl_current_task != 0) {\n            knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;\n        }\n        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);\n    }\n    bfree_coop_publish_parent_callee_saved();\n    g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;\n    g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;\n    g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;\n    bfree_coop_arm_parent_resume();\n    return BFREE_SYSRET_COOP_SWITCH;\n}",
+  "new_string": "static long bfree_coop_yield_to_parent(void)\n{\n    bfree_coop_save_child_user();\n    if (g_coop_child_rcx >= 2) {\n        g_coop_child_rcx -= 2;\n    }\n    /* Park child for re-exec of the in-flight Linux NR (write=1, wait=61, …). */\n    g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;\n    g_coop_child_resume_mode = 1;\n    g_coop_child_blocked = 1;\n    if (g_guest_fork_was_as_copy) {\n        bfree_guest_as_copy_switch_heap_to_parent();\n    }\n    bfree_coop_fd_switch_to(0);\n    bfree_coop_as_switch_to(0);\n    /* Parent TLS — child execve may have cleared FS_BASE. */\n    if (g_guest_fork_saved_fsbase != 0) {\n        if (knl_current_task != 0) {\n            knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;\n        }\n        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);\n    }\n    bfree_coop_publish_parent_resume();\n    bfree_coop_arm_parent_resume();\n    return BFREE_SYSRET_COOP_SWITCH;\n}"
+}

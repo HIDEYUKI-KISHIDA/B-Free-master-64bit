@@ -1,0 +1,495 @@
+make: Entering directory '/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/kernel'
+/home/h_kis/x86_64-elf-toolchain/bin/x86_64-elf-gcc -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-pic -ffreestanding -nostdlib -Wall -Wextra -Werror=implicit-function-declaration -mno-sse -mno-mmx -mno-3dnow -I../include -Iinclude -Isysmain -Isysdepend -I../../../kernel -DENABLE_RUNTIME_NET=0 -DBFREE_STRICT_BOOT_VERIFY=0 -DBFREE_ENFORCE_WX=0 -DBFREE_ENABLE_ASLR=0 -DBFREE_BOOT_GUI_FIRST=0 -DBFREE_WAYLAND_INPUT_STRICT=0 -DDEBUG=1 -DRELEASE=0 -c sysmain/syscall.c -o sysmain/syscall.o
+sysmain/syscall.c: In function 'bfree_guest_load_heap_cwd':
+sysmain/syscall.c:212:26: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+  212 |     bfree_guest_cwd_copy(g_guest_cwd, sizeof(g_guest_cwd), cwd_src);
+      |                          ^~~~~~~~~~~
+      |                          g_guest_gid
+sysmain/syscall.c:212:26: note: each undeclared identifier is reported only once for each function it appears in
+sysmain/syscall.c: In function 'bfree_guest_park_heap_side':
+sysmain/syscall.c:220:9: error: 'g_guest_child_parked_heap_next' undeclared (first use in this function)
+  220 |         g_guest_child_parked_heap_next = g_guest_heap_next;
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:221:9: error: 'g_guest_child_parked_brk' undeclared (first use in this function)
+  221 |         g_guest_child_parked_brk = g_guest_brk;
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:222:30: error: 'g_guest_child_parked_cwd' undeclared (first use in this function)
+  222 |         bfree_guest_cwd_copy(g_guest_child_parked_cwd, sizeof(g_guest_child_parked_cwd),
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:223:30: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+  223 |                              g_guest_cwd);
+      |                              ^~~~~~~~~~~
+      |                              g_guest_gid
+sysmain/syscall.c:224:9: error: 'g_guest_child_parked_heap_valid' undeclared (first use in this function)
+  224 |         g_guest_child_parked_heap_valid = 1;
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:226:9: error: 'g_guest_parent_parked_heap_next' undeclared (first use in this function)
+  226 |         g_guest_parent_parked_heap_next = g_guest_heap_next;
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:227:9: error: 'g_guest_parent_parked_brk' undeclared (first use in this function)
+  227 |         g_guest_parent_parked_brk = g_guest_brk;
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:228:30: error: 'g_guest_parent_parked_cwd' undeclared (first use in this function)
+  228 |         bfree_guest_cwd_copy(g_guest_parent_parked_cwd, sizeof(g_guest_parent_parked_cwd),
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:230:9: error: 'g_guest_parent_parked_heap_valid' undeclared (first use in this function)
+  230 |         g_guest_parent_parked_heap_valid = 1;
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_as_copy_switch_heap_to_child':
+sysmain/syscall.c:237:9: error: 'g_guest_child_parked_heap_valid' undeclared (first use in this function)
+  237 |     if (g_guest_child_parked_heap_valid) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:238:35: error: 'g_guest_child_parked_cwd' undeclared (first use in this function)
+  238 |         bfree_guest_load_heap_cwd(g_guest_child_parked_cwd,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:239:35: error: 'g_guest_child_parked_heap_next' undeclared (first use in this function)
+  239 |                                   g_guest_child_parked_heap_next,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:240:35: error: 'g_guest_child_parked_brk' undeclared (first use in this function)
+  240 |                                   g_guest_child_parked_brk);
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:242:35: error: 'g_guest_fork_saved_cwd' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  242 |         bfree_guest_load_heap_cwd(g_guest_fork_saved_cwd,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c:243:35: error: 'g_guest_fork_saved_heap_next' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  243 |                                   g_guest_fork_saved_heap_next,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c:244:35: error: 'g_guest_fork_saved_brk' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  244 |                                   g_guest_fork_saved_brk);
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c: In function 'bfree_guest_as_copy_switch_heap_to_parent':
+sysmain/syscall.c:251:9: error: 'g_guest_parent_parked_heap_valid' undeclared (first use in this function)
+  251 |     if (g_guest_parent_parked_heap_valid) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:252:35: error: 'g_guest_parent_parked_cwd' undeclared (first use in this function)
+  252 |         bfree_guest_load_heap_cwd(g_guest_parent_parked_cwd,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:253:35: error: 'g_guest_parent_parked_heap_next' undeclared (first use in this function)
+  253 |                                   g_guest_parent_parked_heap_next,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:254:35: error: 'g_guest_parent_parked_brk' undeclared (first use in this function)
+  254 |                                   g_guest_parent_parked_brk);
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_restore_parent_isol':
+sysmain/syscall.c:260:20: error: 'g_guest_parent_parked_heap_valid' undeclared (first use in this function)
+  260 |     if (as_copy && g_guest_parent_parked_heap_valid) {
+      |                    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:261:35: error: 'g_guest_parent_parked_cwd' undeclared (first use in this function)
+  261 |         bfree_guest_load_heap_cwd(g_guest_parent_parked_cwd,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:262:35: error: 'g_guest_parent_parked_heap_next' undeclared (first use in this function)
+  262 |                                   g_guest_parent_parked_heap_next,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:263:35: error: 'g_guest_parent_parked_brk' undeclared (first use in this function)
+  263 |                                   g_guest_parent_parked_brk);
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:265:35: error: 'g_guest_fork_saved_cwd' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  265 |         bfree_guest_load_heap_cwd(g_guest_fork_saved_cwd,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c:266:35: error: 'g_guest_fork_saved_heap_next' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  266 |                                   g_guest_fork_saved_heap_next,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c:267:35: error: 'g_guest_fork_saved_brk' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  267 |                                   g_guest_fork_saved_brk);
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c:270:5: error: 'g_guest_child_parked_heap_valid' undeclared (first use in this function)
+  270 |     g_guest_child_parked_heap_valid = 0;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_syscall_dispatch_exit_reenter':
+sysmain/syscall.c:289:12: error: implicit declaration of function 'bfree_guest_exit_from_fork'; did you mean 'bfree_guest_exit_from_fork_signal'? [-Werror=implicit-function-declaration]
+  289 |     return bfree_guest_exit_from_fork(0);
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+      |            bfree_guest_exit_from_fork_signal
+sysmain/syscall.c: In function 'bfree_guest_fork_enter':
+sysmain/syscall.c:543:28: error: 'g_guest_fork_saved_cwd' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  543 |     for (i = 0; i < sizeof(g_guest_fork_saved_cwd); ++i) {
+      |                            ^~~~~~~~~~~~~~~~~~~~~~
+      |                            g_guest_fork_saved_fsbase
+sysmain/syscall.c:544:37: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+  544 |         g_guest_fork_saved_cwd[i] = g_guest_cwd[i];
+      |                                     ^~~~~~~~~~~
+      |                                     g_guest_gid
+sysmain/syscall.c:550:5: error: 'g_guest_fork_saved_heap_next' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  550 |     g_guest_fork_saved_heap_next = g_guest_heap_next;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |     g_guest_fork_saved_fsbase
+sysmain/syscall.c:551:5: error: 'g_guest_fork_saved_brk' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  551 |     g_guest_fork_saved_brk = g_guest_brk;
+      |     ^~~~~~~~~~~~~~~~~~~~~~
+      |     g_guest_fork_saved_fsbase
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:565:13: error: conflicting types for 'bfree_guest_exit_from_fork'; have 'long int(long int)'
+  565 | static long bfree_guest_exit_from_fork(long status)
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:289:12: note: previous implicit declaration of 'bfree_guest_exit_from_fork' with type 'int()'
+  289 |     return bfree_guest_exit_from_fork(0);
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_exit_from_fork':
+sysmain/syscall.c:590:32: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+  590 |         for (i = 0; i < sizeof(g_guest_cwd); ++i) {
+      |                                ^~~~~~~~~~~
+      |                                g_guest_gid
+sysmain/syscall.c:591:30: error: 'g_guest_fork_saved_cwd' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  591 |             g_guest_cwd[i] = g_guest_fork_saved_cwd[i];
+      |                              ^~~~~~~~~~~~~~~~~~~~~~
+      |                              g_guest_fork_saved_fsbase
+sysmain/syscall.c:597:29: error: 'g_guest_fork_saved_heap_next' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  597 |         g_guest_heap_next = g_guest_fork_saved_heap_next;
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                             g_guest_fork_saved_fsbase
+sysmain/syscall.c:598:23: error: 'g_guest_fork_saved_brk' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  598 |         g_guest_brk = g_guest_fork_saved_brk;
+      |                       ^~~~~~~~~~~~~~~~~~~~~~
+      |                       g_guest_fork_saved_fsbase
+sysmain/syscall.c: In function 'bfree_guest_stop_from_fork':
+sysmain/syscall.c:662:13: error: 'g_guest_parent_parked_heap_valid' undeclared (first use in this function)
+  662 |         if (g_guest_parent_parked_heap_valid) {
+      |             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:663:39: error: 'g_guest_parent_parked_cwd' undeclared (first use in this function)
+  663 |             bfree_guest_load_heap_cwd(g_guest_parent_parked_cwd,
+      |                                       ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:664:39: error: 'g_guest_parent_parked_heap_next' undeclared (first use in this function)
+  664 |                                       g_guest_parent_parked_heap_next,
+      |                                       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:665:39: error: 'g_guest_parent_parked_brk' undeclared (first use in this function)
+  665 |                                       g_guest_parent_parked_brk);
+      |                                       ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:670:35: error: 'g_guest_fork_saved_cwd' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  670 |         bfree_guest_load_heap_cwd(g_guest_fork_saved_cwd,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c:671:35: error: 'g_guest_fork_saved_heap_next' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  671 |                                   g_guest_fork_saved_heap_next,
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c:672:35: error: 'g_guest_fork_saved_brk' undeclared (first use in this function); did you mean 'g_guest_fork_saved_fsbase'?
+  672 |                                   g_guest_fork_saved_brk);
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_guest_fork_saved_fsbase
+sysmain/syscall.c: In function 'bfree_copy_user_cstr':
+sysmain/syscall.c:1052:13: warning: assignment to 'uintptr_t' {aka 'long unsigned int'} from 'void *' makes integer from pointer without a cast [-Wint-conversion]
+ 1052 |         kva = bfree_linux_user_kva(pt, uva);
+      |             ^
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:2011: warning: "BFREE_GUEST_VFILE_SLOTS" redefined
+ 2011 | #define BFREE_GUEST_VFILE_SLOTS     16
+      | 
+sysmain/syscall.c:1890: note: this is the location of the previous definition
+ 1890 | #define BFREE_GUEST_VFILE_SLOTS     8
+      | 
+sysmain/syscall.c:2012: warning: "BFREE_GUEST_VFILE_SIZE" redefined
+ 2012 | #define BFREE_GUEST_VFILE_SIZE      16384
+      | 
+sysmain/syscall.c:1891: note: this is the location of the previous definition
+ 1891 | #define BFREE_GUEST_VFILE_SIZE      4096
+      | 
+sysmain/syscall.c:2220:29: error: redefinition of 'bfree_guest_vfile_from_fd'
+ 2220 | static bfree_guest_vfile_t *bfree_guest_vfile_from_fd(int fd)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1936:29: note: previous definition of 'bfree_guest_vfile_from_fd' with type 'bfree_guest_vfile_t *(int)'
+ 1936 | static bfree_guest_vfile_t *bfree_guest_vfile_from_fd(int fd)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:2349:29: error: redefinition of 'bfree_guest_vfile_find_by_name'
+ 2349 | static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:1950:29: note: previous definition of 'bfree_guest_vfile_find_by_name' with type 'bfree_guest_vfile_t *(const char *)'
+ 1950 | static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_guest_path_absolutize':
+sysmain/syscall.c:2631:17: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+ 2631 |     for (i = 0; g_guest_cwd[i] != '\0' && n + 1U < sizeof(out); ++i) {
+      |                 ^~~~~~~~~~~
+      |                 g_guest_gid
+sysmain/syscall.c: In function 'bfree_guest_path_at':
+sysmain/syscall.c:2678:21: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+ 2678 |         for (i = 0; g_guest_cwd[i] != '\0' && i + 1U < sizeof(base); ++i) {
+      |                     ^~~~~~~~~~~
+      |                     g_guest_gid
+sysmain/syscall.c: In function 'bfree_guest_exec_reset_subsystems':
+sysmain/syscall.c:2989:5: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+ 2989 |     g_guest_cwd[0] = '/';
+      |     ^~~~~~~~~~~
+      |     g_guest_gid
+sysmain/syscall.c: In function 'sys_linux_chdir':
+sysmain/syscall.c:4134:9: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+ 4134 |         g_guest_cwd[0] = '/';
+      |         ^~~~~~~~~~~
+      |         g_guest_gid
+sysmain/syscall.c: In function 'sys_linux_getcwd':
+sysmain/syscall.c:5590:12: error: 'g_guest_cwd' undeclared (first use in this function); did you mean 'g_guest_gid'?
+ 5590 |     while (g_guest_cwd[n] != '\0') {
+      |            ^~~~~~~~~~~
+      |            g_guest_gid
+sysmain/syscall.c: In function 'sys_linux_link':
+sysmain/syscall.c:6412:32: warning: passing argument 1 of 'bfree_guest_alias_add' makes integer from pointer without a cast [-Wint-conversion]
+ 6412 |     rc = bfree_guest_alias_add(nname, vidx);
+      |                                ^~~~~
+      |                                |
+      |                                char *
+sysmain/syscall.c:205:38: note: expected 'int' but argument is of type 'char *'
+  205 | static int bfree_guest_alias_add(int vnode, const char *name);
+      |                                  ~~~~^~~~~
+sysmain/syscall.c:6412:39: warning: passing argument 2 of 'bfree_guest_alias_add' makes pointer from integer without a cast [-Wint-conversion]
+ 6412 |     rc = bfree_guest_alias_add(nname, vidx);
+      |                                       ^~~~
+      |                                       |
+      |                                       int
+sysmain/syscall.c:205:57: note: expected 'const char *' but argument is of type 'int'
+  205 | static int bfree_guest_alias_add(int vnode, const char *name);
+      |                                             ~~~~~~~~~~~~^~~~
+sysmain/syscall.c: In function 'sys_isatty':
+sysmain/syscall.c:6622:9: error: implicit declaration of function 'bfree_pty_slot_from_fd' [-Werror=implicit-function-declaration]
+ 6622 |     if (bfree_pty_slot_from_fd(resolved) >= 0) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_get_tk2_snapshot':
+sysmain/syscall.c:7228:18: error: implicit declaration of function 'initrd_presence_mask' [-Werror=implicit-function-declaration]
+ 7228 |     out->flags = initrd_presence_mask();
+      |                  ^~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: At top level:
+sysmain/syscall.c:7302: warning: "BFREE_USER_STACK_PAGES_BUSYBOX" redefined
+ 7302 | #define BFREE_USER_STACK_PAGES_BUSYBOX 512
+      | 
+sysmain/syscall.c:7301: note: this is the location of the previous definition
+ 7301 | #define BFREE_USER_STACK_PAGES_BUSYBOX 128
+      | 
+sysmain/syscall.c:7308: warning: "BFREE_USER_STACK_MIN_VADDR" redefined
+ 7308 | #define BFREE_USER_STACK_MIN_VADDR   0x00C00000ULL
+      | 
+sysmain/syscall.c:7297: note: this is the location of the previous definition
+ 7297 | #define BFREE_USER_STACK_MIN_VADDR   0x00200000ULL
+      | 
+sysmain/syscall.c:7312: warning: "BFREE_USER_STACK_PAGES_EXEC" redefined
+ 7312 | #define BFREE_USER_STACK_PAGES_EXEC 2048
+      | 
+sysmain/syscall.c:7300: note: this is the location of the previous definition
+ 7300 | #define BFREE_USER_STACK_PAGES_EXEC 4608
+      | 
+sysmain/syscall.c: In function 'sys_linux_clone':
+sysmain/syscall.c:8129:16: error: too many arguments to function 'bfree_guest_fork_enter'
+ 8129 |         return bfree_guest_fork_enter(0);
+      |                ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:522:13: note: declared here
+  522 | static long bfree_guest_fork_enter(void)
+      |             ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8134:12: error: too many arguments to function 'bfree_guest_fork_enter'
+ 8134 |     return bfree_guest_fork_enter(1);
+      |            ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:522:13: note: declared here
+  522 | static long bfree_guest_fork_enter(void)
+      |             ^~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_arm_parent_resume':
+sysmain/syscall.c:8577:9: error: 'g_coop_parent_resume_mode' undeclared (first use in this function); did you mean 'g_coop_parent_started'?
+ 8577 |     if (g_coop_parent_resume_mode == 2) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |         g_coop_parent_started
+sysmain/syscall.c:8579:34: error: 'g_coop_parent_rcx' undeclared (first use in this function)
+ 8579 |         g_bfree_fork_saved_rcx = g_coop_parent_rcx;
+      |                                  ^~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8580:35: error: 'g_coop_parent_resume_rax' undeclared (first use in this function)
+ 8580 |         g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_arm_child_resume':
+sysmain/syscall.c:8598:9: error: 'g_coop_child_resume_mode' undeclared (first use in this function)
+ 8598 |     if (g_coop_child_resume_mode == 1 || g_coop_child_resume_mode == 2) {
+      |         ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8599:35: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8599 |         g_bfree_fork_parent_ret = g_coop_child_resume_rax;
+      |                                   ^~~~~~~~~~~~~~~~~~~~~~~
+      |                                   g_coop_child_rdx
+sysmain/syscall.c: In function 'bfree_coop_yield_to_parent':
+sysmain/syscall.c:8613:5: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8613 |     g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_child_rdx
+sysmain/syscall.c:8613:41: error: 'g_coop_cur_nr' undeclared (first use in this function)
+ 8613 |     g_coop_child_resume_rax = (uint64_t)g_coop_cur_nr;
+      |                                         ^~~~~~~~~~~~~
+sysmain/syscall.c:8614:5: error: 'g_coop_child_resume_mode' undeclared (first use in this function)
+ 8614 |     g_coop_child_resume_mode = 1;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_yield_to_child':
+sysmain/syscall.c:8637:5: error: 'g_coop_parent_resume_rax' undeclared (first use in this function)
+ 8637 |     g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8637:42: error: 'g_coop_cur_nr' undeclared (first use in this function)
+ 8637 |     g_coop_parent_resume_rax = (uint64_t)g_coop_cur_nr;
+      |                                          ^~~~~~~~~~~~~
+sysmain/syscall.c:8638:5: error: 'g_coop_parent_resume_mode' undeclared (first use in this function); did you mean 'g_coop_parent_started'?
+ 8638 |     g_coop_parent_resume_mode = 1;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_parent_started
+sysmain/syscall.c: In function 'bfree_coop_yield_to_parent_done':
+sysmain/syscall.c:8661:5: error: 'g_coop_child_resume_rax' undeclared (first use in this function); did you mean 'g_coop_child_rdx'?
+ 8661 |     g_coop_child_resume_rax = (uint64_t)(long)ret;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_child_rdx
+sysmain/syscall.c:8662:5: error: 'g_coop_child_resume_mode' undeclared (first use in this function)
+ 8662 |     g_coop_child_resume_mode = 2;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_coop_yield_to_child_done':
+sysmain/syscall.c:8685:5: error: 'g_coop_parent_resume_rax' undeclared (first use in this function)
+ 8685 |     g_coop_parent_resume_rax = (uint64_t)(long)ret;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:8686:5: error: 'g_coop_parent_resume_mode' undeclared (first use in this function); did you mean 'g_coop_parent_started'?
+ 8686 |     g_coop_parent_resume_mode = 2;
+      |     ^~~~~~~~~~~~~~~~~~~~~~~~~
+      |     g_coop_parent_started
+sysmain/syscall.c: In function 'bfree_inet_from_fd':
+sysmain/syscall.c:8717:19: error: 'BFREE_INET_FD_BASE' undeclared (first use in this function); did you mean 'BFREE_UNIX_FD_BASE'?
+ 8717 |     if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
+      |                   ^~~~~~~~~~~~~~~~~~
+      |                   BFREE_UNIX_FD_BASE
+sysmain/syscall.c:8717:73: error: 'BFREE_INET_SLOTS' undeclared (first use in this function); did you mean 'BFREE_UNIX_SLOTS'?
+ 8717 |     if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
+      |                                                                         ^~~~~~~~~~~~~~~~
+      |                                                                         BFREE_UNIX_SLOTS
+sysmain/syscall.c:8721:12: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8721 |     return g_inet_socks[idx].used ? idx : -1;
+      |            ^~~~~~~~~~~~
+      |            g_unix_socks
+sysmain/syscall.c: In function 'bfree_inet_sock_release':
+sysmain/syscall.c:8730:5: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8730 |     g_inet_socks[iidx].used = 0;
+      |     ^~~~~~~~~~~~
+      |     g_unix_socks
+sysmain/syscall.c: In function 'bfree_inet_parse_sockaddr':
+sysmain/syscall.c:8761:29: error: 'BFREE_LINUX_AF_INET' undeclared (first use in this function); did you mean 'BFREE_LINUX_AF_UNIX'?
+ 8761 |     if (family != (uint16_t)BFREE_LINUX_AF_INET) {
+      |                             ^~~~~~~~~~~~~~~~~~~
+      |                             BFREE_LINUX_AF_UNIX
+sysmain/syscall.c: In function 'bfree_inet_is_guest_routable':
+sysmain/syscall.c:8778:17: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8778 |     if (addr == BFREE_INADDR_ANY) {
+      |                 ^~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_inet_match_addr':
+sysmain/syscall.c:8793:17: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8793 |     if (addr == BFREE_INADDR_ANY) {
+      |                 ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:8794:16: error: 'BFREE_INADDR_LOOPBACK' undeclared (first use in this function)
+ 8794 |         return BFREE_INADDR_LOOPBACK;
+      |                ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'bfree_inet_listener_matches':
+sysmain/syscall.c:8810:23: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8810 |     if (bound_addr == BFREE_INADDR_ANY) {
+      |                       ^~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_socket':
+sysmain/syscall.c:8826:19: error: 'BFREE_LINUX_AF_INET' undeclared (first use in this function); did you mean 'BFREE_LINUX_AF_UNIX'?
+ 8826 |     if (domain == BFREE_LINUX_AF_INET) {
+      |                   ^~~~~~~~~~~~~~~~~~~
+      |                   BFREE_LINUX_AF_UNIX
+sysmain/syscall.c:8827:25: error: 'BFREE_INET_SLOTS' undeclared (first use in this function); did you mean 'BFREE_UNIX_SLOTS'?
+ 8827 |         for (i = 0; i < BFREE_INET_SLOTS; ++i) {
+      |                         ^~~~~~~~~~~~~~~~
+      |                         BFREE_UNIX_SLOTS
+sysmain/syscall.c:8828:18: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8828 |             if (!g_inet_socks[i].used) {
+      |                  ^~~~~~~~~~~~
+      |                  g_unix_socks
+sysmain/syscall.c:8833:40: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8833 |                 g_inet_socks[i].addr = BFREE_INADDR_ANY;
+      |                                        ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:8837:52: error: 'BFREE_INET_FD_BASE' undeclared (first use in this function); did you mean 'BFREE_UNIX_FD_BASE'?
+ 8837 |                 return bfree_guest_fd_publish((int)BFREE_INET_FD_BASE + i);
+      |                                                    ^~~~~~~~~~~~~~~~~~
+      |                                                    BFREE_UNIX_FD_BASE
+sysmain/syscall.c: In function 'sys_linux_bind':
+sysmain/syscall.c:8882:25: error: 'BFREE_INET_SLOTS' undeclared (first use in this function); did you mean 'BFREE_UNIX_SLOTS'?
+ 8882 |         for (i = 0; i < BFREE_INET_SLOTS; ++i) {
+      |                         ^~~~~~~~~~~~~~~~
+      |                         BFREE_UNIX_SLOTS
+sysmain/syscall.c:8883:29: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8883 |             if (i != idx && g_inet_socks[i].used && g_inet_socks[i].bound &&
+      |                             ^~~~~~~~~~~~
+      |                             g_unix_socks
+sysmain/syscall.c:8886:42: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 8886 |                  g_inet_socks[i].addr == BFREE_INADDR_ANY ||
+      |                                          ^~~~~~~~~~~~~~~~
+sysmain/syscall.c: In function 'sys_linux_listen':
+sysmain/syscall.c:8930:14: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8930 |         if (!g_inet_socks[idx].bound) {
+      |              ^~~~~~~~~~~~
+      |              g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_connect':
+sysmain/syscall.c:8967:27: error: 'BFREE_INET_SLOTS' undeclared (first use in this function); did you mean 'BFREE_UNIX_SLOTS'?
+ 8967 |         for (li = 0; li < BFREE_INET_SLOTS; ++li) {
+      |                           ^~~~~~~~~~~~~~~~
+      |                           BFREE_UNIX_SLOTS
+sysmain/syscall.c:8968:17: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 8968 |             if (g_inet_socks[li].used && g_inet_socks[li].listening &&
+      |                 ^~~~~~~~~~~~
+      |                 g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_accept':
+sysmain/syscall.c:9059:14: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9059 |         if (!g_inet_socks[idx].listening) {
+      |              ^~~~~~~~~~~~
+      |              g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_sendto':
+sysmain/syscall.c:9092:21: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9092 |     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
+      |                     ^~~~~~~~~~~~
+      |                     g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_recvfrom':
+sysmain/syscall.c:9110:21: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9110 |     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
+      |                     ^~~~~~~~~~~~
+      |                     g_unix_socks
+sysmain/syscall.c: In function 'bfree_guest_sock_ready_mask':
+sysmain/syscall.c:9168:13: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9168 |         if (g_inet_socks[iidx].listening) {
+      |             ^~~~~~~~~~~~
+      |             g_unix_socks
+sysmain/syscall.c: In function 'sys_linux_getsockname':
+sysmain/syscall.c:9270:9: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9270 |     a = g_inet_socks[idx].addr;
+      |         ^~~~~~~~~~~~
+      |         g_unix_socks
+sysmain/syscall.c:9272:13: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 9272 |         a = BFREE_INADDR_ANY;
+      |             ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:9274:13: error: 'BFREE_INADDR_LOOPBACK' undeclared (first use in this function)
+ 9274 |         a = BFREE_INADDR_LOOPBACK;
+      |             ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:9279:24: error: 'BFREE_LINUX_AF_INET' undeclared (first use in this function); did you mean 'BFREE_LINUX_AF_UNIX'?
+ 9279 |     raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);
+      |                        ^~~~~~~~~~~~~~~~~~~
+      |                        BFREE_LINUX_AF_UNIX
+sysmain/syscall.c: In function 'sys_linux_getpeername':
+sysmain/syscall.c:9310:21: error: 'g_inet_socks' undeclared (first use in this function); did you mean 'g_unix_socks'?
+ 9310 |     if (idx < 0 || !g_inet_socks[idx].connected) {
+      |                     ^~~~~~~~~~~~
+      |                     g_unix_socks
+sysmain/syscall.c:9317:58: error: 'BFREE_INADDR_ANY' undeclared (first use in this function)
+ 9317 |     addr_be = bfree_inet_ntohl(g_inet_socks[idx].addr == BFREE_INADDR_ANY
+      |                                                          ^~~~~~~~~~~~~~~~
+sysmain/syscall.c:9318:38: error: 'BFREE_INADDR_LOOPBACK' undeclared (first use in this function)
+ 9318 |                                    ? BFREE_INADDR_LOOPBACK
+      |                                      ^~~~~~~~~~~~~~~~~~~~~
+sysmain/syscall.c:9321:24: error: 'BFREE_LINUX_AF_INET' undeclared (first use in this function); did you mean 'BFREE_LINUX_AF_UNIX'?
+ 9321 |     raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);
+      |                        ^~~~~~~~~~~~~~~~~~~
+      |                        BFREE_LINUX_AF_UNIX
+sysmain/syscall.c: In function 'bfree_dispatch_linux_guest_syscall':
+sysmain/syscall.c:9745:5: error: 'g_coop_cur_nr' undeclared (first use in this function)
+ 9745 |     g_coop_cur_nr = (unsigned long)num;
+      |     ^~~~~~~~~~~~~
+sysmain/syscall.c:9831:5: error: duplicate case value
+ 9831 |     case 271:
+      |     ^~~~
+sysmain/syscall.c:9767:5: note: previously used here
+ 9767 |     case 271:
+      |     ^~~~
+sysmain/syscall.c:9833:5: error: duplicate case value
+ 9833 |     case 39:
+      |     ^~~~
+sysmain/syscall.c:9769:5: note: previously used here
+ 9769 |     case 39:
+      |     ^~~~
+sysmain/syscall.c:9841:5: error: duplicate case value
+ 9841 |     case 110:
+      |     ^~~~

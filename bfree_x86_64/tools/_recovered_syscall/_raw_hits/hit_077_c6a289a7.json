@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\c6a289a7-e330-4909-9ba9-edbe59f71b8c\\c6a289a7-e330-4909-9ba9-edbe59f71b8c.jsonl",
+    "line": 166,
+    "tool": "Write",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\docs\\ATTACH_FILES_FOR_AI.txt",
+    "old_len": 0,
+    "new_len": 691
+  },
+  "themes": [
+    "futex"
+  ],
+  "old_string": "",
+  "new_string": "B-Free P3 — 他 AI へ添付するファイル一覧\n============================================\n\n【必ず添付】\n1. docs/AI_HANDOFF_P3_DESKTOP_QT_DEBUG.ja.md   … 本引き継書（日本語）\n2. docs/serial_snippet_latest.txt              … 最新 serial 抜粋\n\n【あるとよい（コード）】\n3. userland/desktop_qt/desktop.ld\n4. kernel/sysmain/syscall.c          … exec スタック 2048 ページ\n5. kernel/sysmain/main.c            … boot スタック 64 ページ\n6. tools/guest_link_compat.cpp       … futex / pthread スタブ\n7. userland/desktop_qt/guest_main.cpp\n\n【ビルド成果物の確認コマンド（ログだけ渡す場合）】\n  ls -la userland/desktop_qt/desktop.elf\n  strings userland/desktop_qt/desktop.elf | grep -E 'BFreeGuest|init_array: skipped'\n\nプロジェクトルート:\n  /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64\n"
+}

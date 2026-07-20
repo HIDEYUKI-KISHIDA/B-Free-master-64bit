@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\subagents\\cf433436-c28a-435c-9349-2201f0bdc2fc.jsonl",
+    "line": 114,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 576,
+    "new_len": 1196
+  },
+  "themes": [
+    "coop"
+  ],
+  "old_string": "static void bfree_coop_save_child_user(void)\n{\n    g_coop_child_rcx = g_bfree_user_sysret_rcx;\n    g_coop_child_r11 = g_bfree_user_sysret_r11;\n    g_coop_child_rsp = g_bfree_user_sysret_rsp;\n    g_coop_child_rbx = g_bfree_user_sysret_rbx;\n    g_coop_child_rbp = g_bfree_user_sysret_rbp;\n    g_coop_child_r12 = g_bfree_user_sysret_r12;\n    g_coop_child_r13 = g_bfree_user_sysret_r13;\n    g_coop_child_r14 = g_bfree_user_sysret_r14;\n    g_coop_child_r15 = g_bfree_user_sysret_r15;\n    g_coop_child_rdx = g_bfree_user_sysret_rdx;\n}\n\nstatic void bfree_coop_arm_parent_resume(void)",
+  "new_string": "static void bfree_coop_save_child_user(void)\n{\n    g_coop_child_rcx = g_bfree_user_sysret_rcx;\n    g_coop_child_r11 = g_bfree_user_sysret_r11;\n    g_coop_child_rsp = g_bfree_user_sysret_rsp;\n    g_coop_child_rbx = g_bfree_user_sysret_rbx;\n    g_coop_child_rbp = g_bfree_user_sysret_rbp;\n    g_coop_child_r12 = g_bfree_user_sysret_r12;\n    g_coop_child_r13 = g_bfree_user_sysret_r13;\n    g_coop_child_r14 = g_bfree_user_sysret_r14;\n    g_coop_child_r15 = g_bfree_user_sysret_r15;\n    g_coop_child_rdx = g_bfree_user_sysret_rdx;\n}\n\n/* H02: AS-copy coop must flip CR3 with the logical parent/child side. */\nstatic void bfree_coop_as_switch_to(int side)\n{\n    page_table_t *pt;\n\n    if (!knl_current_task) {\n        return;\n    }\n    if (!bfree_process_child_has_private_as()) {\n        return; /* vfork / shared AS — nothing to flip */\n    }\n    pt = (side == 0) ? bfree_process_parent_pt() : bfree_process_child_pt();\n    if (!pt) {\n        return;\n    }\n    if ((page_table_t *)knl_current_task->page_table_base == pt) {\n        return;\n    }\n    knl_current_task->page_table_base = pt;\n    __asm__ volatile(\"mov %0, %%cr3\" :: \"r\"(pt) : \"memory\");\n}\n\nstatic void bfree_coop_arm_parent_resume(void)"
+}

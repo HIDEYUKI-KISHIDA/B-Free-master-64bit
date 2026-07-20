@@ -1,0 +1,7 @@
+#ifndef BFREE_GUEST_THREAD_H
+#define BFREE_GUEST_THREAD_H
+
+#define BFREE_GUEST_MAX_THREADS 16
+#define BFREE_SYSRET_THREAD_CHILD ((long)-4090)
+
+#endif

@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 293,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 132,
+    "new_len": 549
+  },
+  "themes": [
+    "parked"
+  ],
+  "old_string": "static uint64_t g_guest_fork_saved_heap_next;\nstatic uint64_t g_guest_fork_saved_brk;\nstatic uintptr_t g_guest_fork_stack_save_base;",
+  "new_string": "static uint64_t g_guest_fork_saved_heap_next;\nstatic uint64_t g_guest_fork_saved_brk;\n/* AS-copy: parent keeps running after fork; snapshot heap/cwd when parent is\n * parked (yield_to_child). Exit must restore THESE, not fork-enter values —\n * rewinding to fork-enter desyncs musl; skipping restore leaves child's brk. */\nstatic int g_guest_parent_parked_heap_valid;\nstatic uint64_t g_guest_parent_parked_heap_next;\nstatic uint64_t g_guest_parent_parked_brk;\nstatic char g_guest_parent_parked_cwd[256];\nstatic uintptr_t g_guest_fork_stack_save_base;"
+}

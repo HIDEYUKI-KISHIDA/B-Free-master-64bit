@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\5c44f804-a588-440e-ac50-0b36379eca43\\5c44f804-a588-440e-ac50-0b36379eca43.jsonl",
+    "line": 25,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 920,
+    "new_len": 1124
+  },
+  "themes": [
+    "coop",
+    "futex"
+  ],
+  "old_string": "// Linux 202: futex — single-threaded guest; never block, satisfy musl/Qt mutex init.\nlong sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, long val3)\n{\n    int cmd = (int)(op & 0x7f);\n\n    (void)val;\n    (void)timeout_ptr;\n    (void)uaddr2;\n    (void)val3;\n\n    switch (cmd) {\n    case 0: /* FUTEX_WAIT */\n    case 9: /* FUTEX_WAIT_BITSET */\n        /*\n         * Qt futexSemaphoreTryAcquire_loop: futex_wait returns but *uaddr stays locked\n         * → fastTryLock fails forever (100% CPU, no further serial output).\n         * Single-threaded guest: wake by clearing the word; never return EAGAIN.\n         */\n        if (uaddr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uaddr)) {\n            *(int *)(uintptr_t)uaddr = 0;\n        }\n        if (g_guest_futex_log_count < 8U) {\n            ++g_guest_futex_log_count;\n            uart_puts(\"[FUTEX] wait\\n\");\n        }\n        return 0;",
+  "new_string": "/*\n * Linux 202: futex — single-threaded guest.\n * H20: real blocking / timeout-bounded coop yield left partial: clearing *uaddr\n * on WAIT is required for Qt (else fastTryLock spins forever). A timeout+yield\n * path that leaves *uaddr locked regresses the desktop; keep clear-on-WAIT.\n */\nlong sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, long val3)\n{\n    int cmd = (int)(op & 0x7f);\n\n    (void)val;\n    (void)timeout_ptr;\n    (void)uaddr2;\n    (void)val3;\n\n    switch (cmd) {\n    case 0: /* FUTEX_WAIT */\n    case 9: /* FUTEX_WAIT_BITSET */\n        /*\n         * Qt futexSemaphoreTryAcquire_loop: futex_wait returns but *uaddr stays locked\n         * → fastTryLock fails forever (100% CPU, no further serial output).\n         * Single-threaded guest: wake by clearing the word; never return EAGAIN.\n         */\n        if (uaddr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uaddr)) {\n            *(int *)(uintptr_t)uaddr = 0;\n        }\n        if (g_guest_futex_log_count < 8U) {\n            ++g_guest_futex_log_count;\n            uart_puts(\"[FUTEX] wait\\n\");\n        }\n        return 0;"
+}

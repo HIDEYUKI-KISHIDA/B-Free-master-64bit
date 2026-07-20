@@ -1,0 +1,17 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\97982f27-2433-4380-be52-11c4d12e033b\\97982f27-2433-4380-be52-11c4d12e033b.jsonl",
+    "line": 1535,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 209,
+    "new_len": 993
+  },
+  "themes": [
+    "as_copy",
+    "coop",
+    "timerfd"
+  ],
+  "old_string": "        } else {\n            bfree_guest_heap_reset();\n            timer_purge_all();\n            bfree_timerfd_purge_all();\n            bfree_guest_execve_reset_subsystems(1);\n            load_pt = parent_pt;",
+  "new_string": "        } else {\n            bfree_guest_heap_reset();\n            timer_purge_all();\n            bfree_timerfd_purge_all();\n            if (is_p8) {\n                /* Standalone p8test from shell: clear stale coop/fork globals\n                 * (leftover from pipelines) but keep tty pgid/session. */\n                g_guest_fork_active = 0;\n                g_guest_fork_pid = 0;\n                g_guest_fork_status_ready = 0;\n                g_guest_fork_was_as_copy = 0;\n                g_coop_side = 0;\n                g_coop_child_blocked = 0;\n                g_coop_parent_started = 0;\n                g_coop_session = -1;\n                bfree_coop_sessions_init();\n                if (g_guest_tty_pgrp <= 0) {\n                    g_guest_tty_pgrp = g_guest_pgid > 0 ? g_guest_pgid : 1;\n                }\n                bfree_guest_execve_reset_subsystems(0);\n            } else {\n                bfree_guest_execve_reset_subsystems(1);\n            }\n            load_pt = parent_pt;"
+}

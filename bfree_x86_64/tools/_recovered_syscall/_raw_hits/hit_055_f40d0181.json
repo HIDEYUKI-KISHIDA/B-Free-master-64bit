@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\f40d0181-b472-47d1-88c0-97da64f8c769\\f40d0181-b472-47d1-88c0-97da64f8c769.jsonl",
+    "line": 13,
+    "tool": "StrReplace",
+    "path": "C:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 1053,
+    "new_len": 1121
+  },
+  "themes": [
+    "parked",
+    "coop"
+  ],
+  "old_string": "static long sys_linux_waitpid(long pid, long status_ptr, long options)\n{\n    int status = 0;\n    long rc;\n\n    for (;;) {\n        rc = bfree_process_wait4(pid,\n            (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) ? &status : 0,\n            (int)options);\n        if (rc > 0) {\n            g_guest_fork_status_ready = 0;\n            if (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) {\n                *(int *)(uintptr_t)status_ptr = status;\n            }\n            return rc;\n        }\n        if (((unsigned)options & 1U) != 0U) { /* WNOHANG */\n            return 0;\n        }\n        /* Parent waiting on parked AS-copy child: run the child. */\n        if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {\n            g_guest_wait_status_ptr = status_ptr;\n            return bfree_coop_yield_to_child();\n        }\n        {\n            int er = bfree_guest_sig_take_eintr();\n            if (er < 0) {\n                return er;\n            }\n        }\n        __asm__ volatile(\"sti; hlt\" ::: \"memory\");\n    }\n}",
+  "new_string": "static long sys_linux_waitpid(long pid, long status_ptr, long options)\n{\n    int status = 0;\n    long rc;\n\n    for (;;) {\n        rc = bfree_process_wait4(pid,\n            (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) ? &status : 0,\n            (int)options);\n        if (rc > 0) {\n            g_guest_fork_status_ready = 0;\n            if (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) {\n                *(int *)(uintptr_t)status_ptr = status;\n            }\n            return rc;\n        }\n        if (rc < 0) {\n            return rc; /* ECHILD */\n        }\n        if (((unsigned)options & 1U) != 0U) { /* WNOHANG */\n            return 0;\n        }\n        /* Parent waiting on parked AS-copy child: run the child. */\n        if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {\n            g_guest_wait_status_ptr = status_ptr;\n            return bfree_coop_yield_to_child();\n        }\n        {\n            int er = bfree_guest_sig_take_eintr();\n            if (er < 0) {\n                return er;\n            }\n        }\n        __asm__ volatile(\"sti; hlt\" ::: \"memory\");\n    }\n}"
+}

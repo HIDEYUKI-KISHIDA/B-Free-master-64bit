@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "file": "C:\\Users\\h_kis\\.cursor\\projects\\c-Users-h-kis-Desktop-B-Free-master-Program-bfree-x86-64\\agent-transcripts\\cb50afd8-b946-4a3f-b32e-11c7737bb9d9\\cb50afd8-b946-4a3f-b32e-11c7737bb9d9.jsonl",
+    "line": 2499,
+    "tool": "StrReplace",
+    "path": "c:\\Users\\h_kis\\Desktop\\B-Free-master\\Program\\bfree_x86_64\\kernel\\sysmain\\syscall.c",
+    "old_len": 349,
+    "new_len": 124
+  },
+  "themes": [
+    "futex"
+  ],
+  "old_string": "static uintptr_t g_guest_clear_child_tid;\n\n// Linux 218: set_tid_address — remember cleartid; do not poke TLS memory on set.\nlong sys_set_tid_address(long tid_ptr)\n{\n    g_guest_clear_child_tid = (uintptr_t)tid_ptr;\n    if (g_guest_fork_active) {\n        return (long)g_guest_fork_pid;\n    }\n    return 1;\n}\n\nstatic unsigned g_guest_futex_log_count;",
+  "new_string": "static uintptr_t g_guest_clear_child_tid;\n\n// Linux 218: set_tid_address — remember cleartid; do not poke TLS memory on set."
+}

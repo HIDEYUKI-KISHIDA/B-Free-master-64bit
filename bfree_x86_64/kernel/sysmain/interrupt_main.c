@@ -29,6 +29,9 @@ static void dump_exception_frame(uint64_t vecno, uint64_t *frame)
     uint64_t rflags = frame ? frame[18] : 0;
     uint64_t rsp_user = 0;
     uint64_t ss_user = 0;
+    uint64_t cr0 = 0;
+    uint64_t cr4 = 0;
+    uint64_t fsbase = 0;
 
     uart_puts("[PANIC][STAGE=exception] vector=");
     uart_puthex64(vecno);
@@ -63,6 +66,32 @@ static void dump_exception_frame(uint64_t vecno, uint64_t *frame)
         uart_puts("[PANIC][CTX] RSP(user)="); uart_puthex64(rsp_user);
         uart_puts(" SS(user)=");              uart_puthex64(ss_user);
         uart_puts("\n");
+    }
+
+    {
+        uint32_t fs_lo = 0;
+        uint32_t fs_hi = 0;
+        __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
+        __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
+        __asm__ volatile ("rdmsr" : "=a"(fs_lo), "=d"(fs_hi) : "c"(0xC0000100u));
+        fsbase = ((uint64_t)fs_hi << 32) | (uint64_t)fs_lo;
+    }
+    uart_puts("[PANIC][CTX] CR0="); uart_puthex64(cr0);
+    uart_puts(" CR4="); uart_puthex64(cr4);
+    uart_puts(" FS_BASE="); uart_puthex64(fsbase);
+    uart_puts("\n");
+
+    /* Avoid SMAP #PF: only touch user RIP when SMAP is off. */
+    if ((cs & 0x3U) == 0x3U && rip < 0x0000800000000000ULL &&
+        (cr4 & (1ULL << 21)) == 0ULL) {
+        const volatile unsigned char *p =
+            (const volatile unsigned char *)(uintptr_t)rip;
+        int bi;
+        uart_puts("[PANIC][CTX] bytes@RIP=");
+        for (bi = 0; bi < 8; ++bi) {
+            uart_puthex64((uint64_t)p[bi]);
+            uart_puts(bi + 1 < 8 ? " " : "\n");
+        }
     }
 
     if (vecno == 14U) {
