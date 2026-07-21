@@ -682,6 +682,16 @@ static long bfree_guest_exit_from_fork(long status)
     bfree_guest_sig_raise(17);
     bfree_coop_fd_switch_to(0);
     g_coop_child_blocked = 0;
+    /* Fork is over: stale snaps must not pin OFDs/pipes (slot exhaustion). */
+    {
+        int si;
+        for (si = 0; si < BFREE_GUEST_FD_TABLE_SIZE; ++si) {
+            g_fd_snap_parent[si] = -1;
+            g_fd_snap_child[si] = -1;
+            g_fd_dup_save_snap_parent[si] = -1;
+            g_fd_dup_save_snap_child[si] = -1;
+        }
+    }
     bfree_guest_stdio_heal_pipes();
     /* AS-copy: parent kept running — do not rewind heap/stack. */
     if (!as_copy) {
@@ -7173,6 +7183,7 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     int use_private_as = 0;
     int is_child;
     int ld;
+    const char *exec_img = "busybox.elf";
 
     is_child = g_guest_fork_active && bfree_process_child_active();
 
@@ -7182,8 +7193,14 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     if (bfree_copy_user_strarray(argv_ptr, argv_buf, 16, &argc) != 0 || argc <= 0) {
         return -14;
     }
+    /* p8test.elf is its own initrd module; everything else re-enters busybox. */
+    {
+        const char *img = bfree_guest_basename_eq(path, "p8test.elf")
+            ? "p8test.elf" : "busybox.elf";
+        exec_img = img;
+    }
     /* musl busybox expects argv[0]=/busybox.elf when re-entering from execve. */
-    if (argc + 1 <= 16) {
+    if (exec_img[0] == 'b' && argc + 1 <= 16) {
         int j;
         for (j = argc; j >= 1; --j) {
             memcpy(argv_buf[j], argv_buf[j - 1], sizeof(argv_buf[j]));
@@ -7248,7 +7265,7 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
         }
         use_private_as = 1;
         load_pt = child_pt;
-        ld = load_elf_image("busybox.elf", &entry, load_pt);
+        ld = load_elf_image(exec_img, &entry, load_pt);
         if (ld != 0 || entry == 0) {
             bfree_process_exit_restore_as();
             return -2;
@@ -7263,7 +7280,7 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
         bfree_timerfd_purge_all();
         bfree_guest_execve_reset_subsystems(1);
         load_pt = parent_pt;
-        ld = load_elf_image("busybox.elf", &entry, load_pt);
+        ld = load_elf_image(exec_img, &entry, load_pt);
         if (ld != 0 || entry == 0) {
             bfree_loaded_elf_info_get(&elf);
             if (!elf.valid || elf.entry == 0) {
