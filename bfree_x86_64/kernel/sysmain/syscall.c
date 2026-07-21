@@ -234,6 +234,7 @@ static void bfree_coop_save_child_user(void);
 static void bfree_coop_save_parent_user(void);
 static void bfree_coop_publish_parent_resume(void);
 static void bfree_coop_publish_child_resume(void);
+static void bfree_coop_arm_parent_resume(void);
 static long bfree_coop_yield_to_parent(void);
 static long bfree_coop_yield_to_child(void);
 static long bfree_guest_fork_enter(int copy_as);
@@ -642,6 +643,8 @@ static long bfree_guest_fork_enter(int copy_as)
     g_guest_parent_parked_heap_valid = 0;
     g_guest_child_parked_heap_valid = 0;
     bfree_coop_fd_snap_init();
+    /* Fork duplicates fds: recount so each end is held by parent+child. */
+    bfree_guest_pipe_reclaim_dead_slots();
     if (copy_as) {
         /*
          * AS-copy: return to parent immediately (parent-first). Child parked
@@ -707,19 +710,36 @@ static long bfree_guest_exit_from_fork(long status)
         cleartid = (int *)(uintptr_t)g_guest_clear_child_tid;
         *cleartid = 0;
     }
-    g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
-    g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
-    g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
-    g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+    /*
+     * Parent may have been mid-syscall (pipe write/wait) when it yielded to the
+     * child. publish_child_resume overwrote fork_saved_* with the child frame;
+     * restore the frozen parent frame before FORK_PARENT sysret.
+     */
+    if (as_copy && g_coop_parent_started) {
+        bfree_coop_publish_parent_resume();
+        if (g_coop_parent_resume_mode == 2) {
+            g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
+            g_coop_parent_resume_mode = 0;
+        } else {
+            g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+            g_coop_parent_resume_mode = 0;
+        }
+    } else {
+        g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
+        g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
+        g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
+        g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+    }
     uart_puts("[VFORK] parent resume rip=");
     uart_puthex64(g_bfree_fork_saved_rcx);
     uart_puts(" rsp=");
     uart_puthex64(g_bfree_fork_saved_rsp);
-    uart_puts(" rdx=");
-    uart_puthex64(g_bfree_fork_saved_rdx);
+    uart_puts(" rax=");
+    uart_puthex64(g_bfree_fork_parent_ret);
     uart_puts(" fs=");
     uart_puthex64(g_guest_fork_saved_fsbase);
     uart_puts("\n");
+    g_coop_parent_started = 0;
     return BFREE_SYSRET_FORK_PARENT;
 }
 
@@ -3543,10 +3563,13 @@ static long sys_linux_write(long fd, long buf, long count)
         if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf) || !ps) {
             return -14;
         }
-        if (ps->wr_open <= 0) {
-            /* Broken pipe left on the shell's stdout: heal to console.
-             * Do NOT heal while wr_open>0 — ash inproc pipelines redirect
-             * fd1 to a live pipe with fork_active==0. */
+        /* Resync before EPIPE: parent may have closed an end the child still holds. */
+        bfree_guest_pipe_reclaim_dead_slots();
+        if (!ps->used) {
+            return -32; /* EPIPE */
+        }
+        if (ps->rd_open <= 0) {
+            /* No readers: POSIX EPIPE. Heal shell stdout/stderr to console. */
             if ((orig_fd == 1 || orig_fd == 2) && !g_guest_fork_active) {
                 g_guest_fd_target[orig_fd] = -1;
                 bfree_guest_console_write((const uint8_t *)(uintptr_t)buf, (size_t)count);
@@ -3563,13 +3586,13 @@ static long sys_linux_write(long fd, long buf, long count)
             ps->buf[ps->len + i] = src[i];
         }
         ps->len += n;
-        /* H02: coop yield after pipe write */
+        /* H02: coop yield after pipe write — return the byte count on resume. */
         if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked && n > 0) {
-            return bfree_coop_yield_to_child();
+            return bfree_coop_yield_to_child_done((long)n);
         }
         if (g_guest_fork_active && g_coop_side == 1 && n > 0 &&
             g_guest_fork_was_as_copy && g_coop_parent_started) {
-            return bfree_coop_yield_to_parent();
+            return bfree_coop_yield_to_parent_done((long)n);
         }
         return (long)n;
     }
@@ -3998,12 +4021,14 @@ static long sys_linux_close(long fd)
 
     resolved = bfree_guest_fd_resolve(orig);
     bfree_inet_sock_release(resolved);
-    if (bfree_guest_is_pipe_wr(resolved) || bfree_guest_is_pipe_rd(resolved)) {
-        bfree_guest_pipe_ref(resolved, -1);
-    }
     if (orig >= 0 && orig < BFREE_GUEST_FD_TABLE_SIZE) {
         g_guest_fd_target[orig] = -1;
         g_guest_fd_dup_save[orig] = -1;
+    }
+    /* Absolute recount (live + inactive coop snap) — do not pipe_ref±1 here;
+     * a parent close must not drop the child's still-parked endpoint to 0. */
+    if (bfree_guest_is_pipe_wr(resolved) || bfree_guest_is_pipe_rd(resolved)) {
+        bfree_guest_pipe_reclaim_dead_slots();
     }
     bfree_guest_ofd_maybe_release(resolved);
     return 0;
@@ -7960,6 +7985,8 @@ static void bfree_coop_fd_snap_init(void)
     for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
         g_fd_snap_parent[i] = g_guest_fd_target[i];
         g_fd_snap_child[i] = g_guest_fd_target[i];
+        g_fd_dup_save_snap_parent[i] = g_guest_fd_dup_save[i];
+        g_fd_dup_save_snap_child[i] = g_guest_fd_dup_save[i];
     }
     g_coop_side = 1;
     g_coop_child_blocked = 0;
@@ -7975,16 +8002,20 @@ static void bfree_coop_fd_switch_to(int side)
     if (g_coop_side == 1) {
         for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
             g_fd_snap_child[i] = g_guest_fd_target[i];
+            g_fd_dup_save_snap_child[i] = g_guest_fd_dup_save[i];
         }
         for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
             g_guest_fd_target[i] = g_fd_snap_parent[i];
+            g_guest_fd_dup_save[i] = g_fd_dup_save_snap_parent[i];
         }
     } else {
         for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
             g_fd_snap_parent[i] = g_guest_fd_target[i];
+            g_fd_dup_save_snap_parent[i] = g_guest_fd_dup_save[i];
         }
         for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
             g_guest_fd_target[i] = g_fd_snap_child[i];
+            g_guest_fd_dup_save[i] = g_fd_dup_save_snap_child[i];
         }
     }
     g_coop_side = side;
@@ -8987,15 +9018,50 @@ static void bfree_inet_sock_release(int resolved)
     g_inet_socks[iidx].pipe_magic = -1;
 }
 
-/* restored from syscall.c.pre_replay (dedup dropped definition) */
+/* Count pipe-end refs across the live fd table and the inactive coop snap.
+ * After AS-copy fork both sides start identical, so live+inactive ⇒ 2x
+ * (matches Linux fd duplication). Mutating one side then drops that side only. */
+static int bfree_guest_pipe_count_magic(int magic)
+{
+    int t;
+    int refs = 0;
+    const int *inactive;
+    const int *inactive_dup;
+
+    if (magic < 0) {
+        return 0;
+    }
+    for (t = 0; t < BFREE_GUEST_FD_TABLE_SIZE; ++t) {
+        if (g_guest_fd_target[t] == magic || g_guest_fd_dup_save[t] == magic) {
+            refs++;
+        }
+    }
+    if (g_guest_fork_active) {
+        if (g_coop_side == 0) {
+            inactive = g_fd_snap_child;
+            inactive_dup = g_fd_dup_save_snap_child;
+        } else {
+            inactive = g_fd_snap_parent;
+            inactive_dup = g_fd_dup_save_snap_parent;
+        }
+        for (t = 0; t < BFREE_GUEST_FD_TABLE_SIZE; ++t) {
+            if (inactive[t] == magic || inactive_dup[t] == magic) {
+                refs++;
+            }
+        }
+    }
+    return refs;
+}
+
+/* restored from syscall.c.pre_replay + H02 coop snap awareness */
 static void bfree_guest_pipe_reclaim_dead_slots(void)
 {
     int i;
     int t;
 
     for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
-        int rd_refs = 0;
-        int wr_refs = 0;
+        int rd_refs;
+        int wr_refs;
         int rd_magic;
         int wr_magic;
 
@@ -9004,18 +9070,8 @@ static void bfree_guest_pipe_reclaim_dead_slots(void)
         }
         rd_magic = bfree_guest_pipe_magic_fd(i, 0);
         wr_magic = bfree_guest_pipe_magic_fd(i, 1);
-        /* Authoritative open counts from the shared fd table (vfork-safe). */
-        for (t = 0; t < BFREE_GUEST_FD_TABLE_SIZE; ++t) {
-            int tgt = g_guest_fd_target[t];
-            int saved = g_guest_fd_dup_save[t];
-
-            if (tgt == rd_magic || saved == rd_magic) {
-                rd_refs++;
-            }
-            if (tgt == wr_magic || saved == wr_magic) {
-                wr_refs++;
-            }
-        }
+        rd_refs = bfree_guest_pipe_count_magic(rd_magic);
+        wr_refs = bfree_guest_pipe_count_magic(wr_magic);
         g_guest_pipes[i].rd_open = rd_refs;
         g_guest_pipes[i].wr_open = wr_refs;
         if (rd_refs > 0 || wr_refs > 0) {
@@ -9028,6 +9084,18 @@ static void bfree_guest_pipe_reclaim_dead_slots(void)
             }
             if (bfree_guest_pipe_slot_from_magic(g_guest_fd_dup_save[t]) == i) {
                 g_guest_fd_dup_save[t] = -1;
+            }
+            if (bfree_guest_pipe_slot_from_magic(g_fd_snap_parent[t]) == i) {
+                g_fd_snap_parent[t] = -1;
+            }
+            if (bfree_guest_pipe_slot_from_magic(g_fd_snap_child[t]) == i) {
+                g_fd_snap_child[t] = -1;
+            }
+            if (bfree_guest_pipe_slot_from_magic(g_fd_dup_save_snap_parent[t]) == i) {
+                g_fd_dup_save_snap_parent[t] = -1;
+            }
+            if (bfree_guest_pipe_slot_from_magic(g_fd_dup_save_snap_child[t]) == i) {
+                g_fd_dup_save_snap_child[t] = -1;
             }
         }
         g_guest_pipes[i].used = 0;
