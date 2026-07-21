@@ -32,7 +32,7 @@ id	name	severity	status	how
 
 16	sigprocmask-real	Medium	filled	mask stored; P8_SIGMASK
 
-17	sigaltstack-etc	Low	filled	rt_sigsuspend until pending→EINTR; real sigaltstack ss_sp/ss_size/ss_flags; CATCH SA_ONSTACK uses alt stack; soft SS_AUTODISARM incomplete
+17	sigaltstack-etc	Low	filled	rt_sigsuspend until pending→EINTR; real sigaltstack ss_sp/ss_size/ss_flags; CATCH SA_ONSTACK uses alt stack; SS_AUTODISARM accepted not enforced
 
 18	getsid	Low	filled	via 15; P8_MISC
 
@@ -50,7 +50,7 @@ id	name	severity	status	how
 
 25	multi-pgid-jobs	Medium	filled	wait/waitid P_PGID + setpgid; 8-slot zombies; kill(-pg) ESRCH via pgid_has_member; waitid(P_PGID,0)↔tty_self_pgid; shell setpgid(0) updates g_guest_pgid+tty_pgrp together; multi-live via H02
 
-26	CLONE_THREAD	Medium	filled	CLONE_THREAD|CLONE_VM: shared-AS coop threads (serial run-to-exit); SETTLS+tid/cleartid; gettid/set_tid_address; residual: no preemptive parallel threads
+26	CLONE_THREAD	Medium	filled	CLONE_THREAD|CLONE_VM gate→bfree_guest_thread_clone (serial run-to-exit); SETTLS+tid/cleartid; gettid/set_tid_address; residual: no preemptive parallel threads (→P3)
 
 27	blocking-wait-live	Medium	filled	wait+waitid yield to parked child; wait4 live→0 not ECHILD; multi-zombie oldest-pid reap (same 8-slot table as H25); multi-live=2 via H02
 

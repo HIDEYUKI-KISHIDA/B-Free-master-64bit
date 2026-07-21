@@ -38,13 +38,13 @@ wipe 直前に残っていた仕上げ枠。本線 3 点の残りカス＋後回
 
 | ID | 穴 | 優先 | TODO | 完了条件 |
 |----|-----|------|------|----------|
-| **T-P1-1** | H01 | High | fpstate（可能な範囲）／nested CATCH | 文書化 or 実装；パニック無し |
-| **T-P1-2** | H06 | High | BusyBox ash **`fg` UX** パッチ | `fg`/`bg` スモーク or 「カーネル完了・ash は別」と STATUS に明記 |
+| **T-P1-1** | H01 | High | ✅ kernel CATCH 維持；**fpstate / nested → deferred** | STATUS 明記・パニック無し |
+| **T-P1-2** | H06 | High | ✅ kernel jobctl；ash `fg` = **STATUS residual**（`No current job`） | 「カーネル完了・ash は別」明記 |
 | **T-P1-3** | ptmx | High | ✅ inet `0x3B00` / PTY `0x3A00` + master↔slave I/O | `/dev/ptmx` · P9_PTY_OK |
-| **T-P1-4** | H17 | Low | SS_AUTODISARM | 実装 or 意図的 residual 固定 |
-| **T-P1-5** | H26 | Low | プリエンプティブ thread | Phase6 に回すなら STATUS に「deferred→P3」 |
+| **T-P1-4** | H17 | Low | ✅ `sigaltstack`+`SA_ONSTACK`；**AUTODISARM soft** | 意図的 residual 固定 |
+| **T-P1-5** | H26 | Low | ✅ `CLONE_THREAD` serial gate；**preemptive→P3** | STATUS deferred→P3 |
 
-**完了条件:** P1-1〜3 が done または意図的 deferred。P1-4/5 は方針決定で可。
+**完了条件:** P1-1〜3 が done または意図的 deferred。P1-4/5 は方針決定で可。 ✅ P1 ゲート完了（2026-07-22）。
 
 ---
 
@@ -109,11 +109,11 @@ Sprint D+         P3 → P4
 
 ```
 P0  [x] phase3 ALL PASS (2026-07-22)
-P1  [ ] H01 fpstate/nested
-P1  [ ] H06 ash fg
-P1  [ ] ptmx
-P1  [ ] H17 方針
-P1  [ ] H26 方針
+P1  [x] H01 fpstate/nested deferred
+P1  [x] H06 ash fg STATUS residual (kernel done)
+P1  [x] ptmx
+P1  [x] H17 sigaltstack + AUTODISARM soft
+P1  [x] H26 CLONE_THREAD gate; preempt→P3
 P2  [ ] NOFORK=0 緑
 P3  [ ] musl hello
 P4  [ ] 永続FS / LTP（範囲定義）
