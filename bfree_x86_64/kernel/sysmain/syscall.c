@@ -8922,3 +8922,246 @@ long knl_syscall_handler(long num, long arg1, long arg2, long arg3, long arg4, l
             return -1;
     }
 }
+
+/* ---- link-fix: definitions restored from snapshots (post-wipe dedup loss) ---- */
+
+/*
+ * SF-02: called from knl_timer_tick() (IRQ context, must not switch CR3).
+ * Pre-wipe version armed a coop timeslice deadline; that mechanism was not
+ * restored (current tree yields at syscall boundaries). Keep a tick counter
+ * so the IRQ-side contract stays satisfied.
+ */
+volatile unsigned long g_bfree_guest_timer_ticks = 0;
+void bfree_guest_timer_tick_hook(void)
+{
+    ++g_bfree_guest_timer_ticks;
+}
+
+/* restored from syscall.c.pre_dedup (dedup dropped definition) */
+static int bfree_unix_from_fd(int fd)
+{
+    int idx;
+    if (fd < (int)BFREE_UNIX_FD_BASE || fd >= (int)BFREE_UNIX_FD_BASE + BFREE_UNIX_SLOTS) {
+        return -1;
+    }
+    idx = fd - (int)BFREE_UNIX_FD_BASE;
+    return g_unix_socks[idx].used ? idx : -1;
+}
+
+/* restored from syscall.c.pre_dedup (dedup dropped definition) */
+static int bfree_inet_from_fd(int fd)
+{
+    int idx;
+    if (fd < (int)BFREE_INET_FD_BASE || fd >= (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
+        return -1;
+    }
+    idx = fd - (int)BFREE_INET_FD_BASE;
+    return g_inet_socks[idx].used ? idx : -1;
+}
+
+/* restored from syscall.c.pre_dedup (dedup dropped definition) */
+static uint16_t bfree_inet_ntohs(uint16_t x)
+{
+    return (uint16_t)(((x & 0xffU) << 8) | ((x >> 8) & 0xffU));
+}
+
+/* restored from syscall.c.pre_dedup (dedup dropped definition) */
+static uint32_t bfree_inet_ntohl(uint32_t x)
+{
+    return ((x & 0xffU) << 24) | ((x & 0xff00U) << 8) |
+           ((x >> 8) & 0xff00U) | ((x >> 24) & 0xffU);
+}
+
+/* restored from syscall.c.pre_dedup (dedup dropped definition) */
+static void bfree_inet_sock_release(int resolved)
+{
+    int iidx = bfree_inet_from_fd(resolved);
+    if (iidx < 0) {
+        return;
+    }
+    g_inet_socks[iidx].used = 0;
+    g_inet_socks[iidx].listening = 0;
+    g_inet_socks[iidx].connected = 0;
+    g_inet_socks[iidx].bound = 0;
+    g_inet_socks[iidx].accept_rd = -1;
+    g_inet_socks[iidx].pipe_magic = -1;
+}
+
+/* restored from syscall.c.pre_replay (dedup dropped definition) */
+static void bfree_guest_pipe_reclaim_dead_slots(void)
+{
+    int i;
+    int t;
+
+    for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
+        int rd_refs = 0;
+        int wr_refs = 0;
+        int rd_magic;
+        int wr_magic;
+
+        if (!g_guest_pipes[i].used) {
+            continue;
+        }
+        rd_magic = bfree_guest_pipe_magic_fd(i, 0);
+        wr_magic = bfree_guest_pipe_magic_fd(i, 1);
+        /* Authoritative open counts from the shared fd table (vfork-safe). */
+        for (t = 0; t < BFREE_GUEST_FD_TABLE_SIZE; ++t) {
+            int tgt = g_guest_fd_target[t];
+            int saved = g_guest_fd_dup_save[t];
+
+            if (tgt == rd_magic || saved == rd_magic) {
+                rd_refs++;
+            }
+            if (tgt == wr_magic || saved == wr_magic) {
+                wr_refs++;
+            }
+        }
+        g_guest_pipes[i].rd_open = rd_refs;
+        g_guest_pipes[i].wr_open = wr_refs;
+        if (rd_refs > 0 || wr_refs > 0) {
+            continue;
+        }
+        /* No live fds: drop unread bytes (pipeline finished) and free slot. */
+        for (t = 0; t < BFREE_GUEST_FD_TABLE_SIZE; ++t) {
+            if (bfree_guest_pipe_slot_from_magic(g_guest_fd_target[t]) == i) {
+                g_guest_fd_target[t] = -1;
+            }
+            if (bfree_guest_pipe_slot_from_magic(g_guest_fd_dup_save[t]) == i) {
+                g_guest_fd_dup_save[t] = -1;
+            }
+        }
+        g_guest_pipes[i].used = 0;
+        g_guest_pipes[i].nonblock = 0;
+        g_guest_pipes[i].len = 0;
+    }
+}
+
+/* restored from syscall.c.pre_dedup (dedup dropped definition) */
+static long bfree_guest_shm_open(long name_ptr, long oflag, long mode)
+{
+    char name[48];
+    char vname[64];
+    const char *p;
+    size_t n = 0;
+    int want_create;
+    int want_excl;
+    int truncate;
+    int accmode;
+    bfree_guest_vfile_t *vf;
+    int target;
+
+    (void)mode; /* no ownership/mode fields in current vfile struct */
+
+    if (copy_user_cstr(name_ptr, name, sizeof(name)) != 0) {
+        return -14;
+    }
+    p = name;
+    if (p[0] == '/') {
+        ++p;
+    }
+    if (p[0] == '\0') {
+        return -22;
+    }
+    vname[0] = 's';
+    vname[1] = 'h';
+    vname[2] = 'm';
+    vname[3] = '/';
+    while (p[n] != '\0' && n + 5U < sizeof(vname)) {
+        vname[4 + n] = p[n];
+        ++n;
+    }
+    if (p[n] != '\0') {
+        return -36; /* ENAMETOOLONG */
+    }
+    vname[4 + n] = '\0';
+
+    want_create = ((unsigned long)oflag & (unsigned long)BFREE_LINUX_O_CREAT) != 0UL;
+    want_excl = ((unsigned long)oflag & 0200UL) != 0UL; /* O_EXCL */
+    truncate = ((unsigned long)oflag & (unsigned long)BFREE_LINUX_O_TRUNC) != 0UL;
+    accmode = (int)((unsigned long)oflag & (unsigned long)BFREE_LINUX_O_ACCMODE);
+    (void)accmode;
+
+    vf = bfree_guest_vfile_find_by_name(vname);
+    if (vf && want_create && want_excl) {
+        return -17; /* EEXIST */
+    }
+    if (!vf && !want_create) {
+        return -2;
+    }
+    if (!vf) {
+        bfree_guest_vfile_t *dir = bfree_guest_vfile_find_by_name("shm");
+        if (!dir) {
+            int dfd = bfree_guest_vfile_alloc_slot("shm", 1);
+            if (dfd < 0) {
+                return dfd;
+            }
+            dir = bfree_guest_vfile_from_fd(dfd);
+            if (dir) {
+                dir->is_dir = 1;
+            }
+        }
+        target = bfree_guest_vfile_alloc_slot(vname, 1);
+        if (target < 0) {
+            return target;
+        }
+        vf = bfree_guest_vfile_from_fd(target);
+        if (!vf) {
+            return -5;
+        }
+    } else {
+        target = (int)BFREE_GUEST_VFILE_FD_BASE + (int)(vf - g_guest_vfiles);
+        if (truncate) {
+            vf->len = 0;
+            vf->pos = 0;
+        }
+    }
+    return bfree_guest_vfile_publish_open(target, (int)oflag, 0);
+}
+
+/* restored from syscall.c.pre_dedup (dedup dropped definition) */
+static long bfree_guest_shm_unlink(long name_ptr)
+{
+    char name[48];
+    char vname[64];
+    const char *p;
+    size_t n = 0;
+    bfree_guest_vfile_t *vf;
+
+    if (copy_user_cstr(name_ptr, name, sizeof(name)) != 0) {
+        return -14;
+    }
+    p = name;
+    if (p[0] == '/') {
+        ++p;
+    }
+    if (p[0] == '\0') {
+        return -22;
+    }
+    vname[0] = 's';
+    vname[1] = 'h';
+    vname[2] = 'm';
+    vname[3] = '/';
+    while (p[n] != '\0' && n + 5U < sizeof(vname)) {
+        vname[4 + n] = p[n];
+        ++n;
+    }
+    if (p[n] != '\0') {
+        return -36;
+    }
+    vname[4 + n] = '\0';
+    vf = bfree_guest_vfile_find_by_name(vname);
+    if (!vf) {
+        return -2;
+    }
+    if (vf->is_dir) {
+        return -21; /* EISDIR */
+    }
+    /* Drop from the namespace immediately; keep storage while OFDs remain. */
+    vf->name[0] = '\0';
+    if (vf->open_refs > 0) {
+        vf->orphaned = 1;
+        return 0;
+    }
+    bfree_guest_vfile_clear_slot(vf);
+    return 0;
+}
