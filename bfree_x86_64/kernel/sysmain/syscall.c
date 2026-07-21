@@ -255,6 +255,7 @@ static int g_coop_session = -1;
 static int g_guest_waitid_active;
 static long g_guest_waitid_infop;
 static long g_guest_wait_status_ptr;
+static int g_coop_parent_in_wait; /* seq-fork: parent blocked in waitpid */
 static int g_guest_tty_pgrp = 1;
 static int g_guest_sid = 1;
 static uint8_t g_guest_sig_disp[BFREE_NSIG];
@@ -740,6 +741,8 @@ static long bfree_guest_exit_from_fork(long status)
     uart_puthex64(g_guest_fork_saved_fsbase);
     uart_puts("\n");
     g_coop_parent_started = 0;
+    g_coop_parent_in_wait = 0;
+    g_guest_wait_status_ptr = 0;
     return BFREE_SYSRET_FORK_PARENT;
 }
 
@@ -754,6 +757,8 @@ static long sys_linux_waitpid(long pid, long status_ptr, long options)
             (int)options);
         if (rc > 0) {
             g_guest_fork_status_ready = 0;
+            g_coop_parent_in_wait = 0;
+            g_guest_wait_status_ptr = 0;
             if (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) {
                 *(int *)(uintptr_t)status_ptr = status;
             }
@@ -771,11 +776,13 @@ static long sys_linux_waitpid(long pid, long status_ptr, long options)
                 g_guest_fork_active = 1;
                 g_guest_wait_status_ptr = status_ptr;
                 g_guest_waitid_active = 0;
+                g_coop_parent_in_wait = 1;
                 return bfree_coop_yield_to_child();
             }
         }
         if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {
             g_guest_wait_status_ptr = status_ptr;
+            g_coop_parent_in_wait = 1;
             return bfree_coop_yield_to_child();
         }
         {
@@ -3418,13 +3425,14 @@ static long sys_linux_read(long fd, long buf, long count)
             }
         }
         ps->len -= n;
-        /* H02: after drain, hand off (AS-copy parent-first only). */
+        /* H02: after drain, hand off (AS-copy parent-first only).
+         * Skip parent handoff while parent is in waitpid (seq-fork). */
         if (g_guest_fork_active && n > 0 && g_coop_parent_started &&
             bfree_process_child_has_private_as()) {
             if (g_coop_side == 0 && g_coop_child_blocked) {
                 return bfree_coop_yield_to_child_done((long)n);
             }
-            if (g_coop_side == 1) {
+            if (g_coop_side == 1 && !g_coop_parent_in_wait) {
                 return bfree_coop_yield_to_parent_done((long)n);
             }
         }
@@ -3586,12 +3594,15 @@ static long sys_linux_write(long fd, long buf, long count)
             ps->buf[ps->len + i] = src[i];
         }
         ps->len += n;
-        /* H02: coop yield after pipe write — return the byte count on resume. */
+        /* H02: coop yield after pipe write — return the byte count on resume.
+         * Seq-fork: parent sits in waitpid; yielding with the byte count would
+         * falsely complete wait and let ash fork the next stage early. */
         if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked && n > 0) {
             return bfree_coop_yield_to_child_done((long)n);
         }
         if (g_guest_fork_active && g_coop_side == 1 && n > 0 &&
-            g_guest_fork_was_as_copy && g_coop_parent_started) {
+            g_guest_fork_was_as_copy && g_coop_parent_started &&
+            !g_coop_parent_in_wait) {
             return bfree_coop_yield_to_parent_done((long)n);
         }
         return (long)n;

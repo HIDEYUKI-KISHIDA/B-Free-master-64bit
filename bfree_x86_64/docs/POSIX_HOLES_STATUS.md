@@ -8,12 +8,14 @@
 
 - [x] COMPILE_OK restore
 - [x] H02 / H01 / H06 kernel path (order 2→1→3)
+- [x] link-fix: inet/unix/shm/pipe reclaim/timer tick (`5b2b711`)
+- [x] H02 pipe smoke: `echo|cat` / `grep` pipe (no PF) (`02480c2`)
 
 ## Next (from TODOLIST)
 
 | Pri | Item |
 |-----|------|
-| **P0** | phase3 ALL PASS |
+| **P0** | phase3 ALL PASS ← **running** |
 | **P1** | ptmx · ash fg · H01 fpstate/nested |
 | **P1** | H17 / H26 方針 |
 | **P2** | NOFORK=0 緑 |
