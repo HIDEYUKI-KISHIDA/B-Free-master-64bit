@@ -52,12 +52,12 @@ wipe 直前に残っていた仕上げ枠。本線 3 点の残りカス＋後回
 
 「BusyBox が普通の Linux CLI っぽく動く」。
 
-- [ ] **T-P2-1** `BFREE_NOFORK_ALL=0` で phase3 / quality 緑
-- [ ] **T-P2-2** inproc pipe / bg-inline パッチ依存の撤去確認（`KEEP_INPROC=0`）
-- [ ] **T-P2-3** パイプ・コマンド置換・サブシェル回帰（phase3 後半マーカー）
-- [ ] **T-P2-4** H28 nofork-gate-meta を STATUS 上 **verified** に更新
+- [x] **T-P2-1** `BFREE_NOFORK_ALL=0` で phase3 / quality 緑（2026-07-22 verified）
+- [x] **T-P2-2** inproc pipe / bg-inline パッチ依存の撤去確認（`KEEP_INPROC=0` 既定）
+- [x] **T-P2-3** パイプ・コマンド置換・サブシェル回帰（phase3 後半マーカー ALL PASS）
+- [x] **T-P2-4** H28 nofork-gate-meta を STATUS 上 **verified** に更新
 
-**完了条件:** NOFORK=0 で ALL PASS（または失敗理由が単一 blocker に収束）。
+**完了条件:** NOFORK=0 で ALL PASS（または失敗理由が単一 blocker に収束）。 ✅ P2 完了。
 
 ---
 
@@ -114,7 +114,7 @@ P1  [x] H06 ash fg STATUS residual (kernel done)
 P1  [x] ptmx
 P1  [x] H17 sigaltstack + AUTODISARM soft
 P1  [x] H26 CLONE_THREAD gate; preempt→P3
-P2  [ ] NOFORK=0 緑
+P2  [x] NOFORK=0 緑 (2026-07-22 verified)
 P3  [ ] musl hello
 P4  [ ] 永続FS / LTP（範囲定義）
 ```
