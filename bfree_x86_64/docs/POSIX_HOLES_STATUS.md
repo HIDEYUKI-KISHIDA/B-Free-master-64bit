@@ -31,6 +31,6 @@
 
 ## Git
 
-- Work: `work/posix-holes-redo`
-- Backup: `backup/polish-e1e3-f1-20260722`（E1–E3 時点）
-- 最新は push 済み — スマホは GitHub で本ファイルと NEXT_INSTRUCTIONS.md を参照
+- Work: `work/posix-holes-redo` @ `defe2d6` (**pushed**)
+- Backup (local): `backup/f1f3-green-20260722` / tag same
+- スマホ: GitHub → このブランチ → [`docs/NEXT_INSTRUCTIONS.md`](./NEXT_INSTRUCTIONS.md) を編集して指示
