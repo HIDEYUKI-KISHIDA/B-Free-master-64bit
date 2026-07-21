@@ -1820,40 +1820,61 @@ long sys_set_tid_address(long tid_ptr)
 }
 
 static unsigned g_guest_futex_log_count;
+static uint64_t bfree_timespec_to_us(const struct timespec *ts);
 
 /*
- * Linux 202: futex — single-threaded guest.
- * H20: real blocking / timeout-bounded coop yield left partial: clearing *uaddr
- * on WAIT is required for Qt (else fastTryLock spins forever). A timeout+yield
- * path that leaves *uaddr locked regresses the desktop; keep clear-on-WAIT.
+ * Linux 202: futex — guest coop (H20 partial↑).
+ * - Timed WAIT: poll until value changes or deadline; leave *uaddr locked on
+ *   ETIMEDOUT (correct for pthread timed wait).
+ * - Untimed WAIT: clear *uaddr then return 0 (Qt single-thread workaround;
+ *   real waiter queue still deferred with preemptive threads → P3 polish).
  */
 long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, long val3)
 {
     int cmd = (int)(op & 0x7f);
 
-    (void)val;
-    (void)timeout_ptr;
     (void)uaddr2;
     (void)val3;
 
     switch (cmd) {
     case 0: /* FUTEX_WAIT */
     case 9: /* FUTEX_WAIT_BITSET */
-        /*
-         * Qt futexSemaphoreTryAcquire_loop: futex_wait returns but *uaddr stays locked
-         * → fastTryLock fails forever (100% CPU, no further serial output).
-         * Single-threaded guest: wake by clearing the word; never return EAGAIN.
-         */
-        if (uaddr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uaddr)) {
-            *(int *)(uintptr_t)uaddr = 0;
+        if (uaddr == 0 || !bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uaddr)) {
+            return -14; /* EFAULT */
         }
+        if (*(volatile int *)(uintptr_t)uaddr != (int)val) {
+            return 0;
+        }
+        if (timeout_ptr != 0) {
+            struct timespec *ts = (struct timespec *)(uintptr_t)timeout_ptr;
+            uint64_t wait_us;
+            uint64_t start;
+
+            if (!bfree_user_vaddr_mapped((uint64_t)(uintptr_t)ts)) {
+                return -14;
+            }
+            wait_us = bfree_timespec_to_us(ts);
+            start = knl_get_current_time();
+            __asm__ volatile("sti" ::: "memory");
+            while ((knl_get_current_time() - start) < wait_us) {
+                if (*(volatile int *)(uintptr_t)uaddr != (int)val) {
+                    __asm__ volatile("cli" ::: "memory");
+                    return 0;
+                }
+                __asm__ volatile("pause" ::: "memory");
+            }
+            __asm__ volatile("cli" ::: "memory");
+            return -110; /* ETIMEDOUT — leave word locked */
+        }
+        /* Untimed: Qt-compatible clear-on-WAIT (single-thread guest). */
+        *(int *)(uintptr_t)uaddr = 0;
         if (g_guest_futex_log_count < 8U) {
             ++g_guest_futex_log_count;
             uart_puts("[FUTEX] wait\n");
         }
         return 0;
     case 1: /* FUTEX_WAKE */
-        return 1;
+        return ((int)val <= 0) ? 0 : 1;
     case 3: /* FUTEX_REQUEUE */
     case 4: /* FUTEX_CMP_REQUEUE */
     case 5: /* FUTEX_WAKE_OP */
@@ -7407,10 +7428,14 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     if (bfree_copy_user_strarray(argv_ptr, argv_buf, 16, &argc) != 0 || argc <= 0) {
         return -14;
     }
-    /* p8test.elf is its own initrd module; everything else re-enters busybox. */
+    /* Named Multiboot modules keep their image; everything else re-enters busybox. */
     {
-        const char *img = bfree_guest_basename_eq(path, "p8test.elf")
-            ? "p8test.elf" : "busybox.elf";
+        const char *img = "busybox.elf";
+        if (bfree_guest_basename_eq(path, "p8test.elf")) {
+            img = "p8test.elf";
+        } else if (bfree_guest_basename_eq(path, "hello.elf")) {
+            img = "hello.elf";
+        }
         exec_img = img;
     }
     /* musl busybox expects argv[0]=/busybox.elf when re-entering from execve. */

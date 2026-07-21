@@ -38,7 +38,7 @@ id	name	severity	status	how
 
 19	mremap	Low	filled	Linux NR25 wired; returns EINVAL (musl realloc fallback)
 
-20	futex-block	Medium	filled	WAIT+timeout→ETIMEDOUT; untimed: coop yield + 4-slot waiter queue; FUTEX_WAKE wakes matching slots; Qt clear-*uaddr fallback
+20	futex-block	Medium	filled↑	timed WAIT→ETIMEDOUT (word stays locked); untimed WAIT clears *uaddr (Qt soft); WAKE soft-1; residual: full waiter queue / preemptive
 
 21	timerfd-linux-nr	Low	filled	283/286/287 → existing timerfd path if any else stub
 

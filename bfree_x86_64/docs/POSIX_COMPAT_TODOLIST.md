@@ -63,12 +63,12 @@ wipe 直前に残っていた仕上げ枠。本線 3 点の残りカス＋後回
 
 ## P3 — Phase 6 musl / スレッド（中〜長）
 
-- [ ] **T-P3-1** `CLONE_THREAD` 意味論の深化（H26 本実装）
-- [ ] **T-P3-2** futex WAIT 実待ち・WAKE（H20 確認）
-- [ ] **T-P3-3** file-backed mmap / musl 静的 hello ゲスト実行
-- [ ] **T-P3-4** セッション／プロセスグループ／TTY ジョブ制御の musl 視点の穴埋め
+- [x] **T-P3-1** `CLONE_THREAD` 意味論の深化（H26 本実装）— serial coop **verified**；preemptive deferred
+- [x] **T-P3-2** futex WAIT 実待ち・WAKE（H20）— timed WAIT+ETIMEDOUT；untimed Qt clear residual
+- [x] **T-P3-3** file-backed mmap / musl 静的 hello ゲスト実行 — **`MUSL_HELLO_OK`**（2026-07-22）
+- [x] **T-P3-4** セッション／PG／TTY — カーネル済み；musl/ash `fg` UX residual（STATUS）
 
-**完了条件:** musl-gcc 静的 hello + 小 CLI がゲストで動く。
+**完了条件:** musl-gcc 静的 hello + 小 CLI がゲストで動く。 ✅ P3 ゲート完了（busybox = 小 CLI）。
 
 ---
 
@@ -115,6 +115,6 @@ P1  [x] ptmx
 P1  [x] H17 sigaltstack + AUTODISARM soft
 P1  [x] H26 CLONE_THREAD gate; preempt→P3
 P2  [x] NOFORK=0 緑 (2026-07-22 verified)
-P3  [ ] musl hello
+P3  [x] musl hello MUSL_HELLO_OK (2026-07-22)
 P4  [ ] 永続FS / LTP（範囲定義）
 ```

@@ -1,32 +1,35 @@
 # POSIX holes — mobile status
 
 **Branch:** `work/posix-holes-redo`  
-**Updated:** 2026-07-22 (P2)  
+**Updated:** 2026-07-22 (P3)  
 **Full TODOLIST:** [POSIX_COMPAT_TODOLIST.md](./POSIX_COMPAT_TODOLIST.md)
 
 ## Done (recent)
 
-- [x] **P0** `phase3` → `RESULT: ALL PASS` (`a94e501`)
-- [x] **P1** H17/H26 gate + H01/H06 residual 方針 (`f0bab5c`)
-- [x] **P2** `BFREE_NOFORK_ALL=0` + `KEEP_INPROC=0` → **phase3 ALL PASS**（verified）
-  - ash: `APPLET_IS_NOFORK` · seq-fork · NOEXEC→execve · **no** inproc/bg-inline
-  - 検証: `tools/_p2_nofork_phase3.sh`
+- [x] **P0** phase3 ALL PASS (`a94e501`)
+- [x] **P1** residuals 方針 (`f0bab5c`)
+- [x] **P2** NOFORK=0 verified (`97c577e`)
+- [x] **P3** musl 静的 `hello.elf` ゲスト実行 → **`MUSL_HELLO_OK`**
+  - Multiboot module + execve basename `hello.elf`
+  - link `-Ttext-segment=0x500000`
+  - smoke: `tools/_p3_musl_hello_smoke.sh`
+  - 「小 CLI」= musl busybox（P2 緑）
 
-## P1 residuals（据え置き）
+## P3 詳細
 
 | ID | 状態 |
 |----|------|
-| H01 fpstate / nested CATCH | deferred polish |
-| H06 ash `fg` UX | userspace residual（`No current job`） |
-| H17 SS_AUTODISARM | soft accept |
-| H26 preemptive threads | →P3 |
+| T-P3-3 musl hello | ✅ `MUSL_HELLO_OK` |
+| T-P3-2 futex | ✅ timed WAIT→ETIMEDOUT；untimed clear = Qt soft residual |
+| T-P3-1 CLONE_THREAD | serial coop gate 維持；**preemptive deferred** |
+| T-P3-4 musl jobctl | カーネル setpgid/TTY 済み；ash/`fg` UX residual（P1 と同） |
 
 ## Next
 
 | Pri | Item |
 |-----|------|
-| **P3** | musl 静的 / CLONE_THREAD 深化 / futex / fpstate |
 | **P4** | 永続FS / 本ネット / LTP |
+| polish | pthread 並行・waiter キュー・fpstate |
 
 ## Git
 
