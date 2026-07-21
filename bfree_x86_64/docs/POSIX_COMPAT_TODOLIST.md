@@ -108,7 +108,7 @@ Sprint D+         P3 → P4
 ## いまのチェックボックス（コピー用）
 
 ```
-P0  [ ] phase3 ALL PASS
+P0  [~] phase3 — core/M1/B0/B2/P4–P6 OK; P7·ptmx·p8 残
 P1  [ ] H01 fpstate/nested
 P1  [ ] H06 ash fg
 P1  [ ] ptmx
