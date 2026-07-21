@@ -35,6 +35,6 @@
 
 ## Git
 
-- Work: `work/posix-holes-redo`
+- Work: `work/posix-holes-redo` @ `ae6ed61`
 - Backup: `backup/p0-p4-complete-20260722` / tag `backup/p0-p4-green-20260722`
-- Post-polish backup: see latest `backup/polish-*` branch/tag
+- Post-polish: `backup/polish-e1e3-f1-20260722` / tag `backup/polish-e1e3-f1-green-20260722`
