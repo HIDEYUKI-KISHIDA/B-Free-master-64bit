@@ -6891,9 +6891,18 @@ static void bfree_guest_vfork_stack_restore(void)
 
 static int bfree_guest_basename_eq(const char *a, const char *b)
 {
+    const char *base = a;
     unsigned i = 0;
     if (!a || !b) {
         return 0;
+    }
+    while (*base) {
+        if (*base == '/') {
+            ++base;
+            a = base;
+            continue;
+        }
+        ++base;
     }
     while (a[i] && b[i]) {
         if (a[i] != b[i]) {
