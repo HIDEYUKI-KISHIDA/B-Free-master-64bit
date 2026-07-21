@@ -1960,6 +1960,35 @@ static void bfree_guest_fork_child_pipe_close_writers(void)
 }
 static uint64_t g_guest_eventfd_val[BFREE_MAX_GUEST_EVENTFD];
 
+#define BFREE_PTY_SLOTS             4
+#define BFREE_PTY_BUF               512
+#define BFREE_PTY_MASTER_BASE       0x3A00
+#define BFREE_PTY_SLAVE_BASE        0x3A40
+
+typedef struct {
+    int used;
+    int master_open;
+    int slave_open;
+    unsigned char m2s[BFREE_PTY_BUF];
+    size_t m2s_len;
+    unsigned char s2m[BFREE_PTY_BUF];
+    size_t s2m_len;
+} bfree_pty_t;
+static bfree_pty_t g_guest_ptys[BFREE_PTY_SLOTS];
+
+static int bfree_pty_slot_from_fd(int fd)
+{
+    if (fd >= (int)BFREE_PTY_MASTER_BASE &&
+        fd < (int)BFREE_PTY_MASTER_BASE + BFREE_PTY_SLOTS) {
+        return fd - (int)BFREE_PTY_MASTER_BASE;
+    }
+    if (fd >= (int)BFREE_PTY_SLAVE_BASE &&
+        fd < (int)BFREE_PTY_SLAVE_BASE + BFREE_PTY_SLOTS) {
+        return fd - (int)BFREE_PTY_SLAVE_BASE;
+    }
+    return -1;
+}
+
 static int bfree_user_ptr_mapped(long ptr);
 static int copy_user_cstr(long user_ptr, char *out, size_t cap);
 static int bfree_guest_is_pipe_rd(int fd);
@@ -1995,6 +2024,8 @@ static int bfree_guest_eventfd_index(int fd)
 #define BFREE_GUEST_RESOLV_FD       0x3735
 #define BFREE_GUEST_USR_DIR_FD      0x3724
 #define BFREE_GUEST_VAR_DIR_FD      0x3725
+#define BFREE_GUEST_HOME_DIR_FD     0x3732
+#define BFREE_GUEST_PTS_DIR_FD      0x3733
 #define BFREE_GUEST_PROC_DIR_FD     0x3726
 #define BFREE_GUEST_PROC_PID_DIR_FD 0x3727
 #define BFREE_GUEST_PROC_PIDSTAT_FD 0x3728
@@ -2021,6 +2052,7 @@ typedef struct {
     int is_dir;     /* directory vnode under /tmp (name may contain '/') */
     int orphaned;   /* unlinked from namespace but still open */
     int open_refs;  /* live OFDs pointing at this vnode */
+    int nlink;      /* directory entries (primary name + aliases) */
     char name[48];  /* path relative to /tmp, e.g. "a" or "a/b.txt" */
     unsigned char data[BFREE_GUEST_VFILE_SIZE];
     size_t len;
@@ -2030,6 +2062,14 @@ typedef struct {
 } bfree_guest_vfile_t;
 
 static bfree_guest_vfile_t g_guest_vfiles[BFREE_GUEST_VFILE_SLOTS];
+
+#define BFREE_GUEST_ALIAS_SLOTS 32
+typedef struct {
+    int used;
+    int vnode; /* index into g_guest_vfiles */
+    char name[48];
+} bfree_guest_alias_t;
+static bfree_guest_alias_t g_guest_aliases[BFREE_GUEST_ALIAS_SLOTS];
 
 #define BFREE_GUEST_OFD_SLOTS       64
 #define BFREE_GUEST_OFD_FD_BASE     0x3800
@@ -2231,14 +2271,25 @@ static bfree_guest_vfile_t *bfree_guest_vfile_from_open_fd(
 
 static void bfree_guest_vfile_clear_slot(bfree_guest_vfile_t *vf)
 {
+    int i;
+    int vidx;
+
     if (!vf) {
         return;
+    }
+    vidx = (int)(vf - g_guest_vfiles);
+    for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
+        if (g_guest_aliases[i].used && g_guest_aliases[i].vnode == vidx) {
+            g_guest_aliases[i].used = 0;
+            g_guest_aliases[i].name[0] = '\0';
+        }
     }
     vf->used = 0;
     vf->is_symlink = 0;
     vf->is_dir = 0;
     vf->orphaned = 0;
     vf->open_refs = 0;
+    vf->nlink = 0;
     vf->name[0] = '\0';
     vf->len = 0;
     vf->pos = 0;
@@ -2317,6 +2368,58 @@ static bfree_guest_vfile_t *bfree_guest_vfile_find_by_name(const char *name)
             return &g_guest_vfiles[i];
         }
     }
+    for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
+        int v;
+        if (!g_guest_aliases[i].used) {
+            continue;
+        }
+        if (strcmp(g_guest_aliases[i].name, name) != 0) {
+            continue;
+        }
+        v = g_guest_aliases[i].vnode;
+        if (v >= 0 && v < BFREE_GUEST_VFILE_SLOTS &&
+            g_guest_vfiles[v].used && !g_guest_vfiles[v].orphaned) {
+            return &g_guest_vfiles[v];
+        }
+    }
+    return 0;
+}
+
+static int bfree_guest_alias_add(const char *name, int vnode)
+{
+    int i;
+    size_t n = 0;
+
+    if (!name || name[0] == '\0' || vnode < 0 || vnode >= BFREE_GUEST_VFILE_SLOTS) {
+        return -22;
+    }
+    for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
+        if (g_guest_aliases[i].used) {
+            continue;
+        }
+        g_guest_aliases[i].used = 1;
+        g_guest_aliases[i].vnode = vnode;
+        while (name[n] != '\0' && n + 1U < sizeof(g_guest_aliases[i].name)) {
+            g_guest_aliases[i].name[n] = name[n];
+            ++n;
+        }
+        g_guest_aliases[i].name[n] = '\0';
+        return 0;
+    }
+    return -28; /* ENOSPC */
+}
+
+static int bfree_guest_alias_remove_name(const char *name)
+{
+    int i;
+    for (i = 0; i < BFREE_GUEST_ALIAS_SLOTS; ++i) {
+        if (g_guest_aliases[i].used &&
+            strcmp(g_guest_aliases[i].name, name) == 0) {
+            g_guest_aliases[i].used = 0;
+            g_guest_aliases[i].name[0] = '\0';
+            return 1;
+        }
+    }
     return 0;
 }
 
@@ -2340,6 +2443,7 @@ static int bfree_guest_vfile_alloc_slot(const char *name, int truncate)
             g_guest_vfiles[i].used = 1;
             g_guest_vfiles[i].orphaned = 0;
             g_guest_vfiles[i].open_refs = 0;
+            g_guest_vfiles[i].nlink = 1;
             while (name[n] != '\0' && n + 1U < sizeof(g_guest_vfiles[i].name)) {
                 g_guest_vfiles[i].name[n] = name[n];
                 ++n;
@@ -2368,6 +2472,76 @@ static int bfree_guest_path_is_under_tmp(const char *path, char *name_out, size_
     }
     if (strcmp(path, "/tmp") == 0) {
         name_out[0] = '\0';
+        return 1;
+    }
+    /* Writable namespaces: /var/* → "var/...", /home/* → "home/...". */
+    if (strcmp(path, "/var") == 0) {
+        if (name_cap < 4) {
+            return 0;
+        }
+        name_out[0] = 'v'; name_out[1] = 'a'; name_out[2] = 'r'; name_out[3] = '\0';
+        return 1;
+    }
+    if (strcmp(path, "/home") == 0) {
+        if (name_cap < 5) {
+            return 0;
+        }
+        name_out[0] = 'h'; name_out[1] = 'o'; name_out[2] = 'm';
+        name_out[3] = 'e'; name_out[4] = '\0';
+        return 1;
+    }
+    if ((strncmp(path, "/var/", 5) == 0 && path[5] != '\0') ||
+        (strncmp(path, "/home/", 6) == 0 && path[6] != '\0')) {
+        const char *src;
+        size_t prefix;
+        size_t n = 0;
+        if (path[1] == 'v') {
+            src = path + 1; /* "var/..." */
+            prefix = 0;
+        } else {
+            src = path + 1; /* "home/..." */
+            prefix = 0;
+        }
+        while (src[n] != '\0' && n + 1U < name_cap) {
+            name_out[n] = src[n];
+            ++n;
+        }
+        if (src[n] != '\0') {
+            return 0;
+        }
+        name_out[n] = '\0';
+        (void)prefix;
+        /* Reject . / .. components in the relative part after first slash. */
+        {
+            const char *rel = name_out;
+            size_t i;
+            size_t seg_start = 0;
+            while (*rel != '/' && *rel != '\0') {
+                ++rel;
+            }
+            if (*rel == '/') {
+                ++rel;
+            }
+            for (i = 0; rel[i] != '\0'; ++i) {
+                if (rel[i] == '/') {
+                    size_t seglen = i - seg_start;
+                    if (seglen == 0) {
+                        return 0;
+                    }
+                    if (seglen == 1 && rel[seg_start] == '.') {
+                        return 0;
+                    }
+                    if (seglen == 2 && rel[seg_start] == '.' &&
+                        rel[seg_start + 1] == '.') {
+                        return 0;
+                    }
+                    seg_start = i + 1U;
+                }
+            }
+            if (i == 0 || rel[i - 1] == '/') {
+                return 0;
+            }
+        }
         return 1;
     }
     if (strncmp(path, "/tmp/", 5) != 0) {
@@ -2438,6 +2612,9 @@ static int bfree_guest_tmp_parents_exist(const char *rel)
     }
     memcpy(parent, rel, last_slash);
     parent[last_slash] = '\0';
+    if (strcmp(parent, "var") == 0 || strcmp(parent, "home") == 0) {
+        return 1;
+    }
     for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
         if (g_guest_vfiles[i].used &&
             !g_guest_vfiles[i].orphaned &&
@@ -3066,58 +3243,72 @@ static long sys_linux_gettid(void)
     return 1;
 }
 
+static int bfree_guest_sig_is_fatal_default(int sig)
+{
+    switch (sig) {
+    case 1: case 2: case 3: case 6: case 9: case 15:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 static long sys_linux_kill(long pid, long sig)
 {
     int s = (int)sig;
     int target = (int)pid;
+    int self_pid = g_guest_fork_active ? g_guest_fork_pid : 1;
 
-    if (s < 0) {
+    if (s < 0 || s >= BFREE_NSIG) {
         return -22;
     }
     if (target < -1) {
-        /* process-group kill: map to focused child if pgid matches */
         int pg = (int)(-target);
         if (g_guest_fork_active && bfree_process_getpgid(g_guest_fork_pid) == pg) {
             target = g_guest_fork_pid;
         } else if (pg == g_guest_pgid || pg == g_guest_tty_pgrp) {
-            target = 0; /* broadcast to self session — soft ok */
+            target = self_pid;
         } else if (!bfree_process_pgid_has_member(pg)) {
             return -3;
         } else {
-            target = 0;
+            target = self_pid;
         }
     }
+    if (target == -1 || target == 0) {
+        target = self_pid;
+    }
     if (s == 0) {
-        /* existence check */
-        if (target == 0 || target == 1 || target == -1) {
-            return 0;
-        }
-        if (g_guest_fork_active && target == g_guest_fork_pid) {
-            return 0;
-        }
-        if (bfree_process_getpgid(target) > 0) {
+        if (target == 1 || target == 2 || target == self_pid ||
+            (g_guest_fork_active && target == g_guest_fork_pid) ||
+            bfree_process_getpgid(target) > 0) {
             return 0;
         }
         return -3;
     }
-    /* Cont stopped child. */
     if (s == BFREE_SIGCONT || s == 18) {
-        if (target == g_guest_fork_pid || target == 0 || target == -1) {
-            (void)bfree_process_cont_pid(g_guest_fork_pid > 0 ? g_guest_fork_pid : target);
-        } else {
-            (void)bfree_process_cont_pid(target);
-        }
+        (void)bfree_process_cont_pid(
+            (target == g_guest_fork_pid || target == self_pid)
+                ? (g_guest_fork_pid > 0 ? g_guest_fork_pid : target)
+                : target);
         bfree_guest_sig_raise(s);
         return 0;
     }
-    /* Stop: if coop child is running, park it for wait(WUNTRACED). */
     if ((s == BFREE_SIGTSTP || s == BFREE_SIGSTOP || s == 19 || s == 20) &&
         g_guest_fork_active && g_coop_side == 1 &&
-        (target == 0 || target == -1 || target == g_guest_fork_pid)) {
+        (target == self_pid || target == g_guest_fork_pid)) {
         return bfree_guest_stop_from_fork(s);
     }
-    if (target == 1 || target == 2 || target == -1 || target == 0 ||
-        (g_guest_fork_active && target == g_guest_fork_pid) ||
+    /* Fatal signal to live coop child (incl. kill -TERM $$ inside the child). */
+    if (g_guest_fork_active &&
+        (target == g_guest_fork_pid || target == self_pid) &&
+        (bfree_guest_sig_is_fatal_default(s) || s == 9)) {
+        if (s != 9 && g_guest_sig_disp[s] == BFREE_SIG_IGN) {
+            return 0;
+        }
+        bfree_guest_fork_child_pipe_close_writers();
+        return bfree_guest_exit_from_fork_signal(s);
+    }
+    if (target == 1 || target == 2 || target == self_pid ||
         (g_guest_fork_status_ready && target == g_guest_fork_pid)) {
         bfree_guest_sig_raise(s);
         return 0;
@@ -3698,6 +3889,9 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     if (strcmp(path, "/var") == 0 || (want_dir && strncmp(path, "/var/", 5) == 0 && path[5] == '\0')) {
         return bfree_guest_vfile_publish_open(BFREE_GUEST_VAR_DIR_FD, (int)flags, 0);
     }
+    if (strcmp(path, "/home") == 0 || (want_dir && strncmp(path, "/home/", 6) == 0 && path[6] == '\0')) {
+        return bfree_guest_vfile_publish_open(BFREE_GUEST_HOME_DIR_FD, (int)flags, 0);
+    }
     if (strncmp(path, "/bin/", 5) == 0 && path[5] != '\0') {
         g_guest_busybox_off = 0;
         return bfree_guest_fd_publish(BFREE_GUEST_BUSYBOX_FD);
@@ -3782,6 +3976,26 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     }
     if (strcmp(path, "/dev/urandom") == 0 || strcmp(path, "/dev/random") == 0) {
         return bfree_guest_fd_publish(BFREE_GUEST_DEV_URANDOM_FD);
+    }
+    if (strcmp(path, "/dev/tty") == 0) {
+        return bfree_guest_fd_publish(BFREE_GUEST_DEV_TTY_FD);
+    }
+    if (strcmp(path, "/dev/pts") == 0) {
+        return bfree_guest_vfile_publish_open(BFREE_GUEST_PTS_DIR_FD, (int)flags, 0);
+    }
+    if (strcmp(path, "/dev/ptmx") == 0) {
+        int s;
+        for (s = 0; s < BFREE_PTY_SLOTS; ++s) {
+            if (!g_guest_ptys[s].used) {
+                g_guest_ptys[s].used = 1;
+                g_guest_ptys[s].master_open = 1;
+                g_guest_ptys[s].slave_open = 0;
+                g_guest_ptys[s].m2s_len = 0;
+                g_guest_ptys[s].s2m_len = 0;
+                return bfree_guest_fd_publish((int)BFREE_PTY_MASTER_BASE + s);
+            }
+        }
+        return -24; /* EMFILE */
     }
     if (strcmp(path, "/proc") == 0 || (want_dir && strncmp(path, "/proc/", 6) == 0 && path[6] == '\0')) {
         return bfree_guest_vfile_publish_open(BFREE_GUEST_PROC_DIR_FD, (int)flags, 0);
@@ -4495,8 +4709,9 @@ static long bfree_linux_stat_fill_vfile(long statbuf, const bfree_guest_vfile_t 
     }
     ret = bfree_linux_stat_fill(statbuf, mode, size);
     if (ret == 0) {
-        ((bfree_linux_stat_t *)(uintptr_t)statbuf)->st_ino =
-            100ULL + (uint64_t)(vf - g_guest_vfiles);
+        bfree_linux_stat_t *st = (bfree_linux_stat_t *)(uintptr_t)statbuf;
+        st->st_ino = 100ULL + (uint64_t)(vf - g_guest_vfiles);
+        st->st_nlink = (vf->nlink > 0) ? (uint64_t)vf->nlink : 1ULL;
     }
     return ret;
 }
@@ -5322,8 +5537,18 @@ static long sys_linux_unlink(long dirfd, long path_ptr)
     if (vf->is_dir) {
         return -21; /* EISDIR */
     }
-    /* Drop from the namespace immediately; keep storage while OFDs remain. */
-    vf->name[0] = '\0';
+    /* Remove this directory entry (primary name or alias). */
+    if (strcmp(vf->name, vname) == 0) {
+        vf->name[0] = '\0';
+    } else {
+        (void)bfree_guest_alias_remove_name(vname);
+    }
+    if (vf->nlink > 0) {
+        vf->nlink--;
+    }
+    if (vf->nlink > 0) {
+        return 0; /* other hard links remain */
+    }
     if (vf->open_refs > 0) {
         vf->orphaned = 1;
         return 0;
@@ -5435,6 +5660,61 @@ static long sys_linux_rename(long olddirfd, long old_ptr, long newdirfd, long ne
         ++n;
     }
     src->name[n] = '\0';
+    return 0;
+}
+
+
+static long sys_linux_link(long olddirfd, long oldpath_ptr, long newdirfd, long newpath_ptr)
+{
+    char oldp[256];
+    char newp[256];
+    char oname[64];
+    char nname[64];
+    bfree_guest_vfile_t *src;
+    int vidx;
+    int rc;
+    long path_err;
+
+    if (copy_user_cstr(oldpath_ptr, oldp, sizeof(oldp)) != 0 ||
+        copy_user_cstr(newpath_ptr, newp, sizeof(newp)) != 0) {
+        return -14;
+    }
+    path_err = bfree_guest_path_at(olddirfd, oldp, sizeof(oldp));
+    if (path_err != 0) {
+        return path_err;
+    }
+    path_err = bfree_guest_path_at(newdirfd, newp, sizeof(newp));
+    if (path_err != 0) {
+        return path_err;
+    }
+    if (!bfree_guest_path_is_under_tmp(oldp, oname, sizeof(oname)) ||
+        oname[0] == '\0' ||
+        !bfree_guest_path_is_under_tmp(newp, nname, sizeof(nname)) ||
+        nname[0] == '\0') {
+        return -30; /* EROFS */
+    }
+    src = bfree_guest_vfile_find_by_name(oname);
+    if (!src) {
+        return -2;
+    }
+    if (src->is_dir) {
+        return -1; /* EPERM */
+    }
+    if (bfree_guest_vfile_find_by_name(nname)) {
+        return -17; /* EEXIST */
+    }
+    if (!bfree_guest_tmp_parents_exist(nname)) {
+        return -2;
+    }
+    vidx = (int)(src - g_guest_vfiles);
+    rc = bfree_guest_alias_add(nname, vidx);
+    if (rc < 0) {
+        return rc;
+    }
+    if (src->nlink < 1) {
+        src->nlink = 1;
+    }
+    src->nlink++;
     return 0;
 }
 
@@ -8555,13 +8835,52 @@ static long sys_linux_rt_sigreturn(void)
 #define BFREE_RESTORE_SOFT_BODIES 1
 static long bfree_guest_exit_from_fork_signal(int sig)
 {
-    /* Soft: treat as normal coop child exit with signal status. */
-    (void)sig;
-    if (g_guest_fork_active) {
-        g_guest_fork_status = sig & 0x7f;
-        g_guest_fork_status_ready = 1;
-        g_guest_fork_active = 0;
+    int as_copy = g_guest_fork_was_as_copy;
+    int st = sig & 0x7f;
+
+    if (st == 0) {
+        st = 9;
     }
+    bfree_process_exit_child_signal(st);
+    g_guest_fork_active = 0;
+    g_guest_fork_status = st;
+    g_guest_fork_status_ready = 1;
+    bfree_guest_sig_raise(17);
+    bfree_coop_fd_switch_to(0);
+    g_coop_child_blocked = 0;
+    bfree_guest_stdio_heal_pipes();
+    if (!as_copy) {
+        size_t i;
+        for (i = 0; i < sizeof(g_guest_cwd); ++i) {
+            g_guest_cwd[i] = g_guest_fork_saved_cwd[i];
+            if (g_guest_fork_saved_cwd[i] == '\0') {
+                break;
+            }
+        }
+        g_guest_cwd[sizeof(g_guest_cwd) - 1U] = '\0';
+        g_guest_heap_next = g_guest_fork_saved_heap_next;
+        g_guest_brk = g_guest_fork_saved_brk;
+        bfree_guest_vfork_stack_restore();
+    } else {
+        bfree_guest_restore_parent_isol(1);
+        bfree_coop_as_switch_to(0);
+    }
+    g_guest_fork_was_as_copy = 0;
+    if (knl_current_task != 0) {
+        knl_current_task->user_fsbase = g_guest_fork_saved_fsbase;
+    }
+    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);
+    g_bfree_sysret_exec_cr3 = 0;
+    if (as_copy && g_coop_parent_started) {
+        bfree_coop_publish_parent_resume();
+    }
+    g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+    g_coop_parent_started = 0;
+    g_coop_parent_in_wait = 0;
+    g_guest_wait_status_ptr = 0;
+    uart_puts("[VFORK] signal exit sig=");
+    uart_puthex64((uint64_t)(unsigned)st);
+    uart_puts("\n");
     return BFREE_SYSRET_FORK_PARENT;
 }
 #endif
@@ -8581,7 +8900,7 @@ static long sys_linux_set_robust_list(long head, long len) { (void)head;(void)le
 static long sys_linux_rt_sigpending(long set) { (void)set; return 0; }
 /* H01: sys_linux_rt_sigreturn provided above */
 static long sys_linux_clock_getres_linux(long clk, long tp) { (void)clk;(void)tp; return 0; }
-static int bfree_pty_slot_from_fd(int fd) { (void)fd; return -1; }
+/* bfree_pty_slot_from_fd: real impl above */
 static unsigned initrd_presence_mask(void) { return 0; }
 #endif
 
@@ -8781,6 +9100,10 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_rmdir(BFREE_LINUX_AT_FDCWD, arg1);
     case 258: /* mkdirat */
         return sys_linux_mkdir(arg1, arg2, arg3);
+    case 86: /* link */
+        return sys_linux_link(BFREE_LINUX_AT_FDCWD, arg1, BFREE_LINUX_AT_FDCWD, arg2);
+    case 265: /* linkat */
+        return sys_linux_link(arg1, arg2, arg3, arg4);
     case 88: /* symlink */
         return sys_linux_symlink(arg1, BFREE_LINUX_AT_FDCWD, arg2);
     case 266: /* symlinkat */
