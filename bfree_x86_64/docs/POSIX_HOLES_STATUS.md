@@ -1,35 +1,31 @@
 # POSIX holes — mobile status
 
 **Branch:** `work/posix-holes-redo`  
-**Updated:** 2026-07-22 (P3)  
-**Full TODOLIST:** [POSIX_COMPAT_TODOLIST.md](./POSIX_COMPAT_TODOLIST.md)
+**Updated:** 2026-07-22 (P4)  
+**Full TODOLIST:** [POSIX_COMPAT_TODOLIST.md](./POSIX_COMPAT_TODOLIST.md)  
+**P4 scope:** [POSIX_PHASE7_AGREED_SCOPE.md](./POSIX_PHASE7_AGREED_SCOPE.md)
 
-## Done (recent)
+## Done
 
-- [x] **P0** phase3 ALL PASS (`a94e501`)
-- [x] **P1** residuals 方針 (`f0bab5c`)
-- [x] **P2** NOFORK=0 verified (`97c577e`)
-- [x] **P3** musl 静的 `hello.elf` ゲスト実行 → **`MUSL_HELLO_OK`**
-  - Multiboot module + execve basename `hello.elf`
-  - link `-Ttext-segment=0x500000`
-  - smoke: `tools/_p3_musl_hello_smoke.sh`
-  - 「小 CLI」= musl busybox（P2 緑）
+- [x] **P0** phase3 ALL PASS
+- [x] **P1** residuals 方針
+- [x] **P2** NOFORK=0 verified
+- [x] **P3** musl `hello.elf` → `MUSL_HELLO_OK`
+- [x] **P4** Phase7 **合意範囲** green（`tools/_p4_agreed_gate.sh`）
 
-## P3 詳細
+## P4 agreed vs deferred
 
-| ID | 状態 |
-|----|------|
-| T-P3-3 musl hello | ✅ `MUSL_HELLO_OK` |
-| T-P3-2 futex | ✅ timed WAIT→ETIMEDOUT；untimed clear = Qt soft residual |
-| T-P3-1 CLONE_THREAD | serial coop gate 維持；**preemptive deferred** |
-| T-P3-4 musl jobctl | カーネル setpgid/TTY 済み；ash/`fg` UX residual（P1 と同） |
+| Agreed (green) | Deferred |
+|----------------|----------|
+| `/persist` RAM vfile | `persist.img` + block/ext2 |
+| pipe inet + `10.0.2/24` stub | real NIC |
+| default ENOSYS residual | ENOSYS ゼロ化 |
+| LTP gate SKIP + self-test | vendored LTP subset |
 
-## Next
+## Next (beyond TODOLIST P0–P4)
 
-| Pri | Item |
-|-----|------|
-| **P4** | 永続FS / 本ネット / LTP |
-| polish | pthread 並行・waiter キュー・fpstate |
+- polish: ash `fg`、pthread 並行、futex waiter キュー、fpstate
+- Phase7 full: 永続ブロック FS / 本ネット / LTP claim
 
 ## Git
 

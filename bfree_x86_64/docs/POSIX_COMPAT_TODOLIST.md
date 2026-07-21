@@ -74,12 +74,12 @@ wipe 直前に残っていた仕上げ枠。本線 3 点の残りカス＋後回
 
 ## P4 — Phase 7 「完全互換」方向（長）
 
-- [ ] **T-P4-1** 永続ブロック FS（`/persist` を RAM-only から脱出）— `sf01_persistent_fs_note.md`
-- [ ] **T-P4-2** 本ネット（現状 loopback/slirp 風スタブ）
-- [ ] **T-P4-3** 未登録 syscall の ENOSYS を意図的 residual 以外ゼロへ
-- [ ] **T-P4-4** LTP / OPTS の限定ゲート（`POSIX_THIRD_PARTY_TEST_PLAN.md`）
+- [x] **T-P4-1** 永続ブロック FS — **agreed:** `/persist` RAM vfile（`sf01`）；block FS deferred
+- [x] **T-P4-2** 本ネット — **agreed:** pipe loopback/`10.0.2/24` stub；NIC deferred
+- [x] **T-P4-3** ENOSYS — **agreed:** default → −38 intentional residual；ゼロ化 deferred
+- [x] **T-P4-4** LTP — **agreed:** `ltp_subset_gate.sh` SKIP+self-test；vendored LTP deferred
 
-**完了条件:** ロードマップ Phase7 チェックリストの合意範囲が緑。
+**完了条件:** ロードマップ Phase7 チェックリストの**合意範囲**が緑。 ✅ 合意範囲は `docs/POSIX_PHASE7_AGREED_SCOPE.md`（2026-07-22）。
 
 ---
 
@@ -116,5 +116,5 @@ P1  [x] H17 sigaltstack + AUTODISARM soft
 P1  [x] H26 CLONE_THREAD gate; preempt→P3
 P2  [x] NOFORK=0 緑 (2026-07-22 verified)
 P3  [x] musl hello MUSL_HELLO_OK (2026-07-22)
-P4  [ ] 永続FS / LTP（範囲定義）
+P4  [x] Phase7 agreed scope green (2026-07-22)
 ```

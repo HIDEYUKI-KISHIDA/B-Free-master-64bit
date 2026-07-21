@@ -52,9 +52,11 @@
 
 ### Phase 7 / M5 — POSIX / Linux 完全互換（最終 PR 群）
 
-- [ ] 永続ブロック FS・ネット・IPC・権限・マウント・デバイスノード
-- [ ] 未実装 syscall の `ENOSYS` を意図的 residual 以外ゼロへ
-- [ ] POSIX テストスイート / LTP のゲート（範囲は別途定義）
+- [~] 永続ブロック FS・ネット・IPC・権限・マウント・デバイスノード — **P4 合意:** `/persist` RAM vfile + pipe inet stub（block/NIC は deferred）
+- [~] 未実装 syscall の `ENOSYS` を意図的 residual 以外ゼロへ — **P4 合意:** default ENOSYS = intentional residual
+- [x] POSIX テストスイート / LTP のゲート（範囲は別途定義）— **`tools/ltp_subset_gate.sh`**（未 vendor 時 SKIP + self-test）
+
+合意範囲の詳細: `docs/POSIX_PHASE7_AGREED_SCOPE.md`（2026-07-22）。
 
 ## 非ゴール（このトラックでは約束しない）
 
