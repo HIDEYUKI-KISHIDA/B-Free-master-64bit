@@ -23,12 +23,12 @@
 
 復元＋residual コミットが **実ゲストで壊れていない**ことを証明する。
 
-- [ ] **T-P0-1** `make -C bfree_x86_64/kernel` → `kernel.elf` / ISO 更新
-- [ ] **T-P0-2** `tools/phase3_guest_auto.sh` → **`RESULT: ALL PASS`**
-- [ ] **T-P0-3** 失敗時はログを `.cache/` に残し、STATUS.md に blocker 1 行追記
-- [ ] **T-P0-4** 緑なら STATUS を「phase3 green」に更新して push
+- [x] **T-P0-1** `make -C bfree_x86_64/kernel` → `kernel.elf` / ISO 更新
+- [x] **T-P0-2** `tools/phase3_guest_auto.sh` → **`RESULT: ALL PASS`** (2026-07-22)
+- [x] **T-P0-3** 失敗時はログを `.cache/` に残し、STATUS.md に blocker 1 行追記
+- [x] **T-P0-4** 緑なら STATUS を「phase3 green」に更新して push
 
-**完了条件:** phase3 ALL PASS + GitHub STATUS 更新。
+**完了条件:** phase3 ALL PASS + GitHub STATUS 更新。 ✅ P0 完了。
 
 ---
 
@@ -40,7 +40,7 @@ wipe 直前に残っていた仕上げ枠。本線 3 点の残りカス＋後回
 |----|-----|------|------|----------|
 | **T-P1-1** | H01 | High | fpstate（可能な範囲）／nested CATCH | 文書化 or 実装；パニック無し |
 | **T-P1-2** | H06 | High | BusyBox ash **`fg` UX** パッチ | `fg`/`bg` スモーク or 「カーネル完了・ash は別」と STATUS に明記 |
-| **T-P1-3** | ptmx | High | FD 競合解消（inet `0x3B00` vs PTY `0x3A00`）→ `_patch_pty_stage2.py` | `/dev/ptmx` マーカー有・P9_PTY 相当 |
+| **T-P1-3** | ptmx | High | ✅ inet `0x3B00` / PTY `0x3A00` + master↔slave I/O | `/dev/ptmx` · P9_PTY_OK |
 | **T-P1-4** | H17 | Low | SS_AUTODISARM | 実装 or 意図的 residual 固定 |
 | **T-P1-5** | H26 | Low | プリエンプティブ thread | Phase6 に回すなら STATUS に「deferred→P3」 |
 
@@ -108,7 +108,7 @@ Sprint D+         P3 → P4
 ## いまのチェックボックス（コピー用）
 
 ```
-P0  [~] phase3 — core/M1/B0/B2/P4–P6 OK; P7·ptmx·p8 残
+P0  [x] phase3 ALL PASS (2026-07-22)
 P1  [ ] H01 fpstate/nested
 P1  [ ] H06 ash fg
 P1  [ ] ptmx
