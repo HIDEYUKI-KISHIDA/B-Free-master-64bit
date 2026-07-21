@@ -17,13 +17,22 @@ Honest progress only — **not** a real on-disk ext2/block FS.
 - Survives applet `execve` / BusyBox re-exec within the same boot (vnode table is global).
 - Does **not** survive reboot, power-off, or ISO remount — RAM-only.
 
-## Concrete next steps (Phase 7)
+## Implemented (2026-07-22, F1)
 
-1. **Scaffold done:** `tools/_f1_persist_img_scaffold.sh` creates `persist.img` (8MiB zeroed) and prints QEMU `-drive` example. Not wired into phase3 yet.
-2. Implement a minimal block layer (`read_block` / `write_block`) over IDE/ATA PIO or finish `sata_ahci_*_sector`.
-3. Port or write a tiny ext2 (or FAT) read/write: superblock, inode, directory, single-block files first.
-4. Mount at `/persist` replacing the vfile prefix; keep vfile fallback until mount succeeds.
-5. Gate with a smoke: `echo x >/persist/a; /busybox.elf sh -c 'cat /persist/a'` then reboot and verify durability once block image is wired.
+1. **ATA PIO block layer** — `bfree_ata_rw_sector` (LBA28, primary master, polled
+   with nIEN) in `kernel/sysmain/syscall.c`.
+2. **BFP1 record store** — LBA0 superblock (`BFP1` + count), each record =
+   1 header sector (name[48]+len) + 32 data sectors, mirroring `persist/` vfiles.
+3. **Hooks** — lazy `bfree_persist_load_once()` on first `/persist` path
+   resolution; `bfree_persist_flush_all()` after write/ftruncate/unlink.
+4. **Reboot smoke green** — `tools/_f1_persist_smoke.sh`: boot1 writes
+   `/persist/f1`, boot2 (same `persist.img`) reads it back.
+   QEMU wiring: `-drive file=persist.img,if=ide,index=0,media=disk,format=raw`.
+
+## Remaining (Phase 7 full)
+
+- tiny FAT/ext2 mount at `/persist` (replace BFP1 records with a real FS).
+- AHCI (`sata_ahci_*`) instead of legacy ATA PIO if needed for real HW.
 
 ## Related holes
 

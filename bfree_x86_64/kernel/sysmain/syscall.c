@@ -141,15 +141,27 @@ static uint64_t g_guest_fork_saved_fsbase;
 #define BFREE_INET_FD_BASE 0x3B00 /* avoid PTY 0x3A00 clash */
 #define BFREE_INADDR_LOOPBACK 0x7f000001U
 #define BFREE_INADDR_ANY 0U
+/* F2: UDP loopback datagram queue (per receiving socket). */
+#define BFREE_INET_DGRAMS      4
+#define BFREE_INET_DGRAM_SIZE  512
 typedef struct {
     int used;
     int listening;
     int connected;
     int bound;
+    int is_dgram;   /* SOCK_DGRAM: loopback datagram queue, no pipes */
     uint32_t addr;
     uint16_t port;
     int accept_rd;
     int pipe_magic;
+    uint32_t peer_addr; /* dgram connect() default destination */
+    uint16_t peer_port;
+    int dg_head;
+    int dg_count;
+    uint16_t dg_len[BFREE_INET_DGRAMS];
+    uint32_t dg_src_addr[BFREE_INET_DGRAMS];
+    uint16_t dg_src_port[BFREE_INET_DGRAMS];
+    uint8_t dg_buf[BFREE_INET_DGRAMS][BFREE_INET_DGRAM_SIZE];
 } bfree_inet_sock_t;
 static bfree_inet_sock_t g_inet_socks[BFREE_INET_SLOTS];
 #endif
@@ -2696,6 +2708,246 @@ static int bfree_guest_vfile_alloc_slot(const char *name, int truncate)
     return -24;
 }
 
+/* ---- F1: ATA PIO (primary master) + /persist disk store ---------------- */
+/*
+ * QEMU wiring: -drive file=persist.img,if=ide,index=0,media=disk,format=raw
+ * (the boot CD stays on the secondary channel via -cdrom).
+ *
+ * On-disk layout (512B sectors, LBA28, polling PIO with nIEN):
+ *   LBA 0            : "BFP1" magic (u32 LE) + u32 record count
+ *   LBA 1 + i*33     : record i header — name[48] + u32 len
+ *   LBA 2 + i*33 ..  : record i data (32 sectors = BFREE_GUEST_VFILE_SIZE)
+ * Records mirror g_guest_vfiles entries whose name starts with "persist/".
+ */
+#define BFREE_ATA_IO_BASE   0x1F0
+#define BFREE_ATA_CTRL      0x3F6
+#define BFREE_PERSIST_MAGIC 0x31504642u /* "BFP1" LE */
+#define BFREE_PERSIST_SECS_PER_REC 33u
+
+static int g_persist_disk_state; /* 0=unprobed 1=ready -1=absent */
+static int g_persist_loaded;
+
+static inline uint8_t bfree_ata_inb(uint16_t port)
+{
+    uint8_t v;
+    __asm__ volatile("inb %1, %0" : "=a"(v) : "Nd"(port));
+    return v;
+}
+
+static inline void bfree_ata_outb(uint16_t port, uint8_t v)
+{
+    __asm__ volatile("outb %0, %1" :: "a"(v), "Nd"(port));
+}
+
+static inline uint16_t bfree_ata_inw(uint16_t port)
+{
+    uint16_t v;
+    __asm__ volatile("inw %1, %0" : "=a"(v) : "Nd"(port));
+    return v;
+}
+
+static inline void bfree_ata_outw(uint16_t port, uint16_t v)
+{
+    __asm__ volatile("outw %0, %1" :: "a"(v), "Nd"(port));
+}
+
+/* Wait for BSY clear; optionally require DRQ. Bounded spin (no IRQs). */
+static int bfree_ata_wait(int want_drq)
+{
+    unsigned long spins;
+
+    for (spins = 0; spins < 4000000UL; ++spins) {
+        uint8_t st = bfree_ata_inb(BFREE_ATA_IO_BASE + 7);
+        if (st == 0xFF) {
+            return -1; /* floating bus */
+        }
+        if (st & 0x01) {
+            return -1; /* ERR */
+        }
+        if (!(st & 0x80)) { /* !BSY */
+            if (!want_drq || (st & 0x08)) {
+                return 0;
+            }
+        }
+        __asm__ volatile("pause" ::: "memory");
+    }
+    return -1;
+}
+
+static int bfree_ata_probe(void)
+{
+    if (g_persist_disk_state != 0) {
+        return g_persist_disk_state;
+    }
+    /* nIEN: poll, never raise IRQ14. */
+    bfree_ata_outb(BFREE_ATA_CTRL, 0x02);
+    bfree_ata_outb(BFREE_ATA_IO_BASE + 6, 0xE0); /* primary master, LBA */
+    if (bfree_ata_inb(BFREE_ATA_IO_BASE + 7) == 0xFF || bfree_ata_wait(0) != 0) {
+        g_persist_disk_state = -1;
+        uart_puts("[PERSIST] no ATA disk\n");
+        return -1;
+    }
+    g_persist_disk_state = 1;
+    uart_puts("[PERSIST] ATA disk ready\n");
+    return 1;
+}
+
+static int bfree_ata_rw_sector(uint32_t lba, void *buf, int write)
+{
+    uint16_t *p = (uint16_t *)buf;
+    int i;
+
+    if (bfree_ata_probe() != 1) {
+        return -1;
+    }
+    if (bfree_ata_wait(0) != 0) {
+        return -1;
+    }
+    bfree_ata_outb(BFREE_ATA_IO_BASE + 6, (uint8_t)(0xE0 | ((lba >> 24) & 0x0F)));
+    bfree_ata_outb(BFREE_ATA_IO_BASE + 2, 1);
+    bfree_ata_outb(BFREE_ATA_IO_BASE + 3, (uint8_t)lba);
+    bfree_ata_outb(BFREE_ATA_IO_BASE + 4, (uint8_t)(lba >> 8));
+    bfree_ata_outb(BFREE_ATA_IO_BASE + 5, (uint8_t)(lba >> 16));
+    bfree_ata_outb(BFREE_ATA_IO_BASE + 7, write ? 0x30 : 0x20);
+    if (bfree_ata_wait(1) != 0) {
+        return -1;
+    }
+    if (write) {
+        for (i = 0; i < 256; ++i) {
+            bfree_ata_outw(BFREE_ATA_IO_BASE, p[i]);
+        }
+        bfree_ata_outb(BFREE_ATA_IO_BASE + 7, 0xE7); /* FLUSH CACHE */
+        if (bfree_ata_wait(0) != 0) {
+            return -1;
+        }
+    } else {
+        for (i = 0; i < 256; ++i) {
+            p[i] = bfree_ata_inw(BFREE_ATA_IO_BASE);
+        }
+    }
+    return 0;
+}
+
+static uint8_t g_persist_sec[512];
+
+/* Rewrite the whole store from live persist/ vfiles (small: ≤16 recs). */
+static void bfree_persist_flush_all(void)
+{
+    uint32_t rec = 0;
+    int i;
+
+    if (bfree_ata_probe() != 1) {
+        return;
+    }
+    for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
+        bfree_guest_vfile_t *vf = &g_guest_vfiles[i];
+        uint32_t base;
+        uint32_t s;
+        size_t off;
+
+        if (!vf->used || vf->orphaned || vf->is_dir || vf->is_symlink) {
+            continue;
+        }
+        if (strncmp(vf->name, "persist/", 8) != 0) {
+            continue;
+        }
+        base = 1u + rec * BFREE_PERSIST_SECS_PER_REC;
+        memset(g_persist_sec, 0, sizeof(g_persist_sec));
+        memcpy(g_persist_sec, vf->name, sizeof(vf->name));
+        *(uint32_t *)(g_persist_sec + 48) = (uint32_t)vf->len;
+        if (bfree_ata_rw_sector(base, g_persist_sec, 1) != 0) {
+            return;
+        }
+        for (s = 0, off = 0; off < vf->len; ++s, off += 512) {
+            size_t chunk = vf->len - off;
+            if (chunk > 512) {
+                chunk = 512;
+            }
+            memset(g_persist_sec, 0, sizeof(g_persist_sec));
+            memcpy(g_persist_sec, vf->data + off, chunk);
+            if (bfree_ata_rw_sector(base + 1u + s, g_persist_sec, 1) != 0) {
+                return;
+            }
+        }
+        ++rec;
+    }
+    memset(g_persist_sec, 0, sizeof(g_persist_sec));
+    *(uint32_t *)(g_persist_sec + 0) = BFREE_PERSIST_MAGIC;
+    *(uint32_t *)(g_persist_sec + 4) = rec;
+    (void)bfree_ata_rw_sector(0, g_persist_sec, 1);
+}
+
+static void bfree_persist_load_once(void)
+{
+    uint32_t count;
+    uint32_t r;
+
+    if (g_persist_loaded) {
+        return;
+    }
+    g_persist_loaded = 1;
+    if (bfree_ata_probe() != 1) {
+        return;
+    }
+    if (bfree_ata_rw_sector(0, g_persist_sec, 0) != 0) {
+        return;
+    }
+    if (*(uint32_t *)(g_persist_sec + 0) != BFREE_PERSIST_MAGIC) {
+        uart_puts("[PERSIST] blank disk (no BFP1)\n");
+        return;
+    }
+    count = *(uint32_t *)(g_persist_sec + 4);
+    if (count > BFREE_GUEST_VFILE_SLOTS) {
+        count = BFREE_GUEST_VFILE_SLOTS;
+    }
+    for (r = 0; r < count; ++r) {
+        uint32_t base = 1u + r * BFREE_PERSIST_SECS_PER_REC;
+        char name[48];
+        uint32_t len;
+        int fd;
+        bfree_guest_vfile_t *vf;
+        uint32_t s;
+        size_t off;
+
+        if (bfree_ata_rw_sector(base, g_persist_sec, 0) != 0) {
+            return;
+        }
+        memcpy(name, g_persist_sec, sizeof(name));
+        name[sizeof(name) - 1] = '\0';
+        len = *(uint32_t *)(g_persist_sec + 48);
+        if (len > BFREE_GUEST_VFILE_SIZE ||
+            strncmp(name, "persist/", 8) != 0) {
+            continue;
+        }
+        fd = bfree_guest_vfile_alloc_slot(name, 1);
+        if (fd < 0) {
+            return;
+        }
+        vf = &g_guest_vfiles[fd - (int)BFREE_GUEST_VFILE_FD_BASE];
+        for (s = 0, off = 0; off < len; ++s, off += 512) {
+            size_t chunk = len - off;
+            if (chunk > 512) {
+                chunk = 512;
+            }
+            if (bfree_ata_rw_sector(base + 1u + s, g_persist_sec, 0) != 0) {
+                return;
+            }
+            memcpy(vf->data + off, g_persist_sec, chunk);
+        }
+        vf->len = len;
+    }
+    uart_puts("[PERSIST] loaded from disk\n");
+}
+
+/* Call after any mutation of a persist/ vfile. */
+static void bfree_persist_maybe_flush(const bfree_guest_vfile_t *vf)
+{
+    if (vf && strncmp(vf->name, "persist/", 8) == 0) {
+        bfree_persist_flush_all();
+    }
+}
+/* ---- end F1 persist ----------------------------------------------------- */
+
 /* Accept /tmp and /tmp/<rel> where <rel> may contain '/' for nested paths.
  * Reject empty components, trailing '/', and "." / ".." segments. */
 static int bfree_guest_path_is_under_tmp(const char *path, char *name_out, size_t name_cap)
@@ -2731,6 +2983,7 @@ static int bfree_guest_path_is_under_tmp(const char *path, char *name_out, size_
         if (name_cap < 8) {
             return 0;
         }
+        bfree_persist_load_once();
         name_out[0]='p'; name_out[1]='e'; name_out[2]='r'; name_out[3]='s';
         name_out[4]='i'; name_out[5]='s'; name_out[6]='t'; name_out[7]='\0';
         return 1;
@@ -2739,6 +2992,9 @@ static int bfree_guest_path_is_under_tmp(const char *path, char *name_out, size_
         (strncmp(path, "/home/", 6) == 0 && path[6] != '\0') ||
         (strncmp(path, "/persist/", 9) == 0 && path[9] != '\0')) {
         const char *src;
+        if (path[1] == 'p') {
+            bfree_persist_load_once();
+        }
         size_t prefix;
         size_t n = 0;
         if (path[1] == 'v') {
@@ -3186,6 +3442,7 @@ static long sys_linux_ftruncate(long fd, long length)
         } else if (!ofd && vf->pos > vf->len) {
             vf->pos = vf->len;
         }
+        bfree_persist_maybe_flush(vf);
         return 0;
     }
     return 0;
@@ -4040,6 +4297,7 @@ static long sys_linux_write(long fd, long buf, long count)
         if (*posp > vf->len) {
             vf->len = *posp;
         }
+        bfree_persist_maybe_flush(vf);
         return (long)n;
     }
     if (fd == 1 || fd == 2) {
@@ -5922,23 +6180,33 @@ static long sys_linux_unlink(long dirfd, long path_ptr)
     if (vf->is_dir) {
         return -21; /* EISDIR */
     }
-    /* Remove this directory entry (primary name or alias). */
-    if (strcmp(vf->name, vname) == 0) {
-        vf->name[0] = '\0';
-    } else {
-        (void)bfree_guest_alias_remove_name(vname);
+    {
+        int was_persist = strncmp(vname, "persist/", 8) == 0;
+
+        /* Remove this directory entry (primary name or alias). */
+        if (strcmp(vf->name, vname) == 0) {
+            vf->name[0] = '\0';
+        } else {
+            (void)bfree_guest_alias_remove_name(vname);
+        }
+        if (vf->nlink > 0) {
+            vf->nlink--;
+        }
+        if (vf->nlink > 0) {
+            if (was_persist) {
+                bfree_persist_flush_all();
+            }
+            return 0; /* other hard links remain */
+        }
+        if (vf->open_refs > 0) {
+            vf->orphaned = 1;
+        } else {
+            bfree_guest_vfile_clear_slot(vf);
+        }
+        if (was_persist) {
+            bfree_persist_flush_all();
+        }
     }
-    if (vf->nlink > 0) {
-        vf->nlink--;
-    }
-    if (vf->nlink > 0) {
-        return 0; /* other hard links remain */
-    }
-    if (vf->open_refs > 0) {
-        vf->orphaned = 1;
-        return 0;
-    }
-    bfree_guest_vfile_clear_slot(vf);
     return 0;
 }
 
@@ -7584,6 +7852,8 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
             img = "p8test.elf";
         } else if (bfree_guest_basename_eq(path, "hello.elf")) {
             img = "hello.elf";
+        } else if (bfree_guest_basename_eq(path, "ltp_curated.elf")) {
+            img = "ltp_curated.elf";
         }
         exec_img = img;
     }
@@ -9422,7 +9692,6 @@ static int bfree_inet_is_loopback(uint32_t addr)
 static long sys_linux_socket(long domain, long type, long protocol)
 {
     int i;
-    (void)type;
     (void)protocol;
     if (domain == BFREE_LINUX_AF_INET) {
         for (i = 0; i < BFREE_INET_SLOTS; ++i) {
@@ -9431,10 +9700,15 @@ static long sys_linux_socket(long domain, long type, long protocol)
                 g_inet_socks[i].listening = 0;
                 g_inet_socks[i].connected = 0;
                 g_inet_socks[i].bound = 0;
+                g_inet_socks[i].is_dgram = ((type & 0xFF) == 2); /* SOCK_DGRAM */
                 g_inet_socks[i].addr = BFREE_INADDR_ANY;
                 g_inet_socks[i].port = 0;
                 g_inet_socks[i].accept_rd = -1;
                 g_inet_socks[i].pipe_magic = -1;
+                g_inet_socks[i].peer_addr = 0;
+                g_inet_socks[i].peer_port = 0;
+                g_inet_socks[i].dg_head = 0;
+                g_inet_socks[i].dg_count = 0;
                 return bfree_guest_fd_publish((int)BFREE_INET_FD_BASE + i);
             }
         }
@@ -9565,6 +9839,13 @@ static long sys_linux_connect(long sockfd, long addr, long addrlen)
         if (!bfree_inet_is_loopback(in_addr)) {
             return -101; /* ENETUNREACH — no NIC / non-loopback */
         }
+        if (g_inet_socks[idx].is_dgram) {
+            /* UDP connect: remember default peer only; no handshake. */
+            g_inet_socks[idx].peer_addr = in_addr;
+            g_inet_socks[idx].peer_port = in_port;
+            g_inet_socks[idx].connected = 1;
+            return 0;
+        }
         for (li = 0; li < BFREE_INET_SLOTS; ++li) {
             if (g_inet_socks[li].used && g_inet_socks[li].listening &&
                 g_inet_socks[li].port == in_port &&
@@ -9682,14 +9963,73 @@ static long sys_linux_accept(long sockfd, long addr, long addrlen)
     return bfree_guest_fd_publish(rd);
 }
 
+/* F2: deliver one UDP datagram to a bound loopback receiver (or drop). */
+static long bfree_inet_dgram_send(int sender, uint32_t dst_addr, uint16_t dst_port,
+                                  long buf, long len)
+{
+    int r;
+    size_t n;
+
+    if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    if (!bfree_inet_is_loopback(dst_addr)) {
+        return -101; /* ENETUNREACH */
+    }
+    n = (size_t)len;
+    if (n > BFREE_INET_DGRAM_SIZE) {
+        return -90; /* EMSGSIZE */
+    }
+    for (r = 0; r < BFREE_INET_SLOTS; ++r) {
+        bfree_inet_sock_t *rs = &g_inet_socks[r];
+        int tail;
+
+        if (!rs->used || !rs->is_dgram || !rs->bound || rs->port != dst_port) {
+            continue;
+        }
+        if (rs->dg_count >= BFREE_INET_DGRAMS) {
+            break; /* receiver queue full: drop (UDP) */
+        }
+        tail = (rs->dg_head + rs->dg_count) % BFREE_INET_DGRAMS;
+        memcpy(rs->dg_buf[tail], (const void *)(uintptr_t)buf, n);
+        rs->dg_len[tail] = (uint16_t)n;
+        rs->dg_src_addr[tail] = g_inet_socks[sender].bound
+                                    ? g_inet_socks[sender].addr
+                                    : BFREE_INADDR_LOOPBACK;
+        rs->dg_src_port[tail] = g_inet_socks[sender].bound
+                                    ? g_inet_socks[sender].port
+                                    : (uint16_t)(40000 + sender);
+        rs->dg_count++;
+        break;
+    }
+    return (long)n; /* UDP: success even if no receiver (dropped) */
+}
+
 static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr, long addrlen)
 {
     int idx;
     (void)flags;
-    (void)addr;
     (void)addrlen;
     fd = bfree_guest_fd_resolve((int)fd);
     idx = bfree_inet_from_fd((int)fd);
+    if (idx >= 0 && g_inet_socks[idx].is_dgram) {
+        uint32_t dst_addr;
+        uint16_t dst_port;
+
+        if (addr != 0) {
+            /* Dispatch drops arg6; sockaddr_in is 16 bytes. */
+            long perr = bfree_inet_parse_sockaddr(addr, 16, &dst_addr, &dst_port);
+            if (perr != 0) {
+                return perr;
+            }
+        } else if (g_inet_socks[idx].connected) {
+            dst_addr = g_inet_socks[idx].peer_addr;
+            dst_port = g_inet_socks[idx].peer_port;
+        } else {
+            return -89; /* EDESTADDRREQ */
+        }
+        return bfree_inet_dgram_send(idx, dst_addr, dst_port, buf, len);
+    }
     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
         return sys_linux_write(g_inet_socks[idx].pipe_magic, buf, len);
     }
@@ -9704,10 +10044,39 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
 {
     int idx;
     (void)flags;
-    (void)addr;
     (void)addrlen;
     fd = bfree_guest_fd_resolve((int)fd);
     idx = bfree_inet_from_fd((int)fd);
+    if (idx >= 0 && g_inet_socks[idx].is_dgram) {
+        bfree_inet_sock_t *s = &g_inet_socks[idx];
+        size_t n;
+        int h;
+
+        if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
+            return -14;
+        }
+        if (s->dg_count == 0) {
+            return -11; /* EAGAIN — no datagram queued */
+        }
+        h = s->dg_head;
+        n = s->dg_len[h];
+        if (n > (size_t)len) {
+            n = (size_t)len; /* truncate (UDP semantics) */
+        }
+        memcpy((void *)(uintptr_t)buf, s->dg_buf[h], n);
+        if (addr != 0 && bfree_user_ptr_mapped(addr)) {
+            uint8_t *sa = (uint8_t *)(uintptr_t)addr;
+            uint16_t pbe = bfree_inet_ntohs(s->dg_src_port[h]);
+            uint32_t abe = bfree_inet_ntohl(s->dg_src_addr[h]);
+            sa[0] = 2; sa[1] = 0; /* AF_INET LE */
+            memcpy(sa + 2, &pbe, 2);
+            memcpy(sa + 4, &abe, 4);
+            memset(sa + 8, 0, 8);
+        }
+        s->dg_head = (h + 1) % BFREE_INET_DGRAMS;
+        s->dg_count--;
+        return (long)n;
+    }
     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
         int mag = g_inet_socks[idx].pipe_magic;
         if (bfree_guest_pipe_is_wr_magic(mag)) {
@@ -9725,6 +10094,58 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
         return sys_linux_read(mag, buf, len);
     }
     return sys_linux_read(fd, buf, len);
+}
+
+/* Linux x86_64 struct msghdr (userspace layout); iovec typedef is above. */
+typedef struct {
+    uint64_t msg_name;
+    uint32_t msg_namelen;
+    uint32_t _pad0;
+    uint64_t msg_iov;
+    uint64_t msg_iovlen;
+    uint64_t msg_control;
+    uint64_t msg_controllen;
+    uint32_t msg_flags;
+    uint32_t _pad1;
+} bfree_linux_msghdr_t;
+
+/* 46/47: only the common single-iovec, no-cmsg shape (musl UDP/DNS). */
+static long sys_linux_sendmsg(long fd, long msg_ptr, long flags)
+{
+    const bfree_linux_msghdr_t *mh;
+    const bfree_linux_iovec_t *iov;
+
+    if (msg_ptr == 0 || !bfree_user_ptr_mapped(msg_ptr)) {
+        return -14;
+    }
+    mh = (const bfree_linux_msghdr_t *)(uintptr_t)msg_ptr;
+    if (mh->msg_iovlen != 1 || mh->msg_iov == 0 ||
+        !bfree_user_ptr_mapped((long)mh->msg_iov)) {
+        return -38; /* multi-iov remains intentional residual */
+    }
+    iov = (const bfree_linux_iovec_t *)(uintptr_t)mh->msg_iov;
+    return sys_linux_sendto(fd, (long)iov->iov_base, (long)iov->iov_len,
+                            flags, (long)mh->msg_name, (long)mh->msg_namelen);
+}
+
+static long sys_linux_recvmsg(long fd, long msg_ptr, long flags)
+{
+    bfree_linux_msghdr_t *mh;
+    const bfree_linux_iovec_t *iov;
+
+    if (msg_ptr == 0 || !bfree_user_ptr_mapped(msg_ptr)) {
+        return -14;
+    }
+    mh = (bfree_linux_msghdr_t *)(uintptr_t)msg_ptr;
+    if (mh->msg_iovlen != 1 || mh->msg_iov == 0 ||
+        !bfree_user_ptr_mapped((long)mh->msg_iov)) {
+        return -38;
+    }
+    iov = (const bfree_linux_iovec_t *)(uintptr_t)mh->msg_iov;
+    mh->msg_controllen = 0;
+    mh->msg_flags = 0;
+    return sys_linux_recvfrom(fd, (long)iov->iov_base, (long)iov->iov_len,
+                              flags, (long)mh->msg_name, 0);
 }
 
 static long sys_linux_pread64(long fd, long buf, long count, long offset)
@@ -10162,10 +10583,10 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_sendto(arg1, arg2, arg3, arg4, arg5, 0);
     case 45: /* recvfrom */
         return sys_linux_recvfrom(arg1, arg2, arg3, arg4, arg5, 0);
-    case 46: /* sendmsg — soft via sendto not available; ENOSYS */
-        return -38;
-    case 47: /* recvmsg */
-        return -38;
+    case 46: /* sendmsg — single-iovec path via sendto */
+        return sys_linux_sendmsg(arg1, arg2, arg3);
+    case 47: /* recvmsg — single-iovec path via recvfrom */
+        return sys_linux_recvmsg(arg1, arg2, arg3);
     case 49: /* bind */
         return sys_linux_bind(arg1, arg2, arg3);
     case 50: /* listen */

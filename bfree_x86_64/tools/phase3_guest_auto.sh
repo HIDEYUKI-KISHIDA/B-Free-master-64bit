@@ -504,6 +504,7 @@ run_once() {
   check "p8_unix" 'P8_UNIX_OK'
   check "p8_inet" 'P8_INET_OK'
   check "p8_slirp" 'P8_SLIRP_OK'
+  check "p8_udp" 'P8_UDP_OK'
   check "p8_persist" 'P8_PERSIST_OK'
   check "p8_tty" 'P8_TTY_OK'
   check "p8_mmap" 'P8_MMAP_OK'

@@ -54,7 +54,7 @@ id	name	severity	status	how
 
 27	blocking-wait-live	Medium	filled	wait+waitid yield to parked child; wait4 live→0 not ECHILD; multi-zombie oldest-pid reap (same 8-slot table as H25); multi-live=2 via H02
 
-28	nofork-gate-meta	Blocker	verified	BFREE_NOFORK_ALL=0; KEEP_INPROC=0 + seq-fork + NOEXEC→execve; phase3 ALL PASS 2026-07-22 (tools/_p2_nofork_phase3.sh)
+28	nofork-gate-meta	Blocker	verified	BFREE_NOFORK_ALL=0; KEEP_INPROC=0 + seq-fork + NOEXEC→execve; phase3 ALL PASS 2026-07-22 (tools/_p2_nofork_phase3.sh); F1 ATA persist + F2 UDP + F3 LTP curated 2026-07-22
 
 29	fcntl-cloexec	High	filled	F_GETFD/SETFD/SETFL; open/pipe2/dup3 CLOEXEC; P9_CLOEXEC
 
