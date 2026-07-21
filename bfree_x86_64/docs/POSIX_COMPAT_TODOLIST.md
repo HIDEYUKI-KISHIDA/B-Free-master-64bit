@@ -110,11 +110,13 @@ Sprint D+         P3 → P4
 ```
 P0  [x] phase3 ALL PASS (2026-07-22)
 P1  [x] H01 fpstate/nested deferred
-P1  [x] H06 ash fg STATUS residual (kernel done)
+P1  [x] H06 ash fg — E1 AS-copy FORK_BG green (2026-07-22)
 P1  [x] ptmx
 P1  [x] H17 sigaltstack + AUTODISARM soft
-P1  [x] H26 CLONE_THREAD gate; preempt→P3
+P1  [x] H26 CLONE_THREAD gate; E3 preempt_disable barriers (timer preempt later)
 P2  [x] NOFORK=0 緑 (2026-07-22 verified)
 P3  [x] musl hello MUSL_HELLO_OK (2026-07-22)
+P3  [x] H20 futex waiter queue (E2, 2026-07-22)
 P4  [x] Phase7 agreed scope green (2026-07-22)
+F1  [~] persist.img scaffold; block I/O deferred
 ```

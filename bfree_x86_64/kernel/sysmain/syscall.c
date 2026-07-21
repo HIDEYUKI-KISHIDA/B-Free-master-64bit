@@ -248,6 +248,7 @@ static void bfree_coop_arm_parent_resume(void);
 static long bfree_coop_yield_to_parent(void);
 static long bfree_coop_yield_to_child(void);
 static long bfree_guest_fork_enter(int copy_as);
+static void bfree_guest_futex_wake_user(volatile int *uaddr);
 static void bfree_guest_sig_raise(int sig);
 static int bfree_guest_sig_take_eintr(void);
 static long bfree_guest_sig_try_deliver(long ret);
@@ -294,6 +295,21 @@ static void bfree_guest_thread_init(void)
     g_guest_thread_slots_used = 0;
 }
 
+/* Nestable barriers for guest thread/TLS/futex critical sections.
+ * No timer-driven guest preemption yet; counter is for future IRQ path. */
+static int g_guest_preempt_count;
+
+static void preempt_disable(void)
+{
+    g_guest_preempt_count++;
+}
+
+static void preempt_enable(void)
+{
+    if (g_guest_preempt_count > 0) {
+        g_guest_preempt_count--;
+    }
+}
 
 static void bfree_guest_thread_save_parent_ctx(void)
 {
@@ -315,13 +331,17 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
     uint64_t child_rsp;
     uint64_t parent_fs;
 
+    preempt_disable();
     if (g_guest_fork_active || g_guest_thread_active) {
+        preempt_enable();
         return -11;
     }
     if (g_guest_thread_slots_used >= BFREE_GUEST_MAX_THREADS) {
+        preempt_enable();
         return -11;
     }
     if (newsp == 0 || !bfree_user_ptr_mapped(newsp)) {
+        preempt_enable();
         return -14;
     }
     child_rsp = (uint64_t)(uintptr_t)newsp;
@@ -329,6 +349,7 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
 
     tid = g_guest_next_pid++;
     if (tid <= 0) {
+        preempt_enable();
         return -11;
     }
 
@@ -338,6 +359,7 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
 
     if ((flags & 0x00080000UL) != 0UL && tls != 0) { /* CLONE_SETTLS */
         if (!bfree_user_ptr_mapped(tls)) {
+            preempt_enable();
             return -14;
         }
         bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, (uint64_t)(uintptr_t)tls);
@@ -358,6 +380,7 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
     g_guest_thread_slots_used++;
 
     g_bfree_sysret_exec_rsp = child_rsp;
+    preempt_enable();
     return BFREE_SYSRET_THREAD_CHILD;
 }
 
@@ -367,7 +390,9 @@ static long bfree_guest_thread_exit(long status)
     int *cleartid;
 
     (void)status;
+    preempt_disable();
     if (!g_guest_thread_active) {
+        preempt_enable();
         return -1;
     }
     tid = g_guest_thread_tid;
@@ -376,6 +401,7 @@ static long bfree_guest_thread_exit(long status)
         bfree_user_ptr_mapped((long)g_guest_clear_child_tid)) {
         cleartid = (int *)(uintptr_t)g_guest_clear_child_tid;
         *cleartid = 0;
+        bfree_guest_futex_wake_user((volatile int *)cleartid);
         g_guest_clear_child_tid = 0;
     }
 
@@ -388,6 +414,7 @@ static long bfree_guest_thread_exit(long status)
     bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);
     g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
     g_bfree_fork_parent_ret = (uint64_t)(long)tid;
+    preempt_enable();
     return BFREE_SYSRET_FORK_PARENT;
 }
 
@@ -1823,12 +1850,76 @@ static unsigned g_guest_futex_log_count;
 static uint64_t bfree_timespec_to_us(const struct timespec *ts);
 
 /*
- * Linux 202: futex — guest coop (H20 partial↑).
+ * Linux 202: futex — guest coop (H20).
  * - Timed WAIT: poll until value changes or deadline; leave *uaddr locked on
- *   ETIMEDOUT (correct for pthread timed wait).
- * - Untimed WAIT: clear *uaddr then return 0 (Qt single-thread workaround;
- *   real waiter queue still deferred with preemptive threads → P3 polish).
+ *   ETIMEDOUT.
+ * - Untimed WAIT: brief coop yield, arm waiter slot, short spin, then clear
+ *   *uaddr (Qt single-thread workaround; full preemptive park → later).
+ * - WAKE: disarm matching waiter slots (soft-1 if none).
  */
+#define BFREE_FUTEX_WAITERS 4
+static volatile int *g_futex_waiter_uaddr[BFREE_FUTEX_WAITERS];
+static int g_futex_waiter_armed[BFREE_FUTEX_WAITERS];
+
+static void bfree_guest_futex_wake_user(volatile int *uaddr)
+{
+    int i;
+
+    if (!uaddr) {
+        return;
+    }
+    preempt_disable();
+    for (i = 0; i < BFREE_FUTEX_WAITERS; ++i) {
+        if (g_futex_waiter_armed[i] && g_futex_waiter_uaddr[i] == uaddr) {
+            g_futex_waiter_armed[i] = 0;
+            g_futex_waiter_uaddr[i] = 0;
+        }
+    }
+    preempt_enable();
+}
+
+/* Serial guest: no preemptive reschedule yet; coop yield hooks later. */
+static long bfree_guest_sched_maybe_yield(void)
+{
+    return 0;
+}
+
+static int bfree_futex_arm_waiter(volatile int *ua)
+{
+    int i;
+
+    preempt_disable();
+    for (i = 0; i < BFREE_FUTEX_WAITERS; ++i) {
+        if (!g_futex_waiter_armed[i]) {
+            g_futex_waiter_uaddr[i] = ua;
+            g_futex_waiter_armed[i] = 1;
+            preempt_enable();
+            return i;
+        }
+    }
+    preempt_enable();
+    return -1;
+}
+
+static void bfree_futex_disarm_slot(int slot)
+{
+    if (slot < 0 || slot >= BFREE_FUTEX_WAITERS) {
+        return;
+    }
+    preempt_disable();
+    g_futex_waiter_armed[slot] = 0;
+    g_futex_waiter_uaddr[slot] = 0;
+    preempt_enable();
+}
+
+static int bfree_futex_slot_woken(int slot, volatile int *ua, int val)
+{
+    if (slot < 0) {
+        return *(volatile int *)ua != val;
+    }
+    return !g_futex_waiter_armed[slot] || *(volatile int *)ua != val;
+}
+
 long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, long val3)
 {
     int cmd = (int)(op & 0x7f);
@@ -1859,14 +1950,53 @@ long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, lon
             while ((knl_get_current_time() - start) < wait_us) {
                 if (*(volatile int *)(uintptr_t)uaddr != (int)val) {
                     __asm__ volatile("cli" ::: "memory");
+                    if (g_guest_futex_log_count < 8U) {
+                        ++g_guest_futex_log_count;
+                        uart_puts("[FUTEX] wait woken\n");
+                    }
                     return 0;
                 }
                 __asm__ volatile("pause" ::: "memory");
             }
             __asm__ volatile("cli" ::: "memory");
+            if (g_guest_futex_log_count < 8U) {
+                ++g_guest_futex_log_count;
+                uart_puts("[FUTEX] wait ETIMEDOUT\n");
+            }
             return -110; /* ETIMEDOUT — leave word locked */
         }
-        /* Untimed: Qt-compatible clear-on-WAIT (single-thread guest). */
+        {
+            long yr = bfree_guest_sched_maybe_yield();
+            if (yr != 0) {
+                return yr;
+            }
+        }
+        if (*(volatile int *)(uintptr_t)uaddr != (int)val) {
+            return 0;
+        }
+        {
+            int slot = bfree_futex_arm_waiter((volatile int *)(uintptr_t)uaddr);
+            int spins;
+            __asm__ volatile("sti" ::: "memory");
+            for (spins = 0; spins < 8; ++spins) {
+                if (bfree_futex_slot_woken(slot, (volatile int *)(uintptr_t)uaddr,
+                                           (int)val)) {
+                    break;
+                }
+                {
+                    long yr = bfree_guest_sched_maybe_yield();
+                    if (yr != 0) {
+                        __asm__ volatile("cli" ::: "memory");
+                        bfree_futex_disarm_slot(slot);
+                        return yr;
+                    }
+                }
+                __asm__ volatile("pause" ::: "memory");
+            }
+            __asm__ volatile("cli" ::: "memory");
+            bfree_futex_disarm_slot(slot);
+        }
+        /* Qt-compatible clear-on-WAIT fallback (single-thread guest). */
         *(int *)(uintptr_t)uaddr = 0;
         if (g_guest_futex_log_count < 8U) {
             ++g_guest_futex_log_count;
@@ -1874,7 +2004,26 @@ long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, lon
         }
         return 0;
     case 1: /* FUTEX_WAKE */
-        return ((int)val <= 0) ? 0 : 1;
+        if ((int)val <= 0) {
+            return 0;
+        }
+        {
+            int want = (int)val;
+            int woke = 0;
+            int i;
+
+            preempt_disable();
+            for (i = 0; i < BFREE_FUTEX_WAITERS && woke < want; ++i) {
+                if (g_futex_waiter_armed[i] &&
+                    g_futex_waiter_uaddr[i] == (volatile int *)(uintptr_t)uaddr) {
+                    g_futex_waiter_armed[i] = 0;
+                    g_futex_waiter_uaddr[i] = 0;
+                    ++woke;
+                }
+            }
+            preempt_enable();
+            return woke > 0 ? (long)woke : 1; /* soft success if no waiter */
+        }
     case 3: /* FUTEX_REQUEUE */
     case 4: /* FUTEX_CMP_REQUEUE */
     case 5: /* FUTEX_WAKE_OP */

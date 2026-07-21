@@ -19,8 +19,8 @@ Honest progress only — **not** a real on-disk ext2/block FS.
 
 ## Concrete next steps (Phase 7)
 
-1. Add a simple ramdisk or host-backed block image (e.g. `persist.img` as a GRUB module / multiboot module).
-2. Implement a minimal block layer (`read_block` / `write_block`) over that image.
+1. **Scaffold done:** `tools/_f1_persist_img_scaffold.sh` creates `persist.img` (8MiB zeroed) and prints QEMU `-drive` example. Not wired into phase3 yet.
+2. Implement a minimal block layer (`read_block` / `write_block`) over IDE/ATA PIO or finish `sata_ahci_*_sector`.
 3. Port or write a tiny ext2 (or FAT) read/write: superblock, inode, directory, single-block files first.
 4. Mount at `/persist` replacing the vfile prefix; keep vfile fallback until mount succeeds.
 5. Gate with a smoke: `echo x >/persist/a; /busybox.elf sh -c 'cat /persist/a'` then reboot and verify durability once block image is wired.

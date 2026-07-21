@@ -372,10 +372,11 @@ bfree_patch_lineedit_null_state() {
   sed -i 's/cwd_buf = state->sh_get_var/cwd_buf = state \&\& state->sh_get_var/' "$f"
 }
 
-# Non-interactive kconfig sync (olddefconfig if present - no NEW prompts).
+# Non-interactive kconfig sync (never prompt — interactive oldconfig hangs CI).
 bfree_busybox_sync_config() {
   if make -n olddefconfig >/dev/null 2>&1; then
-    make olddefconfig
+    # Some trees still drop to prompts; feed defaults just in case.
+    yes "" 2>/dev/null | make olddefconfig || make olddefconfig
   else
     yes "" | make oldconfig
   fi

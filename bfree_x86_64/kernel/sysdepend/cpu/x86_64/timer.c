@@ -36,8 +36,13 @@ void knl_pic_eoi(int irq);
 
 // timer_manager.cの論理タイマ割り込みハンドラを呼ぶ
 #include "../../../sysmain/timer_manager.h"
+
+/* SF-02: guest coop timeslice arm (syscall.c). IRQ must not switch CR3. */
+extern void bfree_guest_timer_tick_hook(void);
+
 void knl_timer_tick(void) {
     timer_handler();
+    bfree_guest_timer_tick_hook();
 }
 
 // HPET初期化（仕様書v2.4準拠・本実装）

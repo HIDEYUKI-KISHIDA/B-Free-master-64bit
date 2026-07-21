@@ -50,7 +50,7 @@ sleep 1
   sleep 90
   printf 'echo hello | cat\n'
   sleep 2
-  printf 'echo GREP_PIPE_OK | grep GREP_PIPE_OK\n'
+  printf 'echo GREP_PIPE_O""K | grep GREP_PIPE_O""K\n'
   sleep 3
   printf 'grep -e PATH /etc/profile\n'
   sleep 2

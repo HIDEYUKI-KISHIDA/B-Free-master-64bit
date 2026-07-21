@@ -26,14 +26,35 @@ SECTIONS
 
   .bss ALIGN(4K) (NOLOAD) : {
     _bss_start = .;
-    /* Large page_table_t objects first so they stay below 0x400000 (init.elf VA). */
-    *(.bss.page_table)
     *(.bss .bss.*)
     *(COMMON)
     _bss_end = .;
   }
 
-  /* PMMビットマップ領域（NOLOAD、BITMAP_SIZE分確保） */
+  /*
+   * Large page_table_t + PMM bitmap + kstack must NOT sit in the BusyBox
+   * guest window (0x500000–~0x578000). Identity VA==PA aliases there let the
+   * guest execute kernel stack (#UD @0x525EA0 with LE(VA) bytes) or let
+   * bitmap/stack traffic wipe guest .text.
+   *
+   * Place them just above that window; stay below loader staging @0x04E00000
+   * and Multiboot initrd VA @0x05000000.
+   * Section name avoids .bss.* so the wildcard above does not suck them in.
+   */
+  /*
+   * page_table_t ≈ 656KiB. Residents in .bfree_page_table:
+   *   kernel_page_table + task_page_tables[2] + g_child_page_table
+   *   + g_fork_page_table[BFREE_PROC_MAX_LIVE]  (MAX_LIVE=4 → 8 objects)
+   * ≈ 8 * 656KiB ≈ 5.1MiB. Keep the window ≥ 6MiB (was 4MiB @0xA00000 —
+   * MAX_LIVE=4 overflowed into pmm_bitmap and caused guest #PF after fork).
+   */
+  . = 0x00600000;
+  _bfree_khi_start = .;
+  .bfree_page_table ALIGN(4K) (NOLOAD) : {
+    *(.bfree_page_table)
+  }
+
+  . = 0x00C00000;
   .pmm_bitmap ALIGN(4K) (NOLOAD) : {
     _pmm_bitmap_start = .;
     . = . + 0x20000; /* 4GiB / 4KiB / 8 = 128KiB */
@@ -47,4 +68,5 @@ SECTIONS
     *(.stack)
     _stack_end = .;
   }
+  _bfree_khi_end = .;
 }

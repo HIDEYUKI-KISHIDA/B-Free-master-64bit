@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# H06 ash fg/bg smoke: sleep & → jobs → fg (kernel jobctl path).
+# H06 ash fg/bg smoke: sleep & → jobs → fg (AS-copy FORK_BG).
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -30,15 +30,32 @@ grub-mkrescue -o /tmp/bfree-p1fg.iso "$ISO_STAGE" -- -volid BFREE >/tmp/mkp1fg.l
 ) | timeout 120 qemu-system-x86_64 -m 512M -no-reboot -cdrom /tmp/bfree-p1fg.iso \
     -display none -serial mon:stdio >>"$QLOG" 2>&1 || true
 echo "=== P1 ash fg smoke ==="
-if grep -q 'P1_FG_SMOKE_OK' "$QLOG"; then
+fail=0
+if grep -aq 'No current job' "$QLOG"; then
+  echo "FAIL No_current_job"
+  fail=1
+else
+  echo "PASS no_No_current_job"
+fi
+# ash jobs typically prints "[1]+  Running" or "Done"
+if grep -aE '\[1\]|\[[0-9]+\]' "$QLOG" | grep -aqv 'No current'; then
+  echo "PASS jobs_listing"
+else
+  echo "FAIL jobs_listing"
+  fail=1
+fi
+if grep -aq 'P1_FG_SMOKE_OK' "$QLOG"; then
   echo "PASS P1_FG_SMOKE_OK"
 else
   echo "FAIL P1_FG_SMOKE_OK"
+  fail=1
 fi
-if grep -qiE 'Page Fault|PANIC' "$QLOG"; then
+if grep -aqiE 'Page Fault|PANIC' "$QLOG"; then
   echo "FAIL panic"
+  fail=1
 else
   echo "PASS no_panic"
 fi
 echo '--- relevant ---'
-grep -aE 'jobs|fg|sleep|P1_FG|Page Fault|PANIC|root@' "$QLOG" | tail -40
+grep -aE 'jobs|fg|sleep|P1_FG|Page Fault|PANIC|root@|No current|Running|Done' "$QLOG" | tail -50
+exit "$fail"

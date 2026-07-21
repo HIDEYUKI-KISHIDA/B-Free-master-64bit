@@ -18,3 +18,6 @@ iso_root/
 kernel/kernel.elf
 kernel/kernel.bin
 bfree.iso
+
+# F1 block image scaffold (regenerate via tools/_f1_persist_img_scaffold.sh)
+persist.img

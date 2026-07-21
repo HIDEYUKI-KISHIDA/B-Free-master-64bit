@@ -21,9 +21,10 @@ import sys
 from pathlib import Path
 
 MARKER = "B-Free: seq fork pipe"
-FORK_MARKER = "B-Free: AS-copy pipe fork"
+FORK_MARKER = "B-Free: AS-copy pipe/bg fork"
 FLAG_MARKER = "B-Free: pipe AS-copy flag"
 SEQ_VFORK_MARKER = "B-Free: seq-fork freezes the parent in vfork"
+BG_FORK_MARKER = "B-Free: AS-copy for FORK_BG (jobs/fg)"
 
 OLD_PIPE = """\tfor (lp = n->npipe.cmdlist; lp; lp = lp->next) {
 \t\tprehash(lp->n);
@@ -161,15 +162,42 @@ def ensure_pipe_as_copy_flag(text: str) -> str:
     sub = text[idx:end]
 
     want = (
-        f"\t/* {FORK_MARKER}: SYS_fork only for evalpipe stages */\n"
-        "\tif (bfree_ash_pipe_as_copy)\n"
+        f"\t/* {FORK_MARKER}: SYS_fork for evalpipe + FORK_BG (jobs/fg) */\n"
+        f"\t/* {BG_FORK_MARKER} */\n"
+        "\tif (bfree_ash_pipe_as_copy || mode == FORK_BG)\n"
         "\t\tpid = bfree_linux_fork();\n"
         "\telse\n"
         "\t\tpid = vfork();"
     )
 
-    if "bfree_ash_pipe_as_copy" in sub and "bfree_linux_fork()" in sub:
+    if BG_FORK_MARKER in sub and "mode == FORK_BG" in sub and "bfree_linux_fork()" in sub:
         pass
+    elif "bfree_ash_pipe_as_copy" in sub and "bfree_linux_fork()" in sub:
+        # Upgrade pipe-only AS-copy to also cover FORK_BG.
+        sub2 = re.sub(
+            r"\t/\* B-Free: AS-copy pipe fork[^\n]*\*/\n"
+            r"\tif \(bfree_ash_pipe_as_copy\)\n"
+            r"\t\tpid = bfree_linux_fork\(\);\n"
+            r"\telse\n"
+            r"\t\tpid = vfork\(\);",
+            want,
+            sub,
+            count=1,
+        )
+        if sub2 == sub:
+            sub2 = re.sub(
+                r"\tif \(bfree_ash_pipe_as_copy\)\n"
+                r"\t\tpid = bfree_linux_fork\(\);\n"
+                r"\telse\n"
+                r"\t\tpid = vfork\(\);",
+                want,
+                sub,
+                count=1,
+            )
+        if sub2 == sub:
+            raise SystemExit("[patch] ERROR: cannot upgrade forkshell for FORK_BG")
+        sub = sub2
+        text = text[:idx] + sub + text[end:]
     elif "bfree_ash_pipe_as_copy" in sub:
         sub2 = re.sub(
             r"\t/\* B-Free: AS-copy pipe fork[^\n]*\*/\n"
@@ -257,7 +285,7 @@ def main() -> int:
 
     text = ensure_pipe_as_copy_flag(text)
     path.write_text(text, encoding="utf-8")
-    print("[patch] forkshell: AS-copy only when bfree_ash_pipe_as_copy (pipe uses vfork)")
+    print("[patch] forkshell: AS-copy when bfree_ash_pipe_as_copy || FORK_BG")
     return 0
 
 
