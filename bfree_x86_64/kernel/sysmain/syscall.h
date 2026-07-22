@@ -8,9 +8,12 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+struct guest_io;
+
 void guest_init(void);
 struct bfree_fs *guest_fs(void);
 struct bfree_proc_mgr *guest_proc_mgr(void);
+struct guest_io *guest_io_ctx(void);
 
 long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 			  unsigned long a2, unsigned long a3, unsigned long a4,

@@ -76,6 +76,10 @@ run_test test_p8_kernel_boot
 run_test test_p9_gdt
 run_test test_p9_user_boot
 
+# M10 syscall kernel integration
+run_test test_p10_dispatch_wiring
+run_test test_p10_kernel_guest
+
 echo "== phase3_guest_auto: QEMU user boot smoke =="
 if ! "${ROOT}/tools/qemu_user_boot_smoke.sh"; then
   FAIL=1

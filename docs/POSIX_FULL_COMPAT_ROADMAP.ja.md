@@ -96,6 +96,15 @@
 
 ホーム PC 手順: `docs/HOME_PC_SETUP.md`
 
+### M10 — sysmain in kernel.elf ✅ 完了
+
+- [x] `syscall_min.c` を `KERNEL_SYSMAIN_OBJS` に置換
+- [x] dispatch ギャップ修正（`openat`, `dup`, `getdents64`, …）
+- [x] `/dev/console` → debugcon（QEMU `USER_BOOT_OK`）
+- [x] 検証 `P10_DISPATCH_WIRING`, `P10_KERNEL_GUEST`
+
+手順: `docs/M10_SYSCALL_KERNEL.md`
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」

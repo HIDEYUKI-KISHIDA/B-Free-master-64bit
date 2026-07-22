@@ -9,6 +9,7 @@
 #include "mount.h"
 #include "net_unix.h"
 #include "process.h"
+#include "process.h"
 #include "syscall_dispatch.h"
 #include "thread.h"
 #include "tty.h"
@@ -221,6 +222,70 @@ int sys_getpgid(int pid)
 	return bfree_getpgid(&guest.proc, pid);
 }
 
+int sys_getpid(void)
+{
+	struct bfree_proc *self = bfree_proc_current(&guest.proc);
+
+	if (self == NULL)
+		return 1;
+	return self->pid;
+}
+
+int sys_getppid(void)
+{
+	struct bfree_proc *self = bfree_proc_current(&guest.proc);
+
+	if (self == NULL)
+		return 0;
+	return self->ppid;
+}
+
+int sys_rt_sigaction(int sig, const void *act, void *oact, size_t sigsetsize)
+{
+	(void)sig;
+	(void)act;
+	(void)oact;
+	(void)sigsetsize;
+	return 0;
+}
+
+int sys_rt_sigprocmask(int how, const void *set, void *oset, size_t sigsetsize)
+{
+	(void)how;
+	(void)set;
+	(void)oset;
+	(void)sigsetsize;
+	return 0;
+}
+
+void sys_rt_sigreturn(void)
+{
+}
+
+int sys_capget(void *hdrp, void *datap)
+{
+	(void)hdrp;
+	(void)datap;
+	return 0;
+}
+
+int sys_capset(void *hdrp, const void *datap)
+{
+	(void)hdrp;
+	(void)datap;
+	return 0;
+}
+
+int sys_prlimit64(int pid, unsigned int resource, const void *new_rlim,
+		  void *old_rlim)
+{
+	(void)pid;
+	(void)resource;
+	(void)new_rlim;
+	(void)old_rlim;
+	return 0;
+}
+
 int sys_ioctl(int fd, unsigned long req, void *arg)
 {
 	(void)fd;
@@ -364,6 +429,44 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_open((const char *)a0, (int)a1, (int)a2);
 	case 3:
 		return sys_close((int)a0);
+	case 13:
+		return sys_rt_sigaction((int)a0, (const void *)a1, (void *)a2,
+					(size_t)a3);
+	case 14:
+		return sys_rt_sigprocmask((int)a0, (const void *)a1, (void *)a2,
+					  (size_t)a3);
+	case 15:
+		sys_rt_sigreturn();
+		return 0;
+	case 16:
+		return sys_ioctl((int)a0, a1, (void *)a2);
+	case 32:
+		return sys_dup((int)a0);
+	case 33:
+		return sys_dup2((int)a0, (int)a1);
+	case 39:
+		return sys_getpid();
+	case 87:
+		return sys_unlink((const char *)a0);
+	case 90:
+		return sys_capget((void *)a0, (void *)a1);
+	case 91:
+		return sys_capset((void *)a0, (const void *)a1);
+	case 110:
+		return sys_getppid();
+	case 121:
+		return sys_getpgid((int)a0);
+	case 157:
+		return sys_prlimit64((int)a0, (unsigned int)a1,
+				     (const void *)a2, (void *)a3);
+	case 217:
+		return sys_getdents64((int)a0, (void *)a1, (size_t)a2);
+	case 257:
+		return sys_openat((int)a0, (const char *)a1, (int)a2, (int)a3);
+	case 258:
+		return sys_mkdirat((int)a0, (const char *)a1, (int)a2);
+	case 263:
+		return sys_unlinkat((int)a0, (const char *)a1, (int)a2);
 	case 8:
 		return sysret_long(sys_lseek((int)a0, (off_t)a1, (int)a2));
 	case 9:
@@ -459,8 +562,6 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 				 (const void *)a3);
 	case 247:
 		return sys_waitid((int)a0, (int)a1, (void *)a2, (int)a3);
-	case 257:
-		return sys_openat((int)a0, (const char *)a1, (int)a2, (int)a3);
 	default:
 		return -ENOSYS;
 	}
