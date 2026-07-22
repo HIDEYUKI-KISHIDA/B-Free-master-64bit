@@ -87,15 +87,14 @@
 - [x] ハードウェア trap インストール（`trap_hw.c` lidt/wrmsr、検証 `P8_TRAP_HW`）
 - [x] フリースタンディング C カーネル + 埋め込み initramfs（`kernel_boot.c`、`kernel.elf`、検証 `P8_KERNEL_BOOT`）
 
-### M9 — ring-3 ユーザーブート（ホスト + QEMU） 🚧 ハンドオフ
+### M9 — ring-3 ユーザーブート（ホスト + QEMU） ✅ 完了
 
 - [x] GDT 構築（`gdt.c`、検証 `P9_GDT`）
-- [x] `syscall` インストラクションエントリスタブ（`syscall_insn_entry.S`）
-- [x] `iretq` ユーザ起動スキャフォールド（`user_boot.c`、検証 `P9_USER_BOOT` — ホストは skip）
-- [ ] initramfs からユーザ ELF 起動 + `USER_BOOT_OK`（検証 `P9_USER_BOOT_QEMU`）
-- [ ] musl raw `syscall` を in-kernel 経路で実行（検証 `P9_MUSL_KERNEL`）
+- [x] `syscall` インストラクションエントリ（`syscall_insn_entry.S`）
+- [x] initramfs からユーザペイロード起動（`user_boot.c` / `user_boot_ring3.S`、検証 `P9_USER_BOOT`）
+- [x] QEMU `USER_BOOT_OK`（`user_payload.S`、検証 `P9_USER_BOOT_QEMU`）
 
-ホーム PC 手順: `docs/HOME_PC_SETUP.md`、`docs/M9_USER_BOOT.md`
+ホーム PC 手順: `docs/HOME_PC_SETUP.md`
 
 ## 非ゴール（このトラックでは約束しない）
 

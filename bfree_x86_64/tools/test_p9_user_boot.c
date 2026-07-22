@@ -1,5 +1,5 @@
 /*
- * P9_USER_BOOT — ring-3 launch skipped on host harness.
+ * P9_USER_BOOT — payload install skipped on host harness.
  */
 #include "user_boot.h"
 
@@ -14,10 +14,10 @@
 
 int main(void)
 {
-	int rc;
+	char blob[4] = { 't', 'e', 's', 't' };
 
-	rc = bfree_user_boot_exec(0x100000UL, 0x200000UL);
-	CHECK(rc == -2, "host user boot skipped");
+	CHECK(bfree_user_payload_install(NULL, 0) == -1, "null");
+	CHECK(bfree_user_payload_install(blob, sizeof(blob)) == -2, "host skip");
 
 	printf("P9_USER_BOOT: PASS\n");
 	return 0;

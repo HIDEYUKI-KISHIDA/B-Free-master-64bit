@@ -5,12 +5,12 @@
 
 #define BFREE_GDT_ENTRIES 5
 
-/* Selectors (RPL 0 for kernel, user segments use RPL 3 at runtime). */
+/* GDT layout matches STAR for SYSRET: udata@0x18, ucode@0x20 */
 #define BFREE_SEL_NULL   0x00
 #define BFREE_SEL_KCODE  0x08
 #define BFREE_SEL_KDATA  0x10
-#define BFREE_SEL_UCODE  0x18
-#define BFREE_SEL_UDATA  0x20
+#define BFREE_SEL_UDATA  0x18
+#define BFREE_SEL_UCODE  0x20
 
 struct bfree_gdt_entry {
 	uint16_t limit_low;

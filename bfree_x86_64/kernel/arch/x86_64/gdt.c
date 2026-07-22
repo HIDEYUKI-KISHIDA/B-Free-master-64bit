@@ -29,11 +29,10 @@ void bfree_gdt_build(struct bfree_gdt_state *st)
 		return;
 
 	memset(st, 0, sizeof(*st));
-	/* 0x9A = present|ring0|code, 0x92 = present|ring0|data, 0xFA/0xF2 = user */
-	gdt_set(&st->entries[1], 0, 0xfffff, 0x9a, 0xaf); /* kernel code 64-bit */
+	gdt_set(&st->entries[1], 0, 0xfffff, 0x9a, 0xaf); /* kernel code */
 	gdt_set(&st->entries[2], 0, 0xfffff, 0x92, 0xcf); /* kernel data */
-	gdt_set(&st->entries[3], 0, 0xfffff, 0xfa, 0xaf); /* user code */
-	gdt_set(&st->entries[4], 0, 0xfffff, 0xf2, 0xcf); /* user data */
+	gdt_set(&st->entries[3], 0, 0xfffff, 0xf2, 0xcf); /* user data  0x18 */
+	gdt_set(&st->entries[4], 0, 0xfffff, 0xfa, 0xaf); /* user code  0x20 */
 	st->gdtr.limit = (uint16_t)(sizeof(st->entries) - 1);
 	st->gdtr.base = (uint64_t)(uintptr_t)st->entries;
 	st->built = 1;

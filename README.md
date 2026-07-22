@@ -75,11 +75,12 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P8_* + embedded initramfs ker
 
 See [docs/M8_REAL_BOOT.md](docs/M8_REAL_BOOT.md).
 
-### Ring-3 user boot (M9 — continue on home PC)
+### Ring-3 user boot (M9)
 
 ```bash
 git checkout cursor/m9-user-boot-695c
 cd bfree_x86_64 && bash tools/setup_home_dev.sh
+./tools/qemu_user_boot_smoke.sh   # USER_BOOT_OK (needs QEMU)
 ```
 
 See [docs/M9_USER_BOOT.md](docs/M9_USER_BOOT.md) and [docs/HOME_PC_SETUP.md](docs/HOME_PC_SETUP.md).

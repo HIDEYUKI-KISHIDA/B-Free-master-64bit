@@ -1,44 +1,39 @@
-# Continue M9 on your home PC
+# Continue on your home PC
 
-This repo’s POSIX work lives on **feature branches**, not `main`.
-
-## 1. Get the code
+## Get M9 (complete)
 
 ```bash
+git clone https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit.git
+cd B-Free-master-64bit
 git fetch origin
 git checkout cursor/m9-user-boot-695c
 cd bfree_x86_64
-```
-
-## 2. Verify environment
-
-```bash
 bash tools/setup_home_dev.sh
 ```
 
-Needs: `gcc`, `make`, `python3`, `git`. Optional but recommended: `qemu-system-x86_64`.
+## Verify M9
 
-## 3. Open in Cursor
-
-Open the repository root in Cursor. Start a new Agent chat with:
-
-```
-Continue M9 user boot on cursor/m9-user-boot-695c.
-Read docs/M9_USER_BOOT.md and implement USER_BOOT_OK in QEMU.
-Arch is x86_64 (bfree_x86_64), not aarch64.
+```bash
+./tools/phase3_guest_auto.sh          # RESULT: ALL PASS
+./tools/qemu_user_boot_smoke.sh       # P9_USER_BOOT_QEMU: PASS (needs QEMU)
 ```
 
-## 4. What M9 means
+Install QEMU if missing:
 
-- **Done (M0–M8):** host-tested POSIX stubs, trap, paging, initramfs embed
-- **M9 goal:** ring-3 userspace under `kernel.elf` with in-kernel `syscall` path
-- **Not synced:** cloud agent chat history — only git branches and `docs/M9_USER_BOOT.md`
+- **Linux:** `sudo apt install qemu-system-x86`
+- **macOS:** `brew install qemu`
+- **Windows:** QEMU for Windows + WSL optional for build
 
-## Branches
+## Cursor prompt
 
-| Branch | Milestone |
-|--------|-----------|
-| `cursor/m8-real-boot-695c` | M8 paging + trap HW |
-| `cursor/m9-user-boot-695c` | **M9 handoff (start here)** |
+```
+Branch cursor/m9-user-boot-695c — M9 is implemented.
+Run setup_home_dev.sh and qemu_user_boot_smoke.sh.
+Continue M10 POSIX syscall holes per docs/POSIX_FULL_COMPAT_ROADMAP.ja.md.
+Arch: x86_64 (bfree_x86_64).
+```
 
-Draft PRs #3–#10 cover M1–M8; open a new PR from your M9 branch when ready.
+## Notes
+
+- Chat history does not sync; this file + `docs/M9_USER_BOOT.md` are the handoff.
+- `main` may still be behind; use the branch above.

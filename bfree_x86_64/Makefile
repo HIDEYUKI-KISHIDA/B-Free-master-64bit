@@ -21,6 +21,8 @@ MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
 BOOT_SMOKE_ELF := build/boot_smoke.elf
 KERNEL_ELF := build/kernel.elf
 INITRAMFS_CPIO := build/initramfs.cpio
+USER_PAYLOAD_ELF := build/user_payload.elf
+USER_PAYLOAD_BIN := guest/initramfs/user_payload.bin
 TRAP_PAYLOAD_ELF := build/trap_payload.elf
 KERNEL_DIR := build/kernel
 
@@ -48,7 +50,8 @@ KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/kernel_boot.o $(KERNEL_DIR)/paging.o $(KERNEL_DIR)/trap_setup.o \
 	$(KERNEL_DIR)/trap_hw.o $(KERNEL_DIR)/debugcon.o $(KERNEL_DIR)/initramfs.o \
 	$(KERNEL_DIR)/string.o $(KERNEL_DIR)/syscall_min.o $(KERNEL_DIR)/syscall_entry.o \
-	$(KERNEL_DIR)/gdt.o $(KERNEL_DIR)/user_boot.o $(KERNEL_DIR)/syscall_insn_entry.o
+	$(KERNEL_DIR)/gdt.o $(KERNEL_DIR)/user_boot.o $(KERNEL_DIR)/user_boot_ring3.o \
+	$(KERNEL_DIR)/syscall_insn_entry.o
 
 .PHONY: all host-tests clean musl-static boot-smoke kernel boot-trap-payload initramfs
 
@@ -66,9 +69,19 @@ initramfs: $(INITRAMFS_CPIO)
 
 musl-static: $(MUSL_STATIC_ELF)
 
-$(INITRAMFS_CPIO): tools/build_initramfs.sh tools/build_initramfs.py guest/initramfs/hello.txt
+$(INITRAMFS_CPIO): tools/build_initramfs.sh tools/build_initramfs.py \
+		guest/initramfs/hello.txt $(USER_PAYLOAD_BIN)
 	mkdir -p build
 	bash tools/build_initramfs.sh
+
+$(USER_PAYLOAD_BIN): $(USER_PAYLOAD_ELF)
+	mkdir -p guest/initramfs
+	objcopy -O binary $< $@
+
+$(USER_PAYLOAD_ELF): tools/user_payload/user_payload.S tools/user_payload/user_payload.ld
+	mkdir -p build
+	$(CC) $(FREESTANDING_CFLAGS) -nostdlib -static \
+		-Wl,-T,tools/user_payload/user_payload.ld -o $@ tools/user_payload/user_payload.S
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -309,6 +322,9 @@ $(KERNEL_DIR)/gdt.o: kernel/arch/x86_64/gdt.c kernel/arch/x86_64/gdt.h | $(KERNE
 
 $(KERNEL_DIR)/user_boot.o: kernel/arch/x86_64/user_boot.c kernel/arch/x86_64/user_boot.h | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
+
+$(KERNEL_DIR)/user_boot_ring3.o: kernel/arch/x86_64/user_boot_ring3.S | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
 $(KERNEL_DIR)/syscall_insn_entry.o: kernel/arch/x86_64/syscall_insn_entry.S | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@

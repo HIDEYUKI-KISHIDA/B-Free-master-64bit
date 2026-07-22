@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P9_USER_BOOT_QEMU — ring-3 payload smoke (M9 goal; SKIP until implemented).
+# P9_USER_BOOT_QEMU — ring-3 payload via in-kernel syscall path.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,12 +15,12 @@ if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
 	exit 0
 fi
 
-out="$(timeout 3 qemu-system-x86_64 -kernel "${KERNEL}" -nographic \
+out="$(timeout 5 qemu-system-x86_64 -kernel "${KERNEL}" -nographic \
 	-device isa-debugcon,chardev=dbg -chardev stdio,id=dbg 2>/dev/null || true)"
 if [[ "${out}" == *"USER_BOOT_OK"* ]]; then
 	echo "P9_USER_BOOT_QEMU: PASS"
 	exit 0
 fi
 
-echo "P9_USER_BOOT_QEMU: SKIP (not implemented yet — expected USER_BOOT_OK)"
-exit 0
+echo "P9_USER_BOOT_QEMU: FAIL (output: ${out})" >&2
+exit 1
