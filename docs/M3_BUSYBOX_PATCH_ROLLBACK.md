@@ -28,7 +28,7 @@ export CROSS_COMPILE=x86_64-linux-gnu-
 ./bfree_x86_64/tools/build_guest_busybox.sh
 ```
 
-The script validates that patch-rollback markers are absent and produces `guest/rootfs/bin/busybox` using the frozen config `configs/busybox_m3.config` (minimal static ash, no networking).
+The script validates that patch-rollback markers are absent and produces `guest/rootfs/bin/busybox` using `configs/busybox_posix.config` (expanded static guest profile, ~56 applet symlinks). Override with `BUSYBOX_CONFIG=configs/busybox_m3.config` for the original minimal ash-only build.
 
 ## Host verification (in-repo, no BusyBox tree required)
 
