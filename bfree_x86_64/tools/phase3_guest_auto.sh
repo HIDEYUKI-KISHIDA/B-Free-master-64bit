@@ -93,6 +93,10 @@ run_test test_p13_guest_regress
 run_test test_p14_stat_poll
 run_test test_p14_guest_regress
 
+# M15 blocking poll + ash regress on booted QEMU
+run_test test_p15_poll_blocking
+run_test test_p15_ash_regress_staged
+
 echo "== phase3_guest_auto: QEMU user boot smoke =="
 if ! "${ROOT}/tools/qemu_user_boot_smoke.sh"; then
   FAIL=1
@@ -125,6 +129,11 @@ fi
 
 echo "== phase3_guest_auto: QEMU poll guest smoke =="
 if ! "${ROOT}/tools/qemu_poll_guest_smoke.sh"; then
+  FAIL=1
+fi
+
+echo "== phase3_guest_auto: QEMU ash regress guest smoke =="
+if ! "${ROOT}/tools/qemu_ash_regress_guest_smoke.sh"; then
   FAIL=1
 fi
 

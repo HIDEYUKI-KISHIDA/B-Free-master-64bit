@@ -1,6 +1,7 @@
 /*
  * Freestanding kernel guest bring-up (M10).
  */
+#include "guest_initramfs_seed.h"
 #include "guest_kernel.h"
 #include "debugcon.h"
 #include "fs_ofd.h"
@@ -28,4 +29,6 @@ void bfree_kernel_guest_init(void)
 		guest_dup2(guest_io_ctx(), fd, 2);
 	if (fd > 2)
 		bfree_close(fs, fd);
+
+	bfree_guest_initramfs_seed_vfs(fs);
 }

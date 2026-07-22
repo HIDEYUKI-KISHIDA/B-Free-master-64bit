@@ -7,6 +7,10 @@
 #include "elf_host_run.h"
 #include "elf_trap_exec.h"
 #include "fs_ofd.h"
+
+#ifdef BFREE_KERNEL_GUEST
+#include "elf_user_exec.h"
+#endif
 #include "fs_ofd.h"
 
 #include <errno.h>
@@ -198,11 +202,9 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 		 char **argv, char **envp)
 {
 	bfree_prog_fn fn;
-	struct bfree_elf_image img;
 	struct bfree_proc *self;
 	int argc;
 	int rc;
-	int status;
 
 	(void)envp;
 	self = current_proc(mgr);
@@ -210,6 +212,18 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 		return -ESRCH;
 
 	if (g_exec_fs != NULL) {
+#ifdef BFREE_KERNEL_GUEST
+		rc = bfree_user_execve_ring3(g_exec_fs, path,
+					      (char *const *)argv,
+					      (char *const *)envp);
+		if (rc == 0)
+			return 0;
+		if (rc < 0)
+			return rc;
+#else
+		struct bfree_elf_image img;
+		int status;
+
 		rc = bfree_elf_load_path(g_exec_fs, path, &self->as, &img);
 		if (rc == 0) {
 			rc = bfree_elf_trap_exec(&self->as, img.entry,
@@ -224,6 +238,7 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 		}
 		if (rc != -ENOENT && rc != -ENOEXEC)
 			return rc;
+#endif
 	}
 
 	fn = lookup_prog(path);
@@ -422,6 +437,15 @@ static struct bfree_pipe *pipe_for_fd(struct bfree_proc_mgr *mgr, int fd,
 	return NULL;
 }
 
+int bfree_pipe_is_fd(struct bfree_proc_mgr *mgr, int fd)
+{
+	if (pipe_for_fd(mgr, fd, 0) != NULL)
+		return 1;
+	if (pipe_for_fd(mgr, fd, 1) != NULL)
+		return 1;
+	return 0;
+}
+
 ssize_t bfree_pipe_read(struct bfree_proc_mgr *mgr, int fd, void *buf,
 			size_t count)
 {
@@ -518,17 +542,13 @@ static short pipe_poll_events(struct bfree_proc_mgr *mgr, int fd, short events)
 	return 0;
 }
 
-int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
-	       struct bfree_pollfd *fds, unsigned int nfds, int timeout)
+#define BFREE_POLL_SPIN_ITERS 65536U
+
+static int poll_scan(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
+		     struct bfree_pollfd *fds, unsigned int nfds)
 {
 	unsigned int i;
 	int ready = 0;
-
-	(void)timeout;
-	if (fds == NULL)
-		return -EFAULT;
-	if (nfds == 0)
-		return -EINVAL;
 
 	for (i = 0; i < nfds; i++) {
 		short revents;
@@ -541,7 +561,7 @@ int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 		}
 
 		revents = pipe_poll_events(mgr, fds[i].fd, fds[i].events);
-		if (revents == 0) {
+		if (revents == 0 && !bfree_pipe_is_fd(mgr, fds[i].fd)) {
 			struct bfree_ofd *ofd = bfree_ofd_for_fd(fs, fds[i].fd);
 
 			if (ofd == NULL) {
@@ -561,6 +581,30 @@ int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 	}
 
 	return ready;
+}
+
+int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
+	       struct bfree_pollfd *fds, unsigned int nfds, int timeout)
+{
+	int ready;
+	unsigned int spin;
+
+	if (fds == NULL)
+		return -EFAULT;
+	if (nfds == 0)
+		return -EINVAL;
+
+	for (;;) {
+		ready = poll_scan(mgr, fs, fds, nfds);
+		if (ready > 0)
+			return ready;
+		if (timeout == 0)
+			return 0;
+		for (spin = 0; spin < BFREE_POLL_SPIN_ITERS; spin++)
+			__asm__ volatile("pause");
+		if (timeout > 0)
+			timeout--;
+	}
 }
 
 void bfree_kill(struct bfree_proc_mgr *mgr, int pid, int sig)

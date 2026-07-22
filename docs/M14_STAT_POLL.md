@@ -47,7 +47,5 @@ cd bfree_x86_64
 
 ## Residual (M15+)
 
-- Blocking `poll` / `ppoll` with timeout
-- Guest `ash_regress` on QEMU (needs `execve` from VFS)
-- Migrate remaining `ltp_regress` / `posix_regress` host cases to guest probes
-- Full upstream LTP checkout (out of scope)
+- Full ash_regress on QEMU (pipe/bg/external — needs ring-3 fork)
+- Timer-backed blocking poll
