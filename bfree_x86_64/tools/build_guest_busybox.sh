@@ -7,11 +7,11 @@ THIRD="${ROOT}/third_party"
 VERSION_FILE="${THIRD}/BUSYBOX_VERSION"
 BUSYBOX_SRC="${BUSYBOX_SRC:-${THIRD}/busybox}"
 ROOTFS="${ROOT}/guest/rootfs"
-CONFIG="${ROOT}/configs/busybox_m3.config"
+CONFIG="${BUSYBOX_CONFIG:-${ROOT}/configs/busybox_posix.config}"
 DOC="${ROOT}/../docs/M3_BUSYBOX_PATCH_ROLLBACK.md"
 URL_BASE="https://busybox.net/downloads"
 
-echo "== build_guest_busybox: M3 patch-rollback build =="
+echo "== build_guest_busybox: guest rootfs (config=$(basename "${CONFIG}")) =="
 
 if [[ ! -f "${VERSION_FILE}" ]]; then
   echo "ERROR: missing ${VERSION_FILE}" >&2
@@ -54,7 +54,13 @@ if [[ ! -f "${CONFIG}" ]]; then
   exit 1
 fi
 
+# Regenerate posix config when using the default expanded profile.
+if [[ "${CONFIG}" == "${ROOT}/configs/busybox_posix.config" ]]; then
+  python3 "${ROOT}/tools/expand_busybox_config.py"
+fi
+
 cp "${CONFIG}" "${BUSYBOX_SRC}/.config"
+make -C "${BUSYBOX_SRC}" oldconfig
 make -C "${BUSYBOX_SRC}" -j"$(nproc)" busybox
 
 rm -rf "${ROOTFS}"
@@ -66,5 +72,7 @@ if [[ ! -x "${ROOTFS}/bin/busybox" ]]; then
   exit 1
 fi
 
+APPLET_COUNT="$(find "${ROOTFS}/bin" "${ROOTFS}/usr/bin" -type l 2>/dev/null | wc -l | tr -d ' ')"
 echo "OK: ${ROOTFS}/bin/busybox ($(file -b "${ROOTFS}/bin/busybox"))"
+echo "OK: ${APPLET_COUNT} applet symlinks under ${ROOTFS}"
 echo "OK: no hack markers; upstream ash ready for guest rootfs"
