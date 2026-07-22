@@ -1,5 +1,5 @@
 /*
- * Freestanding QEMU kernel entry (M8–M13).
+ * Freestanding QEMU kernel entry (M8–M14).
  */
 #include "ash_guest_boot.h"
 #include "debugcon.h"
@@ -18,6 +18,14 @@ extern void bfree_syscall_insn_entry(void);
 
 extern char _initramfs_start[];
 extern char _initramfs_end[];
+
+#ifndef BFREE_PREFER_STAT_GUEST_BOOT
+#define BFREE_PREFER_STAT_GUEST_BOOT 0
+#endif
+
+#ifndef BFREE_PREFER_POLL_GUEST_BOOT
+#define BFREE_PREFER_POLL_GUEST_BOOT 0
+#endif
 
 #ifndef BFREE_PREFER_LTP_OPEN_BOOT
 #define BFREE_PREFER_LTP_OPEN_BOOT 0
@@ -96,7 +104,13 @@ void bfree_kernel_boot(void)
 
 	bfree_kernel_guest_init();
 
-#if BFREE_PREFER_LTP_OPEN_BOOT
+#if BFREE_PREFER_STAT_GUEST_BOOT
+	if (!boot_elf_from_initramfs("stat_guest.elf"))
+		boot_default_guest();
+#elif BFREE_PREFER_POLL_GUEST_BOOT
+	if (!boot_elf_from_initramfs("poll_guest.elf"))
+		boot_default_guest();
+#elif BFREE_PREFER_LTP_OPEN_BOOT
 	if (!boot_elf_from_initramfs("ltp_open_guest.elf"))
 		boot_default_guest();
 #elif BFREE_PREFER_POSIX_IO_BOOT

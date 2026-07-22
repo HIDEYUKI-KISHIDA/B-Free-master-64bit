@@ -405,6 +405,27 @@ int sys_shmctl(int shmid, int cmd, struct bfree_shmid_ds *buf)
 	return bfree_shmctl(shmid, cmd, buf);
 }
 
+int sys_stat(const char *path, struct bfree_linux_stat *st)
+{
+	return bfree_stat(&guest.fs, path, st);
+}
+
+int sys_fstat(int fd, struct bfree_linux_stat *st)
+{
+	return bfree_fstat(&guest.fs, fd, st);
+}
+
+int sys_newfstatat(int dirfd, const char *path, struct bfree_linux_stat *st,
+		   int flags)
+{
+	return bfree_fstatat(&guest.fs, dirfd, path, st, flags);
+}
+
+int sys_poll(struct bfree_pollfd *fds, unsigned int nfds, int timeout)
+{
+	return bfree_poll(&guest.proc, &guest.fs, fds, nfds, timeout);
+}
+
 static long sysret_long(long rc)
 {
 	if (rc < 0 && rc > -4096)
@@ -429,6 +450,14 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_open((const char *)a0, (int)a1, (int)a2);
 	case 3:
 		return sys_close((int)a0);
+	case 4:
+		return sys_stat((const char *)a0,
+				(struct bfree_linux_stat *)a1);
+	case 5:
+		return sys_fstat((int)a0, (struct bfree_linux_stat *)a1);
+	case 7:
+		return sys_poll((struct bfree_pollfd *)a0, (unsigned int)a1,
+				(int)a2);
 	case 13:
 		return sys_rt_sigaction((int)a0, (const void *)a1, (void *)a2,
 					(size_t)a3);
@@ -465,6 +494,9 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_openat((int)a0, (const char *)a1, (int)a2, (int)a3);
 	case 258:
 		return sys_mkdirat((int)a0, (const char *)a1, (int)a2);
+	case 262:
+		return sys_newfstatat((int)a0, (const char *)a1,
+				      (struct bfree_linux_stat *)a2, (int)a3);
 	case 263:
 		return sys_unlinkat((int)a0, (const char *)a1, (int)a2);
 	case 8:

@@ -7,6 +7,7 @@
 #include "elf_host_run.h"
 #include "elf_trap_exec.h"
 #include "fs_ofd.h"
+#include "fs_ofd.h"
 
 #include <errno.h>
 #include <stdio.h>
@@ -491,6 +492,75 @@ void bfree_pipe_close(struct bfree_proc_mgr *mgr, int fd)
 			return;
 		}
 	}
+}
+
+static short pipe_poll_events(struct bfree_proc_mgr *mgr, int fd, short events)
+{
+	struct bfree_pipe *p;
+	short revents = 0;
+
+	p = pipe_for_fd(mgr, fd, 0);
+	if (p != NULL) {
+		if ((events & BFREE_POLLIN) &&
+		    (p->count > 0 || p->write_ref == 0))
+			revents |= BFREE_POLLIN;
+		return revents;
+	}
+
+	p = pipe_for_fd(mgr, fd, 1);
+	if (p != NULL) {
+		if ((events & BFREE_POLLOUT) && p->read_ref > 0 &&
+		    p->count < BFREE_MAX_PIPE_BUF)
+			revents |= BFREE_POLLOUT;
+		return revents;
+	}
+
+	return 0;
+}
+
+int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
+	       struct bfree_pollfd *fds, unsigned int nfds, int timeout)
+{
+	unsigned int i;
+	int ready = 0;
+
+	(void)timeout;
+	if (fds == NULL)
+		return -EFAULT;
+	if (nfds == 0)
+		return -EINVAL;
+
+	for (i = 0; i < nfds; i++) {
+		short revents;
+
+		fds[i].revents = 0;
+		if (fds[i].fd < 0) {
+			fds[i].revents = BFREE_POLLNVAL;
+			ready++;
+			continue;
+		}
+
+		revents = pipe_poll_events(mgr, fds[i].fd, fds[i].events);
+		if (revents == 0) {
+			struct bfree_ofd *ofd = bfree_ofd_for_fd(fs, fds[i].fd);
+
+			if (ofd == NULL) {
+				fds[i].revents = BFREE_POLLNVAL;
+				ready++;
+				continue;
+			}
+			if (fds[i].events & BFREE_POLLIN)
+				revents |= BFREE_POLLIN;
+			if (fds[i].events & BFREE_POLLOUT)
+				revents |= BFREE_POLLOUT;
+		}
+
+		fds[i].revents = revents;
+		if (revents != 0)
+			ready++;
+	}
+
+	return ready;
 }
 
 void bfree_kill(struct bfree_proc_mgr *mgr, int pid, int sig)

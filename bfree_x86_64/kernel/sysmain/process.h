@@ -101,6 +101,19 @@ ssize_t bfree_pipe_write(struct bfree_proc_mgr *mgr, int fd,
 			 const void *buf, size_t count);
 void bfree_pipe_close(struct bfree_proc_mgr *mgr, int fd);
 
+#define BFREE_POLLIN   0x0001
+#define BFREE_POLLOUT  0x0004
+#define BFREE_POLLNVAL 0x0020
+
+struct bfree_pollfd {
+	int   fd;
+	short events;
+	short revents;
+};
+
+int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
+	       struct bfree_pollfd *fds, unsigned int nfds, int timeout);
+
 void bfree_kill(struct bfree_proc_mgr *mgr, int pid, int sig);
 int  bfree_sig_pending(struct bfree_proc_mgr *mgr, int sig);
 

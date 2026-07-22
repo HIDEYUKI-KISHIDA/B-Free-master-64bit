@@ -109,7 +109,37 @@ struct bfree_linux_dirent64 {
 	char           d_name[];
 };
 
+/* Linux x86_64 stat layout (144 bytes). */
+struct bfree_linux_stat {
+	uint64_t st_dev;
+	uint64_t st_ino;
+	uint64_t st_nlink;
+	uint32_t st_mode;
+	uint32_t st_uid;
+	uint32_t st_gid;
+	uint32_t __pad0;
+	uint64_t st_rdev;
+	int64_t  st_size;
+	int64_t  st_blksize;
+	int64_t  st_blocks;
+	uint64_t st_atime_sec;
+	uint64_t st_atime_nsec;
+	uint64_t st_mtime_sec;
+	uint64_t st_mtime_nsec;
+	uint64_t st_ctime_sec;
+	uint64_t st_ctime_nsec;
+	int64_t  __unused[3];
+};
+
 ssize_t bfree_getdents64(struct bfree_fs *fs, int fd, void *buf, size_t count);
+
+int bfree_stat(struct bfree_fs *fs, const char *path,
+	       struct bfree_linux_stat *st);
+int bfree_fstat(struct bfree_fs *fs, int fd, struct bfree_linux_stat *st);
+int bfree_fstatat(struct bfree_fs *fs, int dirfd, const char *path,
+		  struct bfree_linux_stat *st, int flags);
+void bfree_vnode_fill_stat(const struct bfree_vnode *vn,
+			   struct bfree_linux_stat *st);
 
 struct bfree_ofd *bfree_ofd_for_fd(struct bfree_fs *fs, int fd);
 struct bfree_vnode *bfree_lookup(struct bfree_fs *fs, const char *path);

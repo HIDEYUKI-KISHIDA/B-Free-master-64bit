@@ -17,6 +17,9 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[1] = 1;   /* write */
     bfree_syscall_implemented[2] = 1;   /* open */
     bfree_syscall_implemented[3] = 1;   /* close */
+    bfree_syscall_implemented[4] = 1;   /* stat */
+    bfree_syscall_implemented[5] = 1;   /* fstat */
+    bfree_syscall_implemented[7] = 1;   /* poll */
     bfree_syscall_implemented[8] = 1;   /* lseek */
     bfree_syscall_implemented[32] = 1;  /* dup */
     bfree_syscall_implemented[33] = 1;  /* dup2 */
@@ -51,6 +54,7 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[217] = 1; /* getdents64 */
     bfree_syscall_implemented[257] = 1; /* openat */
     bfree_syscall_implemented[258] = 1; /* mkdirat */
+    bfree_syscall_implemented[262] = 1; /* newfstatat */
     bfree_syscall_implemented[263] = 1; /* unlinkat */
     /* M5 */
     bfree_syscall_implemented[165] = 1; /* mount */

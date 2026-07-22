@@ -878,3 +878,92 @@ ssize_t bfree_getdents64(struct bfree_fs *fs, int fd, void *buf, size_t count)
 	ofd->dirent_index = idx;
 	return (ssize_t)out_used;
 }
+
+void bfree_vnode_fill_stat(const struct bfree_vnode *vn,
+			   struct bfree_linux_stat *st)
+{
+	uint64_t ino;
+
+	if (vn == NULL || st == NULL)
+		return;
+
+	memset(st, 0, sizeof(*st));
+	ino = vn->ino;
+	if (ino == 0)
+		ino = (uint64_t)((uintptr_t)vn & 0xffffu) + 2u;
+	st->st_ino = ino;
+	st->st_nlink = 1;
+	st->st_uid = 0;
+	st->st_gid = 0;
+	st->st_blksize = 4096;
+	st->st_blocks = 0;
+
+	switch (vn->type) {
+	case BFREE_VNODE_FILE:
+		st->st_mode = 0100644u;
+		st->st_size = (int64_t)vn->size;
+		break;
+	case BFREE_VNODE_DIR:
+		st->st_mode = 0040755u;
+		break;
+	case BFREE_VNODE_DEV:
+		st->st_mode = 0020666u;
+		st->st_rdev = (uint64_t)vn->dev_id;
+		break;
+	default:
+		st->st_mode = 0100644u;
+		break;
+	}
+}
+
+int bfree_stat(struct bfree_fs *fs, const char *path,
+	       struct bfree_linux_stat *st)
+{
+	struct bfree_vnode *vn;
+
+	if (st == NULL)
+		return -EFAULT;
+	if (path == NULL)
+		return -EFAULT;
+
+	vn = bfree_lookup(fs, path);
+	if (vn == NULL)
+		return -ENOENT;
+	bfree_vnode_fill_stat(vn, st);
+	return 0;
+}
+
+int bfree_fstat(struct bfree_fs *fs, int fd, struct bfree_linux_stat *st)
+{
+	struct bfree_ofd *ofd;
+
+	if (st == NULL)
+		return -EFAULT;
+
+	ofd = ofd_from_fd(fs, fd);
+	if (ofd == NULL)
+		return -EBADF;
+	bfree_vnode_fill_stat(ofd->vnode, st);
+	return 0;
+}
+
+int bfree_fstatat(struct bfree_fs *fs, int dirfd, const char *path,
+		  struct bfree_linux_stat *st, int flags)
+{
+	struct bfree_vnode *vn;
+
+	(void)flags;
+	if (st == NULL)
+		return -EFAULT;
+	if (path == NULL)
+		return -EFAULT;
+
+	if (path_is_absolute(path))
+		vn = bfree_lookup(fs, path);
+	else
+		vn = lookup_at(fs, dirfd, path);
+	if (vn == NULL)
+		return -ENOENT;
+	bfree_vnode_fill_stat(vn, st);
+	return 0;
+}

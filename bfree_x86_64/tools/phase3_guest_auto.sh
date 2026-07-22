@@ -89,6 +89,10 @@ run_test test_p12_busybox_guest
 # M13 guest LTP/POSIX probes on booted QEMU
 run_test test_p13_guest_regress
 
+# M14 stat/poll/fstatat syscalls + guest probes
+run_test test_p14_stat_poll
+run_test test_p14_guest_regress
+
 echo "== phase3_guest_auto: QEMU user boot smoke =="
 if ! "${ROOT}/tools/qemu_user_boot_smoke.sh"; then
   FAIL=1
@@ -111,6 +115,16 @@ fi
 
 echo "== phase3_guest_auto: QEMU posix io guest smoke =="
 if ! "${ROOT}/tools/qemu_posix_io_guest_smoke.sh"; then
+  FAIL=1
+fi
+
+echo "== phase3_guest_auto: QEMU stat guest smoke =="
+if ! "${ROOT}/tools/qemu_stat_guest_smoke.sh"; then
+  FAIL=1
+fi
+
+echo "== phase3_guest_auto: QEMU poll guest smoke =="
+if ! "${ROOT}/tools/qemu_poll_guest_smoke.sh"; then
   FAIL=1
 fi
 
