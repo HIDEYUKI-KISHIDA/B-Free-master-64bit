@@ -114,6 +114,15 @@
 
 手順: `docs/M11_MUSL_GUEST.md`
 
+### M12 — BusyBox ash on booted guest ✅ 完了
+
+- [x] BusyBox static `ET_EXEC` in initramfs (`bin/busybox`)
+- [x] Ring-3 argv trampoline (`ash_guest_tramp.S`, `ash_guest_boot.c`)
+- [x] `BFREE_PREFER_BUSYBOX_BOOT` kernel boot path
+- [x] 検証 `P12_BUSYBOX_GUEST`, `P12_BUSYBOX_GUEST_QEMU`
+
+手順: `docs/M12_BUSYBOX_GUEST.md`
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」
