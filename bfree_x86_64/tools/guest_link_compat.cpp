@@ -788,16 +788,19 @@ extern "C" int __wrap_ppoll(struct pollfd *fds, nfds_t nfds, const struct timesp
         return -1;
     }
     /*
-     * QQmlEngine ctor waits in ppoll after helper QThread emits started (posted to main).
-     * Pump coop threads on exec RSP, then processEvents on main (exec RSP — v347 #GP without
-     * switch), then real ppoll(timeout=0). Do not fake POLLIN (QThreadPipe wakeUps fail).
+     * QV4 / QQmlEngine: force timeout=0 so we never hlt-block in the kernel.
+     * Pump main ONLY when not already inside bfree_pthread_run_pending — otherwise
+     * worker UNIX ppoll → coop_pump_main → sendPostedEvents re-enters and deadlocks
+     * (seen: hang right after BFreeInput init during first helper-thread ppoll).
+     * Do not fake POLLIN (QThreadPipe wakeUps fail).
      */
     if (bfree_guest_qv4_mmap_active) {
         struct timespec zero = {0, 0};
 
-        if (!bfree_pthread_pump_depth)
+        if (!bfree_pthread_pump_depth) {
             bfree_pthread_pump_qv4();
-        bfree_guest_coop_pump_main_on_exec();
+            bfree_guest_coop_pump_main_on_exec();
+        }
         ret = syscall(271L, (long)(uintptr_t)fds, (long)nfds, (long)(uintptr_t)&zero,
                       (long)(uintptr_t)sigmask);
         if (ret >= 0)

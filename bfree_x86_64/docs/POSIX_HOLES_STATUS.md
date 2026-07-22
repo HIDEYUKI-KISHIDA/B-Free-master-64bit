@@ -1,7 +1,7 @@
 # POSIX holes — mobile status
 
 **Branch:** `work/posix-holes-redo`  
-**Updated:** 2026-07-22 (F1 disk persist / F2 UDP / F3 LTP curated)  
+**Updated:** 2026-07-22 (A–F compat thicken)  
 **Full TODOLIST:** [POSIX_COMPAT_TODOLIST.md](./POSIX_COMPAT_TODOLIST.md)  
 **P4 scope:** [POSIX_PHASE7_AGREED_SCOPE.md](./POSIX_PHASE7_AGREED_SCOPE.md)  
 **📱 指示はこちら:** [NEXT_INSTRUCTIONS.md](./NEXT_INSTRUCTIONS.md)
@@ -17,20 +17,26 @@
 - [x] **E2** futex 4-slot waiter queue + cleartid wake
 - [x] **E3** nestable `preempt_disable`（timer preempt は未）
 - [x] **F1** ATA PIO + `/persist` ディスク永続化 — **再起動をまたいで green**（`tools/_f1_persist_smoke.sh`）
-- [x] **F2** UDP loopback（socket/bind/sendto/recvfrom/connect + sendmsg/recvmsg 単一 iovec）
+- [x] **F2** UDP loopback + **e1000 TX**（`sendto`→`udp_send` / bind→`udp_register_port`；`tools/_f2_e1000_udp_smoke.sh`）
 - [x] **F3** LTP curated subset（`userland/ltp_curated/` 13 testcases, LTP 形式 TPASS/TFAIL）
+- [x] **A** ENOSYS appearance tracer（`[ENOSYS] nr=…` UART + histogram）
+- [x] **B** UDP DNS stub → `10.0.2.3:53` answered from `/etc/hosts`
+- [x] **C** futex waiters 8 / spin 64 + timer `need_resched` hint（preempt_count 尊重）
+- [x] **D** sigframe `fxsave` blob + nested CATCH queue（1）
+- [x] **E** `/persist`+`/home` getdents、`ls /` に persist、`/tmp` NS 汚染除外
+- [x] **F** BusyBox curated +17 applets（tee/mktemp/nslookup/sha256sum/…）
 
 ## Phase7 残り
 
 | 済み | 残り |
 |------|------|
 | `/persist` 実ディスク永続（ATA PIO + BFP1 レコード） | tiny FAT/ext2 での本マウント |
-| UDP loopback + sendmsg/recvmsg(1-iov) | e1000 実 NIC / slirp 外向き |
+| UDP loopback + e1000 DGRAM TX（`_f2_e1000_udp_smoke.sh`） | slirp 外向き TCP / 本格 RX echo |
 | LTP curated 13 cases in-tree | full LTP vendor（任意） |
-| ENOSYS: sendmsg/recvmsg 解消 | 残 ENOSYS ゼロ化 / H01 fpstate / timer preempt |
+| ENOSYS tracer（出現ログ） | 残 ENOSYS ゼロ化 / 本プリエンプト |
 
 ## Git
 
-- Work: `work/posix-holes-redo` @ `defe2d6` (**pushed**)
-- Backup (local): `backup/f1f3-green-20260722` / tag same
+- Work: `work/posix-holes-redo`
+- Smoke: `tools/_abcdef_smoke.sh`
 - スマホ: GitHub → このブランチ → [`docs/NEXT_INSTRUCTIONS.md`](./NEXT_INSTRUCTIONS.md) を編集して指示

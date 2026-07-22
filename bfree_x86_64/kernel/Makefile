@@ -97,7 +97,12 @@ SRCS := $(wildcard sysmain/*.c) \
 	string.c device.c fbdev.c vbe_gop.c gpu_backend.c cache.c devfs.c mouse.c fb_splash.c time_x86_64.c pci.c
 
 ifeq ($(ENABLE_RUNTIME_NET),1)
+# Guest LAN stack lives one tree above Program/ (B-Free-master/kernel).
+BFREE_NET_ROOT := $(abspath $(CURDIR)/../../../kernel)
 SRCS += netdrv_runtime.c devnet0_runtime.c net_runtime.c
+SRCS += $(BFREE_NET_ROOT)/net_udp.c $(BFREE_NET_ROOT)/net_ipv4.c \
+        $(BFREE_NET_ROOT)/net_arp.c $(BFREE_NET_ROOT)/net_icmp.c
+CFLAGS += -I$(BFREE_NET_ROOT) -I$(abspath $(CURDIR)/../../x86_64/kernel)
 endif
 
 OBJS := $(sort $(SRCS:.c=.o) $(ASMS:.S=.o))

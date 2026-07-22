@@ -118,5 +118,7 @@ P2  [x] NOFORK=0 緑 (2026-07-22 verified)
 P3  [x] musl hello MUSL_HELLO_OK (2026-07-22)
 P3  [x] H20 futex waiter queue (E2, 2026-07-22)
 P4  [x] Phase7 agreed scope green (2026-07-22)
-F1  [~] persist.img scaffold; block I/O deferred
+F1  [x] ATA PIO + /persist BFP1 reboot green (_f1_persist_smoke.sh, 2026-07-22)
+F2  [x] UDP loopback + e1000 sendto TX (_f2_e1000_udp_smoke.sh, 2026-07-22)
+F3  [x] LTP curated subset in-tree
 ```

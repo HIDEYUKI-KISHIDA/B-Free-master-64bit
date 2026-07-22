@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# F1 scaffold: create persist.img and document QEMU -drive wiring.
-# Does NOT claim reboot durability yet — block R/W driver still stub.
+# F1: create persist.img for QEMU IDE attach (ATA PIO + BFP1 /persist store).
+# Full reboot durability is exercised by tools/_f1_persist_smoke.sh.
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMG="${BFREE_PERSIST_IMG:-$ROOT/persist.img}"
@@ -14,8 +14,9 @@ else
 fi
 
 cat <<EOF
-[f1] QEMU attach example (not wired into phase3 yet):
-  -drive file=$IMG,if=ide,format=raw,index=1,media=disk
-[f1] Guest: /persist remains RAM vfile until AHCI/ATA PIO lands.
-[f1] See tools/sf01_persistent_fs_note.md
+[f1] QEMU attach (matches _f1_persist_smoke.sh):
+  -drive file=$IMG,if=ide,index=0,media=disk,format=raw
+[f1] Guest /persist is vfile-mirrored to BFP1 records on that disk (ATA PIO).
+[f1] Smoke: tools/_f1_persist_smoke.sh
+[f1] Note: tools/sf01_persistent_fs_note.md
 EOF

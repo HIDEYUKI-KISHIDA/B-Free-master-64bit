@@ -16,6 +16,12 @@
 #include "process.h"
 #include "../../userland/libc/bfree_epoll.h"
 
+extern int vmm_map_page(page_table_t *pt, uint64_t vaddr, uint64_t paddr, uint64_t flags);
+extern int vmm_unmap_page(page_table_t *pt, uint64_t vaddr);
+extern void vmm_drop_identity_alias(page_table_t *pt, uint64_t phys);
+extern int vmm_user_page_mapped(page_table_t *pt, uint64_t vaddr);
+extern int vmm_user_virt_to_phys(page_table_t *pt, uint64_t vaddr, uint64_t *paddr_out);
+
 extern page_table_t kernel_page_table;
 
 #ifndef BFREE_GUEST_FD_TABLE_SIZE
@@ -144,12 +150,41 @@ static uint64_t g_guest_fork_saved_fsbase;
 /* F2: UDP loopback datagram queue (per receiving socket). */
 #define BFREE_INET_DGRAMS      4
 #define BFREE_INET_DGRAM_SIZE  512
+/* QEMU slirp guest address (matches net_runtime_init). */
+#define BFREE_INADDR_GUEST_LAN 0x0a00020fU /* 10.0.2.15 */
+
+extern int udp_send(uint32_t dst_ip, uint16_t dst_port, uint16_t src_port,
+                    const uint8_t *data, size_t len);
+extern void udp_register_port(uint16_t port, void (*cb)(uint32_t, uint16_t, const uint8_t *, size_t));
+extern void udp_unregister_port(uint16_t port);
+extern void net_runtime_poll(void);
+
+/* Weak stubs when ENABLE_RUNTIME_NET=0 (no e1000 / udp objects linked). */
+__attribute__((weak)) int udp_send(uint32_t dst_ip, uint16_t dst_port, uint16_t src_port,
+                                   const uint8_t *data, size_t len)
+{
+    (void)dst_ip; (void)dst_port; (void)src_port; (void)data; (void)len;
+    return -1;
+}
+__attribute__((weak)) void udp_register_port(uint16_t port,
+    void (*cb)(uint32_t, uint16_t, const uint8_t *, size_t))
+{
+    (void)port; (void)cb;
+}
+__attribute__((weak)) void udp_unregister_port(uint16_t port)
+{
+    (void)port;
+}
+__attribute__((weak)) void net_runtime_poll(void)
+{
+}
+
 typedef struct {
     int used;
     int listening;
     int connected;
     int bound;
-    int is_dgram;   /* SOCK_DGRAM: loopback datagram queue, no pipes */
+    int is_dgram;   /* SOCK_DGRAM: datagram queue (+ e1000 for LAN) */
     uint32_t addr;
     uint16_t port;
     int accept_rd;
@@ -238,6 +273,7 @@ static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];
 #endif
 
 static int bfree_user_ptr_mapped(long ptr);
+static int bfree_user_vaddr_mapped(uint64_t vaddr);
 static void bfree_wrmsr64(uint32_t msr, uint64_t val);
 static uint64_t bfree_rdmsr64(uint32_t msr);
 static int bfree_pty_slot_from_fd(int fd);
@@ -265,6 +301,11 @@ static void bfree_guest_sig_raise(int sig);
 static int bfree_guest_sig_take_eintr(void);
 static long bfree_guest_sig_try_deliver(long ret);
 static long bfree_guest_exit_from_fork_signal(int sig);
+static long sys_linux_poll_common(long fds_ptr, long nfds);
+static long bfree_gthr_park_poll(long fds_ptr, long nfds);
+static long bfree_gthr_park_futex(volatile int *uaddr, int val);
+static long bfree_gthr_on_eventfd_write(void);
+static long bfree_gthr_on_futex_wake(volatile int *uaddr, int want);
 
 #ifndef BFREE_RESTORE_COOP_GLOBALS
 #define BFREE_RESTORE_COOP_GLOBALS 1
@@ -300,27 +341,296 @@ static uint64_t g_guest_sig_mask;
 #endif
 /* === end restore compile glue === */
 
+static void preempt_disable(void);
+static void preempt_enable(void);
+static int g_guest_preempt_count;
+static volatile int g_guest_need_resched;
+
+/* ---- Cooperative multi-thread (Linux-like wait / wake / switch) ---- */
+#define BFREE_GTHR_UNUSED   0
+#define BFREE_GTHR_RUNNING  1
+#define BFREE_GTHR_RUNNABLE 2
+#define BFREE_GTHR_WAIT_POLL  3
+#define BFREE_GTHR_WAIT_FUTEX 4
+
+typedef struct {
+    int used;
+    int tid;
+    int state;
+    uint64_t rcx, r11, rsp, rbx, rbp, r12, r13, r14, r15, rdx, rax, fsbase;
+    long poll_fds;
+    long poll_nfds;
+    volatile int *futex_uaddr;
+    int futex_val;
+    uintptr_t clear_child_tid;
+} bfree_gthr_t;
+
+static bfree_gthr_t g_gthr[BFREE_GUEST_MAX_THREADS];
+static int g_gthr_cur = -1;
+static int g_gthr_main;
+
 static void bfree_guest_thread_init(void)
 {
+    int i;
+
     g_guest_thread_active = 0;
     g_guest_thread_tid = 0;
     g_guest_thread_slots_used = 0;
-}
-
-/* Nestable barriers for guest thread/TLS/futex critical sections.
- * No timer-driven guest preemption yet; counter is for future IRQ path. */
-static int g_guest_preempt_count;
-
-static void preempt_disable(void)
-{
-    g_guest_preempt_count++;
-}
-
-static void preempt_enable(void)
-{
-    if (g_guest_preempt_count > 0) {
-        g_guest_preempt_count--;
+    g_gthr_cur = -1;
+    g_gthr_main = 0;
+    for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
+        g_gthr[i].used = 0;
+        g_gthr[i].state = BFREE_GTHR_UNUSED;
     }
+}
+
+static int bfree_gthr_mt(void)
+{
+    return g_gthr_cur >= 0;
+}
+
+static int bfree_gthr_count_used(void)
+{
+    int i;
+    int n = 0;
+
+    for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
+        if (g_gthr[i].used) {
+            ++n;
+        }
+    }
+    return n;
+}
+
+static void bfree_gthr_save_current(void)
+{
+    bfree_gthr_t *t;
+
+    if (g_gthr_cur < 0 || g_gthr_cur >= BFREE_GUEST_MAX_THREADS) {
+        return;
+    }
+    t = &g_gthr[g_gthr_cur];
+    t->rcx = g_bfree_user_sysret_rcx;
+    t->r11 = g_bfree_user_sysret_r11;
+    t->rsp = g_bfree_user_sysret_rsp;
+    t->rbx = g_bfree_user_sysret_rbx;
+    t->rbp = g_bfree_user_sysret_rbp;
+    t->r12 = g_bfree_user_sysret_r12;
+    t->r13 = g_bfree_user_sysret_r13;
+    t->r14 = g_bfree_user_sysret_r14;
+    t->r15 = g_bfree_user_sysret_r15;
+    t->rdx = g_bfree_user_sysret_rdx;
+    t->fsbase = bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE);
+}
+
+static int bfree_gthr_poll_ready(const bfree_gthr_t *t)
+{
+    if (t->state != BFREE_GTHR_WAIT_POLL) {
+        return 0;
+    }
+    return sys_linux_poll_common(t->poll_fds, t->poll_nfds) > 0;
+}
+
+static int bfree_gthr_futex_ready(const bfree_gthr_t *t)
+{
+    if (t->state != BFREE_GTHR_WAIT_FUTEX || t->futex_uaddr == 0) {
+        return 0;
+    }
+    if (!bfree_user_vaddr_mapped((uint64_t)(uintptr_t)t->futex_uaddr)) {
+        return 1;
+    }
+    return *(volatile int *)t->futex_uaddr != t->futex_val;
+}
+
+static int bfree_gthr_find_runnable(int except)
+{
+    int i;
+
+    for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
+        if (i == except || !g_gthr[i].used) {
+            continue;
+        }
+        if (g_gthr[i].state == BFREE_GTHR_RUNNABLE) {
+            return i;
+        }
+    }
+    for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
+        if (i == except || !g_gthr[i].used) {
+            continue;
+        }
+        if (bfree_gthr_poll_ready(&g_gthr[i]) || bfree_gthr_futex_ready(&g_gthr[i])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static long bfree_gthr_publish_switch(int to_idx)
+{
+    bfree_gthr_t *t;
+
+    if (to_idx < 0 || to_idx >= BFREE_GUEST_MAX_THREADS || !g_gthr[to_idx].used) {
+        return 0;
+    }
+    t = &g_gthr[to_idx];
+    if (t->state == BFREE_GTHR_WAIT_POLL) {
+        long ready = sys_linux_poll_common(t->poll_fds, t->poll_nfds);
+
+        if (ready <= 0) {
+            return 0;
+        }
+        t->rax = (uint64_t)ready;
+        t->poll_fds = 0;
+    } else if (t->state == BFREE_GTHR_WAIT_FUTEX) {
+        if (!bfree_gthr_futex_ready(t)) {
+            return 0;
+        }
+        t->rax = 0;
+    }
+
+    g_gthr_cur = to_idx;
+    t->state = BFREE_GTHR_RUNNING;
+    g_guest_thread_tid = t->tid;
+    g_guest_thread_active = (bfree_gthr_count_used() > 1) ? 1 : 0;
+    g_guest_clear_child_tid = t->clear_child_tid;
+    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, t->fsbase);
+
+    g_bfree_fork_saved_rcx = t->rcx;
+    g_bfree_fork_saved_r11 = t->r11;
+    g_bfree_fork_saved_rsp = t->rsp;
+    g_bfree_fork_saved_rbx = t->rbx;
+    g_bfree_fork_saved_rbp = t->rbp;
+    g_bfree_fork_saved_r12 = t->r12;
+    g_bfree_fork_saved_r13 = t->r13;
+    g_bfree_fork_saved_r14 = t->r14;
+    g_bfree_fork_saved_r15 = t->r15;
+    g_bfree_fork_saved_rdx = t->rdx;
+    g_bfree_fork_parent_ret = t->rax;
+    g_guest_fork_saved_fsbase = t->fsbase;
+    return BFREE_SYSRET_THREAD_SWITCH;
+}
+
+static long bfree_gthr_park_poll(long fds_ptr, long nfds)
+{
+    int other;
+    long sw;
+
+    if (!bfree_gthr_mt()) {
+        return 0;
+    }
+    other = bfree_gthr_find_runnable(g_gthr_cur);
+    if (other < 0) {
+        return 0;
+    }
+    bfree_gthr_save_current();
+    g_gthr[g_gthr_cur].state = BFREE_GTHR_WAIT_POLL;
+    g_gthr[g_gthr_cur].poll_fds = fds_ptr;
+    g_gthr[g_gthr_cur].poll_nfds = nfds;
+    g_gthr[g_gthr_cur].futex_uaddr = 0;
+    sw = bfree_gthr_publish_switch(other);
+    return sw != 0 ? sw : 0;
+}
+
+static long bfree_gthr_park_futex(volatile int *uaddr, int val)
+{
+    int other;
+    long sw;
+
+    if (!bfree_gthr_mt()) {
+        return 0;
+    }
+    other = bfree_gthr_find_runnable(g_gthr_cur);
+    if (other < 0) {
+        return 0;
+    }
+    bfree_gthr_save_current();
+    g_gthr[g_gthr_cur].state = BFREE_GTHR_WAIT_FUTEX;
+    g_gthr[g_gthr_cur].futex_uaddr = uaddr;
+    g_gthr[g_gthr_cur].futex_val = val;
+    g_gthr[g_gthr_cur].poll_fds = 0;
+    sw = bfree_gthr_publish_switch(other);
+    return sw != 0 ? sw : 0;
+}
+
+static long bfree_gthr_on_eventfd_write(void)
+{
+    int i;
+    int other = -1;
+    long sw;
+
+    if (!bfree_gthr_mt()) {
+        return 0;
+    }
+    /* Eventfd write: prefer parked poll waiters over a generic runnable scan. */
+    for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
+        if (i == g_gthr_cur || !g_gthr[i].used) {
+            continue;
+        }
+        if (g_gthr[i].state == BFREE_GTHR_WAIT_POLL) {
+            other = i;
+            break;
+        }
+    }
+    if (other < 0) {
+        other = bfree_gthr_find_runnable(g_gthr_cur);
+    }
+    if (other < 0) {
+        return 0;
+    }
+    if (g_gthr[other].state != BFREE_GTHR_WAIT_POLL &&
+        g_gthr[other].state != BFREE_GTHR_RUNNABLE) {
+        return 0;
+    }
+    bfree_gthr_save_current();
+    g_gthr[g_gthr_cur].rax = (uint64_t)sizeof(uint64_t);
+    g_gthr[g_gthr_cur].state = BFREE_GTHR_RUNNABLE;
+    /* Mark waiter runnable before publish so we do not depend on a second
+     * poll_common walk of the waiter's user pollfd (can EFAULT on edge cases). */
+    if (g_gthr[other].state == BFREE_GTHR_WAIT_POLL) {
+        g_gthr[other].state = BFREE_GTHR_RUNNABLE;
+        g_gthr[other].rax = 1;
+        g_gthr[other].poll_fds = 0;
+        g_gthr[other].poll_nfds = 0;
+    }
+    sw = bfree_gthr_publish_switch(other);
+    return sw != 0 ? sw : 0;
+}
+
+static long bfree_gthr_on_futex_wake(volatile int *uaddr, int want)
+{
+    int i;
+    int woke = 0;
+    int other = -1;
+    long sw;
+    long waker_ret;
+
+    if (!bfree_gthr_mt()) {
+        return 0;
+    }
+    for (i = 0; i < BFREE_GUEST_MAX_THREADS && woke < want; ++i) {
+        if (!g_gthr[i].used || g_gthr[i].state != BFREE_GTHR_WAIT_FUTEX) {
+            continue;
+        }
+        if (g_gthr[i].futex_uaddr != uaddr) {
+            continue;
+        }
+        g_gthr[i].state = BFREE_GTHR_RUNNABLE;
+        g_gthr[i].rax = 0;
+        g_gthr[i].futex_uaddr = 0;
+        if (other < 0) {
+            other = i;
+        }
+        ++woke;
+    }
+    if (other < 0) {
+        return 0;
+    }
+    waker_ret = woke > 0 ? (long)woke : 1;
+    bfree_gthr_save_current();
+    g_gthr[g_gthr_cur].rax = (uint64_t)waker_ret;
+    g_gthr[g_gthr_cur].state = BFREE_GTHR_RUNNABLE;
+    sw = bfree_gthr_publish_switch(other);
+    return sw != 0 ? sw : 0;
 }
 
 static void bfree_guest_thread_save_parent_ctx(void)
@@ -340,15 +650,15 @@ static void bfree_guest_thread_save_parent_ctx(void)
 static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid, long ctid, long tls)
 {
     int tid;
+    int child_idx = -1;
+    int i;
     uint64_t child_rsp;
     uint64_t parent_fs;
+    bfree_gthr_t *parent;
+    bfree_gthr_t *child;
 
     preempt_disable();
-    if (g_guest_fork_active || g_guest_thread_active) {
-        preempt_enable();
-        return -11;
-    }
-    if (g_guest_thread_slots_used >= BFREE_GUEST_MAX_THREADS) {
+    if (g_guest_fork_active) {
         preempt_enable();
         return -11;
     }
@@ -365,31 +675,97 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
         return -11;
     }
 
+    /* First clone: register main as slot 0 (stays runnable with rax=tid). */
+    if (!bfree_gthr_mt()) {
+        g_gthr_main = 0;
+        g_gthr_cur = 0;
+        parent = &g_gthr[0];
+        parent->used = 1;
+        parent->tid = 1;
+        parent->state = BFREE_GTHR_RUNNABLE;
+        parent->rcx = g_bfree_user_sysret_rcx;
+        parent->r11 = g_bfree_user_sysret_r11;
+        parent->rsp = g_bfree_user_sysret_rsp;
+        parent->rbx = g_bfree_user_sysret_rbx;
+        parent->rbp = g_bfree_user_sysret_rbp;
+        parent->r12 = g_bfree_user_sysret_r12;
+        parent->r13 = g_bfree_user_sysret_r13;
+        parent->r14 = g_bfree_user_sysret_r14;
+        parent->r15 = g_bfree_user_sysret_r15;
+        parent->rdx = g_bfree_user_sysret_rdx;
+        parent->fsbase = bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE);
+        parent->rax = (uint64_t)(long)tid;
+        parent->clear_child_tid = 0;
+        parent->poll_fds = 0;
+        parent->futex_uaddr = 0;
+        g_guest_thread_slots_used = 1;
+    } else {
+        bfree_gthr_save_current();
+        g_gthr[g_gthr_cur].state = BFREE_GTHR_RUNNABLE;
+        g_gthr[g_gthr_cur].rax = (uint64_t)(long)tid;
+    }
+
+    for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
+        if (!g_gthr[i].used) {
+            child_idx = i;
+            break;
+        }
+    }
+    if (child_idx < 0) {
+        preempt_enable();
+        return -11;
+    }
+
     parent_fs = bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE);
     g_guest_fork_saved_fsbase = parent_fs;
     bfree_guest_thread_save_parent_ctx();
 
+    child = &g_gthr[child_idx];
+    child->used = 1;
+    child->tid = tid;
+    child->state = BFREE_GTHR_RUNNING;
+    child->rcx = g_bfree_user_sysret_rcx;
+    child->r11 = g_bfree_user_sysret_r11;
+    child->rsp = child_rsp;
+    child->rbx = g_bfree_user_sysret_rbx;
+    child->rbp = g_bfree_user_sysret_rbp;
+    child->r12 = g_bfree_user_sysret_r12;
+    child->r13 = g_bfree_user_sysret_r13;
+    child->r14 = g_bfree_user_sysret_r14;
+    child->r15 = g_bfree_user_sysret_r15;
+    child->rdx = g_bfree_user_sysret_rdx;
+    child->rax = 0;
+    child->fsbase = parent_fs;
+    child->clear_child_tid = 0;
+    child->poll_fds = 0;
+    child->futex_uaddr = 0;
+
     if ((flags & 0x00080000UL) != 0UL && tls != 0) { /* CLONE_SETTLS */
         if (!bfree_user_ptr_mapped(tls)) {
+            child->used = 0;
             preempt_enable();
             return -14;
         }
-        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, (uint64_t)(uintptr_t)tls);
+        child->fsbase = (uint64_t)(uintptr_t)tls;
+        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, child->fsbase);
     }
 
     if ((flags & 0x00100000UL) != 0UL && ptid != 0 && bfree_user_ptr_mapped(ptid)) {
         *(int *)(uintptr_t)ptid = tid;
     }
     if ((flags & 0x00200000UL) != 0UL && ctid != 0 && bfree_user_ptr_mapped(ctid)) {
+        child->clear_child_tid = (uintptr_t)ctid;
         g_guest_clear_child_tid = (uintptr_t)ctid;
         *(int *)(uintptr_t)ctid = tid;
     } else {
         g_guest_clear_child_tid = 0;
     }
 
+    g_gthr_cur = child_idx;
     g_guest_thread_active = 1;
     g_guest_thread_tid = tid;
-    g_guest_thread_slots_used++;
+    g_guest_thread_slots_used = bfree_gthr_count_used();
+    g_guest_need_resched = 0;
 
     g_bfree_sysret_exec_rsp = child_rsp;
     preempt_enable();
@@ -400,34 +776,146 @@ static long bfree_guest_thread_exit(long status)
 {
     int tid;
     int *cleartid;
+    int other;
+    uintptr_t ctid;
+    int idx;
+    int was_main;
 
     (void)status;
     preempt_disable();
-    if (!g_guest_thread_active) {
+    if (!bfree_gthr_mt()) {
         preempt_enable();
         return -1;
     }
-    tid = g_guest_thread_tid;
+    idx = g_gthr_cur;
+    if (idx < 0 || !g_gthr[idx].used) {
+        preempt_enable();
+        return -1;
+    }
+    tid = g_gthr[idx].tid;
+    ctid = g_gthr[idx].clear_child_tid;
+    was_main = (idx == g_gthr_main);
 
-    if (g_guest_clear_child_tid != 0 &&
-        bfree_user_ptr_mapped((long)g_guest_clear_child_tid)) {
-        cleartid = (int *)(uintptr_t)g_guest_clear_child_tid;
+    if (ctid != 0 && bfree_user_ptr_mapped((long)ctid)) {
+        int wi;
+
+        cleartid = (int *)(uintptr_t)ctid;
         *cleartid = 0;
         bfree_guest_futex_wake_user((volatile int *)cleartid);
-        g_guest_clear_child_tid = 0;
+        for (wi = 0; wi < BFREE_GUEST_MAX_THREADS; ++wi) {
+            if (!g_gthr[wi].used || g_gthr[wi].state != BFREE_GTHR_WAIT_FUTEX) {
+                continue;
+            }
+            if (g_gthr[wi].futex_uaddr != (volatile int *)cleartid) {
+                continue;
+            }
+            g_gthr[wi].state = BFREE_GTHR_RUNNABLE;
+            g_gthr[wi].rax = 0;
+            g_gthr[wi].futex_uaddr = 0;
+        }
     }
 
-    g_guest_thread_active = 0;
-    g_guest_thread_tid = 0;
-    if (g_guest_thread_slots_used > 0) {
-        g_guest_thread_slots_used--;
+    g_gthr[idx].used = 0;
+    g_gthr[idx].state = BFREE_GTHR_UNUSED;
+    g_guest_thread_slots_used = bfree_gthr_count_used();
+
+    /* Main thread exit ends the whole guest process group. */
+    if (was_main) {
+        int i;
+
+        for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
+            g_gthr[i].used = 0;
+            g_gthr[i].state = BFREE_GTHR_UNUSED;
+        }
+        g_guest_thread_active = 0;
+        g_guest_thread_tid = 0;
+        g_guest_thread_slots_used = 0;
+        g_gthr_cur = -1;
+        preempt_enable();
+        /* Fall through to process exit (busybox re-enter / halt path). */
+        return -1;
     }
 
-    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);
-    g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
-    g_bfree_fork_parent_ret = (uint64_t)(long)tid;
-    preempt_enable();
-    return BFREE_SYSRET_FORK_PARENT;
+    other = bfree_gthr_find_runnable(idx);
+    if (other < 0) {
+        /* Fall back to main if still present. */
+        if (g_gthr[g_gthr_main].used) {
+            other = g_gthr_main;
+            g_gthr[other].state = BFREE_GTHR_RUNNABLE;
+        }
+    }
+    if (other < 0) {
+        g_guest_thread_active = 0;
+        g_guest_thread_tid = 0;
+        g_gthr_cur = -1;
+        preempt_enable();
+        return -1;
+    }
+    if (g_guest_thread_slots_used <= 1 && other == g_gthr_main) {
+        g_guest_thread_active = 0;
+    }
+    {
+        long sw = bfree_gthr_publish_switch(other);
+        preempt_enable();
+        return sw != 0 ? sw : BFREE_SYSRET_THREAD_SWITCH;
+    }
+}
+
+/* A: ENOSYS appearance tracer — log first hit + histogram (no mass-fill). */
+#define BFREE_ENOSYS_HIST 48
+static uint16_t g_enosys_nr[BFREE_ENOSYS_HIST];
+static uint32_t g_enosys_hit[BFREE_ENOSYS_HIST];
+static uint32_t g_enosys_total;
+static uint32_t g_enosys_slots;
+
+static void bfree_enosys_note(long num)
+{
+    unsigned i;
+    uint32_t c = 0;
+
+    if (num < 0 || num > 65535) {
+        return;
+    }
+    g_enosys_total++;
+    for (i = 0; i < g_enosys_slots; ++i) {
+        if (g_enosys_nr[i] == (uint16_t)num) {
+            g_enosys_hit[i]++;
+            c = g_enosys_hit[i];
+            break;
+        }
+    }
+    if (c == 0 && g_enosys_slots < BFREE_ENOSYS_HIST) {
+        i = g_enosys_slots++;
+        g_enosys_nr[i] = (uint16_t)num;
+        g_enosys_hit[i] = 1;
+        c = 1;
+    }
+    /* First appearance, then every 8th — keeps UART readable. */
+    if (c == 1U || (c & 7U) == 0U) {
+        uart_puts("[ENOSYS] nr=");
+        uart_puthex64((uint64_t)(unsigned long)num);
+        uart_puts(" count=");
+        uart_puthex64((uint64_t)c);
+        uart_puts(" total=");
+        uart_puthex64((uint64_t)g_enosys_total);
+        uart_puts("\n");
+    }
+}
+
+/* Nestable barriers for guest thread/TLS/futex critical sections.
+ * No timer-driven guest preemption yet; counter is for future IRQ path. */
+/* g_guest_preempt_count / g_guest_need_resched declared above gthr block. */
+
+static void preempt_disable(void)
+{
+    g_guest_preempt_count++;
+}
+
+static void preempt_enable(void)
+{
+    if (g_guest_preempt_count > 0) {
+        g_guest_preempt_count--;
+    }
 }
 
 /* Declared early so cooperative fork can snapshot/restore it. */
@@ -1248,6 +1736,19 @@ static uint8_t *bfree_user_stack_page_kptr(uint64_t vaddr);
 
 static int bfree_user_vaddr_mapped(uint64_t vaddr)
 {
+    page_table_t *pt;
+
+    if (!knl_current_task || !knl_current_task->page_table_base) {
+        return 0;
+    }
+    if (vaddr >= VMM_USER_VA_BYTES) {
+        return 0;
+    }
+    pt = (page_table_t *)knl_current_task->page_table_base;
+    /* Prefer VMM walk — direct pt->pt[] misses pt_ext / stale-PD cases. */
+    if (vmm_user_page_mapped(pt, vaddr)) {
+        return 1;
+    }
     return bfree_user_stack_page_kptr(vaddr) != 0;
 }
 
@@ -1869,7 +2370,7 @@ static uint64_t bfree_timespec_to_us(const struct timespec *ts);
  *   *uaddr (Qt single-thread workaround; full preemptive park → later).
  * - WAKE: disarm matching waiter slots (soft-1 if none).
  */
-#define BFREE_FUTEX_WAITERS 4
+#define BFREE_FUTEX_WAITERS 8
 static volatile int *g_futex_waiter_uaddr[BFREE_FUTEX_WAITERS];
 static int g_futex_waiter_armed[BFREE_FUTEX_WAITERS];
 
@@ -1890,10 +2391,28 @@ static void bfree_guest_futex_wake_user(volatile int *uaddr)
     preempt_enable();
 }
 
-/* Serial guest: no preemptive reschedule yet; coop yield hooks later. */
+/* Coop: when another guest thread is runnable, switch (Linux-like yield). */
 static long bfree_guest_sched_maybe_yield(void)
 {
-    return 0;
+    int other;
+    long sw;
+
+    if (!bfree_gthr_mt()) {
+        return 0;
+    }
+    if (!g_guest_need_resched) {
+        return 0;
+    }
+    g_guest_need_resched = 0;
+    other = bfree_gthr_find_runnable(g_gthr_cur);
+    if (other < 0) {
+        return 0;
+    }
+    bfree_gthr_save_current();
+    g_gthr[g_gthr_cur].rax = 0;
+    g_gthr[g_gthr_cur].state = BFREE_GTHR_RUNNABLE;
+    sw = bfree_gthr_publish_switch(other);
+    return sw != 0 ? sw : 0;
 }
 
 static int bfree_futex_arm_waiter(volatile int *ua)
@@ -1987,10 +2506,17 @@ long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, lon
             return 0;
         }
         {
+            long sw = bfree_gthr_park_futex((volatile int *)(uintptr_t)uaddr, (int)val);
+
+            if (sw != 0) {
+                return sw;
+            }
+        }
+        {
             int slot = bfree_futex_arm_waiter((volatile int *)(uintptr_t)uaddr);
             int spins;
             __asm__ volatile("sti" ::: "memory");
-            for (spins = 0; spins < 8; ++spins) {
+            for (spins = 0; spins < 64; ++spins) {
                 if (bfree_futex_slot_woken(slot, (volatile int *)(uintptr_t)uaddr,
                                            (int)val)) {
                     break;
@@ -2008,8 +2534,10 @@ long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, lon
             __asm__ volatile("cli" ::: "memory");
             bfree_futex_disarm_slot(slot);
         }
-        /* Qt-compatible clear-on-WAIT fallback (single-thread guest). */
-        *(int *)(uintptr_t)uaddr = 0;
+        /* Single-thread guest: clear-on-WAIT fallback (Qt workaround). */
+        if (!bfree_gthr_mt()) {
+            *(int *)(uintptr_t)uaddr = 0;
+        }
         if (g_guest_futex_log_count < 8U) {
             ++g_guest_futex_log_count;
             uart_puts("[FUTEX] wait\n");
@@ -2023,6 +2551,7 @@ long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, lon
             int want = (int)val;
             int woke = 0;
             int i;
+            long sw;
 
             preempt_disable();
             for (i = 0; i < BFREE_FUTEX_WAITERS && woke < want; ++i) {
@@ -2034,6 +2563,10 @@ long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, lon
                 }
             }
             preempt_enable();
+            sw = bfree_gthr_on_futex_wake((volatile int *)(uintptr_t)uaddr, want);
+            if (sw != 0) {
+                return sw;
+            }
             return woke > 0 ? (long)woke : 1; /* soft success if no waiter */
         }
     case 3: /* FUTEX_REQUEUE */
@@ -2167,6 +2700,7 @@ static void bfree_guest_fork_child_pipe_close_writers(void)
     }
 }
 static uint64_t g_guest_eventfd_val[BFREE_MAX_GUEST_EVENTFD];
+static int g_guest_eventfd_next;
 
 #define BFREE_PTY_SLOTS             4
 #define BFREE_PTY_BUF               512
@@ -2239,6 +2773,7 @@ static int bfree_guest_eventfd_index(int fd)
 #define BFREE_GUEST_USR_DIR_FD      0x3724
 #define BFREE_GUEST_VAR_DIR_FD      0x3725
 #define BFREE_GUEST_HOME_DIR_FD     0x3732
+#define BFREE_GUEST_PERSIST_DIR_FD  0x3736
 #define BFREE_GUEST_PTS_DIR_FD      0x3733
 #define BFREE_GUEST_PROC_DIR_FD     0x3726
 #define BFREE_GUEST_PROC_PID_DIR_FD 0x3727
@@ -3150,6 +3685,24 @@ static int bfree_guest_tmp_has_children(const char *dirname)
     return 0;
 }
 
+/* E: /tmp listing must not show var/home/persist namespace vfiles. */
+static int bfree_guest_tmp_root_skip_ns(const char *entry_name)
+{
+    if (!entry_name) {
+        return 1;
+    }
+    if (strcmp(entry_name, "var") == 0 || strcmp(entry_name, "home") == 0 ||
+        strcmp(entry_name, "persist") == 0) {
+        return 1;
+    }
+    if (strncmp(entry_name, "var/", 4) == 0 ||
+        strncmp(entry_name, "home/", 5) == 0 ||
+        strncmp(entry_name, "persist/", 8) == 0) {
+        return 1;
+    }
+    return 0;
+}
+
 /* Emit the basename of an immediate child of parent_rel ("" for /tmp). */
 static int bfree_guest_tmp_child_basename(const char *entry_name,
                                           const char *parent_rel,
@@ -3296,6 +3849,23 @@ static long bfree_guest_path_at(long dirfd, char *path, size_t cap)
             base[2] = 'a';
             base[3] = 'r';
             base[4] = '\0';
+        } else if (target == (int)BFREE_GUEST_HOME_DIR_FD) {
+            base[0] = '/';
+            base[1] = 'h';
+            base[2] = 'o';
+            base[3] = 'm';
+            base[4] = 'e';
+            base[5] = '\0';
+        } else if (target == (int)BFREE_GUEST_PERSIST_DIR_FD) {
+            base[0] = '/';
+            base[1] = 'p';
+            base[2] = 'e';
+            base[3] = 'r';
+            base[4] = 's';
+            base[5] = 'i';
+            base[6] = 's';
+            base[7] = 't';
+            base[8] = '\0';
         } else if (target == (int)BFREE_GUEST_PROC_DIR_FD) {
             base[0] = '/';
             base[1] = 'p';
@@ -3579,7 +4149,7 @@ static const char g_guest_etc_hosts[] =
     "10.0.2.2\tgateway\n";
 static size_t g_guest_etc_hosts_off;
 
-/* Stub resolver config (UDP DNS not wired; documents guest gateway DNS). */
+/* Resolver config — UDP DNS to 10.0.2.3 is stubbed from /etc/hosts (B). */
 static const char g_guest_etc_resolv[] =
     "nameserver 10.0.2.3\n"
     "search local\n";
@@ -3633,6 +4203,11 @@ static void bfree_guest_exec_reset_subsystems(int is_busybox)
     g_guest_waitid_active = 0;
     g_guest_waitid_infop = 0;
     g_guest_wait_status_ptr = 0;
+    bfree_guest_thread_init();
+    g_guest_eventfd_next = 0;
+    for (i = 0; i < BFREE_MAX_GUEST_EVENTFD; ++i) {
+        g_guest_eventfd_val[i] = 0;
+    }
     g_guest_pgid = 1;
     g_guest_tty_pgrp = 1;
     g_guest_sid = 1;
@@ -4251,6 +4826,25 @@ static long sys_linux_write(long fd, long buf, long count)
     bfree_guest_ofd_t *ofd;
 
     fd = bfree_guest_fd_resolve((int)fd);
+    if (bfree_guest_is_eventfd((int)fd) || bfree_guest_is_eventfd(orig_fd)) {
+        int efd = bfree_guest_is_eventfd((int)fd) ? (int)fd : orig_fd;
+        int idx = bfree_guest_eventfd_index(efd);
+        const uint64_t *src;
+
+        if (buf == 0 || count < (long)sizeof(uint64_t) || !bfree_user_ptr_mapped(buf)) {
+            return -14;
+        }
+        src = (const uint64_t *)(uintptr_t)buf;
+        g_guest_eventfd_val[idx] += *src;
+        {
+            long sw = bfree_gthr_on_eventfd_write();
+
+            if (sw != 0) {
+                return sw;
+            }
+        }
+        return (long)sizeof(uint64_t);
+    }
     if (fd == (long)BFREE_GUEST_DEV_NULL_FD) {
         /* /dev/null: discard output (keep behavior permissive for shell redirections). */
         return count;
@@ -4383,17 +4977,7 @@ static long sys_linux_write(long fd, long buf, long count)
         }
         return (long)n;
     }
-    if (bfree_guest_is_eventfd(fd)) {
-        int idx = bfree_guest_eventfd_index(fd);
-        const uint64_t *src;
-
-        if (buf == 0 || count < (long)sizeof(uint64_t) || !bfree_user_ptr_mapped(buf)) {
-            return -14;
-        }
-        src = (const uint64_t *)(uintptr_t)buf;
-        g_guest_eventfd_val[idx] += *src;
-        return (long)sizeof(uint64_t);
-    }
+    /* eventfd handled at top of sys_linux_write */
     if (orig_fd == 1 || orig_fd == 2) {
         /* stdout/stderr resolved to a stale/garbage target; heal back to the
          * console instead of failing with EBADF ("cat: write error"). */
@@ -4476,6 +5060,10 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     }
     if (strcmp(path, "/home") == 0 || (want_dir && strncmp(path, "/home/", 6) == 0 && path[6] == '\0')) {
         return bfree_guest_vfile_publish_open(BFREE_GUEST_HOME_DIR_FD, (int)flags, 0);
+    }
+    if (strcmp(path, "/persist") == 0 || (want_dir && strncmp(path, "/persist/", 9) == 0 && path[9] == '\0')) {
+        bfree_persist_load_once();
+        return bfree_guest_vfile_publish_open(BFREE_GUEST_PERSIST_DIR_FD, (int)flags, 0);
     }
     if (strncmp(path, "/bin/", 5) == 0 && path[5] != '\0') {
         g_guest_busybox_off = 0;
@@ -5442,7 +6030,7 @@ static long bfree_linux_stat_for_path(const char *path, long statbuf)
     }
     if (path[0] == '/' && path[1] == 'b' && path[2] == 'i' && path[3] == 'n' &&
         path[4] == '/' && path[5] != '\0') {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 493048);
     }
     if (strcmp(path, "/etc") == 0) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
@@ -5479,7 +6067,7 @@ static long bfree_linux_stat_for_path(const char *path, long statbuf)
     if (path[0] == '/' && path[1] == 'u' && path[2] == 's' && path[3] == 'r' &&
         path[4] == '/' && path[5] == 'b' && path[6] == 'i' && path[7] == 'n' &&
         path[8] == '/' && path[9] != '\0') {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 493048);
     }
     if (strcmp(path, "/var") == 0) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
@@ -5490,6 +6078,13 @@ static long bfree_linux_stat_for_path(const char *path, long statbuf)
     if (strcmp(path, "/tmp") == 0) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 01777U, 4096);
     }
+    if (strcmp(path, "/home") == 0) {
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+    }
+    if (strcmp(path, "/persist") == 0) {
+        bfree_persist_load_once();
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
+    }
     {
         char vname[64];
 
@@ -5498,6 +6093,14 @@ static long bfree_linux_stat_for_path(const char *path, long statbuf)
 
             if (vf) {
                 return bfree_linux_stat_fill_vfile(statbuf, vf);
+            }
+            /* Directory markers (home/var/persist) may lack a vnode until mkdir. */
+            if (strcmp(vname, "home") == 0 || strcmp(vname, "var") == 0 ||
+                strcmp(vname, "persist") == 0) {
+                if (strcmp(vname, "persist") == 0) {
+                    bfree_persist_load_once();
+                }
+                return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
             }
             return -2;
         }
@@ -5588,13 +6191,15 @@ static long sys_linux_fstat(long fd, long statbuf)
     target = bfree_guest_open_target((int)fd, 0);
     if (target == (int)BFREE_GUEST_ROOT_DIR_FD || target == (int)BFREE_GUEST_TMP_DIR_FD ||
         target == (int)BFREE_GUEST_BIN_DIR_FD || target == (int)BFREE_GUEST_USR_DIR_FD ||
-        target == (int)BFREE_GUEST_VAR_DIR_FD || target == (int)BFREE_GUEST_PROC_DIR_FD ||
+        target == (int)BFREE_GUEST_VAR_DIR_FD || target == (int)BFREE_GUEST_HOME_DIR_FD ||
+        target == (int)BFREE_GUEST_PERSIST_DIR_FD ||
+        target == (int)BFREE_GUEST_PROC_DIR_FD ||
         target == (int)BFREE_GUEST_PROC_PID_DIR_FD) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFDIR | 0755U, 4096);
     }
     fd = (long)target;
     if (fd == (long)BFREE_GUEST_BUSYBOX_FD) {
-        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 262544);
+        return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0755U, 493048);
     }
     if (fd == (long)BFREE_GUEST_PASSWD_FD) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0644U,
@@ -5716,10 +6321,11 @@ static long sys_linux_newfstatat(long dirfd, long path_ptr, long statbuf, long f
 static long sys_linux_getdents64(long fd, long dirp, long count)
 {
     static const char *const k_root_names[] = {
-        ".", "..", "bin", "dev", "etc", "proc", "root", "tmp", "usr", "var", "busybox.elf"
+        ".", "..", "bin", "dev", "etc", "home", "persist", "proc", "root", "tmp", "usr", "var", "busybox.elf"
     };
     static const char *const k_bin_names[] = {
-        ".", "..", "sh", "busybox", "echo", "cat", "ls", "grep", "mkdir", "rm", "cp", "mv"
+        ".", "..", "sh", "busybox", "echo", "cat", "ls", "grep", "mkdir", "rm", "cp", "mv",
+        "tee", "mktemp", "base64", "sha256sum", "nslookup"
     };
     static const char *const k_usr_names[] = {
         ".", "..", "bin"
@@ -5775,7 +6381,8 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
         name = k_root_names[dir_idx];
         dtype = (unsigned char)((strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
                                strcmp(name, "bin") == 0 || strcmp(name, "dev") == 0 ||
-                               strcmp(name, "etc") == 0 || strcmp(name, "proc") == 0 ||
+                               strcmp(name, "etc") == 0 || strcmp(name, "home") == 0 ||
+                               strcmp(name, "persist") == 0 || strcmp(name, "proc") == 0 ||
                                strcmp(name, "root") == 0 || strcmp(name, "tmp") == 0 ||
                                strcmp(name, "usr") == 0 || strcmp(name, "var") == 0) ? 4U : 8U);
     } else if (target == (int)BFREE_GUEST_BIN_DIR_FD) {
@@ -5827,12 +6434,28 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
         } else {
             dtype = 8U;
         }
-    } else if (target == (int)BFREE_GUEST_TMP_DIR_FD || (dvf && dvf->is_dir)) {
-        tmp_parent = (dvf && dvf->is_dir) ? dvf->name : "";
+    } else if (target == (int)BFREE_GUEST_TMP_DIR_FD ||
+               target == (int)BFREE_GUEST_HOME_DIR_FD ||
+               target == (int)BFREE_GUEST_PERSIST_DIR_FD ||
+               (dvf && dvf->is_dir)) {
+        if (target == (int)BFREE_GUEST_HOME_DIR_FD) {
+            tmp_parent = "home";
+        } else if (target == (int)BFREE_GUEST_PERSIST_DIR_FD) {
+            bfree_persist_load_once();
+            tmp_parent = "persist";
+        } else {
+            tmp_parent = (dvf && dvf->is_dir) ? dvf->name : "";
+        }
         name_count = 2U;
         for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
-            if (g_guest_vfiles[i].used &&
-                bfree_guest_tmp_child_basename(g_guest_vfiles[i].name, tmp_parent,
+            if (!g_guest_vfiles[i].used || g_guest_vfiles[i].orphaned) {
+                continue;
+            }
+            if (tmp_parent[0] == '\0' &&
+                bfree_guest_tmp_root_skip_ns(g_guest_vfiles[i].name)) {
+                continue;
+            }
+            if (bfree_guest_tmp_child_basename(g_guest_vfiles[i].name, tmp_parent,
                     tmp_child, sizeof(tmp_child))) {
                 ++name_count;
             }
@@ -5853,7 +6476,11 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
             name = 0;
             dtype = 8U;
             for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
-                if (!g_guest_vfiles[i].used) {
+                if (!g_guest_vfiles[i].used || g_guest_vfiles[i].orphaned) {
+                    continue;
+                }
+                if (tmp_parent[0] == '\0' &&
+                    bfree_guest_tmp_root_skip_ns(g_guest_vfiles[i].name)) {
                     continue;
                 }
                 if (!bfree_guest_tmp_child_basename(g_guest_vfiles[i].name, tmp_parent,
@@ -5985,7 +6612,9 @@ static long sys_linux_lseek(long fd, long offset, long whence)
 
         if (target == (int)BFREE_GUEST_ROOT_DIR_FD || target == (int)BFREE_GUEST_TMP_DIR_FD ||
             target == (int)BFREE_GUEST_BIN_DIR_FD || target == (int)BFREE_GUEST_USR_DIR_FD ||
-            target == (int)BFREE_GUEST_VAR_DIR_FD || target == (int)BFREE_GUEST_PROC_DIR_FD ||
+            target == (int)BFREE_GUEST_VAR_DIR_FD || target == (int)BFREE_GUEST_HOME_DIR_FD ||
+            target == (int)BFREE_GUEST_PERSIST_DIR_FD ||
+            target == (int)BFREE_GUEST_PROC_DIR_FD ||
             target == (int)BFREE_GUEST_PROC_PID_DIR_FD) {
             return -29; /* ESPIPE */
         }
@@ -7258,35 +7887,16 @@ static int validate_initrd_basename(const char *s)
  * Top 0x01400000 shares VA band with FB mmap base — max span to floor 0x00200000 is 4608 pages (~18 MiB). */
 #define BFREE_USER_STACK_MIN_VADDR   0x00200000ULL
 #define BFREE_USER_STACK_TOP_DEFAULT 0x01400000ULL
-/* Qt desktop.elf: __init_tls + static ctors; 6144 pages overflows (top too low) — use full span below FB. */
-#define BFREE_USER_STACK_PAGES_EXEC 4608
+/* Qt desktop.elf: start with 1024 pages (~4 MiB); grow later if needed.
+ * Full 4608 exhausted PMM interplay with 40MB ELF on 1GiB guests. */
+#define BFREE_USER_STACK_PAGES_EXEC 1024
 #define BFREE_USER_STACK_PAGES_BUSYBOX 512
+#define BFREE_USER_STACK_PAGES_DESKTOP 1024
 
 /* Real user stack page: User|RW|Present and not identity VA==PA (clone artifact). */
 static int bfree_user_stack_page_user_mapped(page_table_t *pt, uint64_t vaddr)
 {
-    uint64_t pd_index;
-    uint64_t pt_index;
-    uint64_t pte;
-    uint64_t paddr;
-
-    if (!pt || vaddr >= VMM_USER_VA_BYTES) {
-        return 0;
-    }
-    pd_index = (vaddr >> 21) & 0x1FFULL;
-    pt_index = (vaddr >> 12) & 0x1FFULL;
-    if (pd_index >= PT_LEVEL_COUNT) {
-        return 0;
-    }
-    pte = pt->pt[pd_index][pt_index];
-    if ((pte & 0x007ULL) != 0x007ULL) {
-        return 0;
-    }
-    paddr = pte & ~(PAGE_SIZE - 1ULL);
-    if (paddr == (vaddr & ~(PAGE_SIZE - 1ULL))) {
-        return 0;
-    }
-    return 1;
+    return vmm_user_page_mapped(pt, vaddr);
 }
 
 static int bfree_user_stack_ensure_pages(uint64_t stack_top, int pages)
@@ -7410,9 +8020,6 @@ static uint8_t *bfree_user_stack_page_kptr(uint64_t vaddr)
 static int bfree_user_stack_page_phys(uint64_t vaddr, uint64_t *out_phys)
 {
     page_table_t *pt;
-    uint64_t pd_index;
-    uint64_t pt_index;
-    uint64_t pte;
 
     if (!knl_current_task || !knl_current_task->page_table_base || !out_phys) {
         return -1;
@@ -7421,16 +8028,61 @@ static int bfree_user_stack_page_phys(uint64_t vaddr, uint64_t *out_phys)
         return -1;
     }
     pt = (page_table_t *)knl_current_task->page_table_base;
-    pd_index = (vaddr >> 21) & 0x1FFULL;
-    pt_index = (vaddr >> 12) & 0x1FFULL;
-    if (pd_index >= PT_LEVEL_COUNT) {
+    /* Use VMM helper — direct pt->pt[] misses pt_ext and stale-PD cases. */
+    return vmm_user_virt_to_phys(pt, vaddr, out_phys);
+}
+
+/* After a large ELF load, force-rebind the top stack pages so prepare_stack
+ * always sees live User|RW PTEs (desktop.elf path). */
+static int bfree_user_stack_rebind_top(uint64_t stack_top, int n_pages)
+{
+    page_table_t *pt;
+    int i;
+
+    if (!knl_current_task || !knl_current_task->page_table_base || n_pages <= 0) {
         return -1;
     }
-    pte = pt->pt[pd_index][pt_index];
-    if ((pte & 0x007ULL) != 0x007ULL) {
-        return -1;
+    pt = (page_table_t *)knl_current_task->page_table_base;
+    for (i = 1; i <= n_pages; ++i) {
+        uint64_t va = stack_top - (uint64_t)i * PAGE_SIZE;
+        void *page;
+        uint64_t phys = 0;
+
+        if (va < BFREE_USER_STACK_MIN_VADDR) {
+            return -1;
+        }
+        (void)vmm_unmap_page(pt, va);
+        page = pmm_alloc();
+        if (!page) {
+            uart_puts("[STACK] rebind: pmm_alloc fail i=");
+            uart_puthex64((uint64_t)i);
+            uart_puts("\n");
+            return -1;
+        }
+        if (vmm_map_page(pt, va, (uint64_t)(uintptr_t)page, 0x007ULL) != 0) {
+            uart_puts("[STACK] rebind: map fail va=");
+            uart_puthex64(va);
+            uart_puts("\n");
+            return -1;
+        }
+        vmm_drop_identity_alias(pt, (uint64_t)(uintptr_t)page);
+        bfree_kernel_phys_io_begin();
+        (void)bfree_kernel_clear_phys((uint64_t)(uintptr_t)page, PAGE_SIZE);
+        bfree_kernel_phys_io_end();
+        if (i == 1 && vmm_user_virt_to_phys(pt, va, &phys) != 0) {
+            uart_puts("[STACK] rebind: verify fail va=");
+            uart_puthex64(va);
+            uart_puts("\n");
+            return -1;
+        }
+        if (i == 1) {
+            uart_puts("[STACK] rebind top ok va=");
+            uart_puthex64(va);
+            uart_puts(" phys=");
+            uart_puthex64(phys);
+            uart_puts("\n");
+        }
     }
-    *out_phys = pte & ~(PAGE_SIZE - 1ULL);
     return 0;
 }
 
@@ -7628,6 +8280,19 @@ static int bfree_user_exec_prepare_musl_stack(uint64_t stack_top, const char *pa
         argc = 3;
         envp = k_busybox_env;
         envc = 8;
+    } else if (path && bfree_guest_basename_eq(path, "desktop.elf")) {
+        static const char *const k_desktop_argv[] = { "/desktop.elf" };
+        static const char *const k_desktop_env[] = {
+            "QT_QPA_PLATFORM=bfree",
+            "HOME=/root",
+            "USER=root",
+            "LOGNAME=root",
+            "PATH=/bin:/usr/bin:."
+        };
+        argv = k_desktop_argv;
+        argc = 1;
+        envp = k_desktop_env;
+        envc = 5;
     } else {
         static const char *const k_default_argv[] = { "program" };
         argv = k_default_argv;
@@ -8203,13 +8868,23 @@ long sys_exec_initrd(long user_path_ptr)
     if (bfree_user_stack_ensure_pages(stack_top,
         bfree_guest_basename_eq(g_bfree_exec_initrd_kpath, "busybox.elf")
             ? BFREE_USER_STACK_PAGES_BUSYBOX
-            : BFREE_USER_STACK_PAGES_EXEC) != 0) {
+            : (bfree_guest_basename_eq(g_bfree_exec_initrd_kpath, "desktop.elf")
+                   ? BFREE_USER_STACK_PAGES_DESKTOP
+                   : BFREE_USER_STACK_PAGES_EXEC)) != 0) {
         uart_puts("[SYSCALL] exec_initrd: stack ensure failed\n");
+        return -1;
+    }
+    if (bfree_user_stack_rebind_top(stack_top, 16) != 0) {
+        uart_puts("[SYSCALL] exec_initrd: stack rebind failed\n");
         return -1;
     }
     if (bfree_user_exec_prepare_stack(stack_top, entry, &user_rsp) != 0) {
         uart_puts("[SYSCALL] exec_initrd: prepare stack failed\n");
-        return -1;
+        /* init.elf text was already unmapped — do not return to ring3 init. */
+        uart_puts("[SYSCALL] exec_initrd: FATAL hang (no return to init)\n");
+        for (;;) {
+            __asm__ volatile("hlt");
+        }
     }
 
     bfree_security_set_role(BFREE_ROLE_APP);
@@ -8400,15 +9075,13 @@ static long sys_linux_socketpair(long domain, long type, long protocol, long sv_
 
 static long sys_linux_eventfd2(long count, long flags)
 {
-    static int next_eventfd;
-
     (void)count;
     (void)flags;
-    if (next_eventfd >= BFREE_MAX_GUEST_EVENTFD) {
+    if (g_guest_eventfd_next >= BFREE_MAX_GUEST_EVENTFD) {
         return -24;
     }
-    g_guest_eventfd_val[next_eventfd] = (count != 0) ? (uint64_t)count : 0ULL;
-    return (int)BFREE_GUEST_EVENTFD_BASE + next_eventfd++;
+    g_guest_eventfd_val[g_guest_eventfd_next] = (count != 0) ? (uint64_t)count : 0ULL;
+    return (int)BFREE_GUEST_EVENTFD_BASE + g_guest_eventfd_next++;
 }
 
 /* S3-02: readiness for pipe-backed AF_INET/AF_UNIX (fd bases 0x3A00/0x3900). */
@@ -8822,6 +9495,13 @@ static long sys_linux_poll(long fds_ptr, long nfds, long timeout_ms)
         if (finite && knl_get_current_time() >= deadline_us) {
             return 0;
         }
+        {
+            long sw = bfree_gthr_park_poll(fds_ptr, nfds);
+
+            if (sw != 0) {
+                return sw;
+            }
+        }
         __asm__ volatile("sti; hlt" ::: "memory");
     }
 }
@@ -8861,6 +9541,13 @@ static long sys_linux_ppoll(long fds_ptr, long nfds, long timeout_ptr, long sigm
         }
         if (finite && knl_get_current_time() >= deadline_us) {
             return 0;
+        }
+        {
+            long sw = bfree_gthr_park_poll(fds_ptr, nfds);
+
+            if (sw != 0) {
+                return sw;
+            }
         }
         __asm__ volatile("sti; hlt" ::: "memory");
     }
@@ -9230,7 +9917,7 @@ static long bfree_coop_yield_to_child_done(long ret)
 /* === restore soft bodies (compile-only; H02/H01 replace later) === */
 
 /* === H01 rt_sigframe / CATCH deliver ===
- * Residuals (deferred→P3 polish): no glibc fpstate in frame; nested CATCH refused. */
+ * D: fxsave blob + one nested CATCH queue; full glibc ucontext layout still approximate. */
 #ifndef BFREE_H01_SIGFRAME_WIRED
 #define BFREE_H01_SIGFRAME_WIRED 1
 
@@ -9240,6 +9927,7 @@ static long bfree_coop_yield_to_child_done(long ret)
 
 static int g_sig_deliver_sig;
 static int g_sig_in_handler;
+static int g_sig_nested_pending; /* D: one nested CATCH queued while in handler */
 static int g_sig_mask_pushed;
 static uint64_t g_sig_saved_rax;
 static uint64_t g_sig_saved_rdi;
@@ -9260,6 +9948,7 @@ typedef struct {
     uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
     uint64_t rdi, rsi, rbp, rbx, rdx, rax, rcx, rsp, rip, efl;
     uint64_t csgsfs, err, trapno, oldmask, cr2;
+    uint64_t fpstate; /* D: user ptr to fxsave blob in frame */
 } bfree_sig_mcontext_t;
 
 typedef struct {
@@ -9288,6 +9977,7 @@ typedef struct {
     uint64_t pretcode;
     bfree_sig_ucontext_t uc;
     bfree_siginfo_min_t info;
+    uint8_t __attribute__((aligned(16))) fpu[512]; /* D: fxsave area */
 } bfree_rt_sigframe_t;
 
 static int bfree_user_range_mapped(uint64_t base, size_t nbytes)
@@ -9358,7 +10048,11 @@ static void bfree_guest_sig_arm_catch(int sig)
         return;
     }
     if (g_sig_in_handler || g_sig_deliver_sig != 0) {
-        return; /* nested CATCH residual */
+        /* D: queue one nested CATCH for delivery after rt_sigreturn */
+        if (g_sig_nested_pending == 0 && g_guest_sig_disp[sig] == BFREE_SIG_CATCH) {
+            g_sig_nested_pending = sig;
+        }
+        return;
     }
     if (g_guest_sig_disp[sig] != BFREE_SIG_CATCH) {
         return;
@@ -9502,6 +10196,9 @@ static long bfree_guest_sig_try_deliver(long syscall_ret)
     frame->uc.mc.efl = g_sig_saved_rflags;
     frame->uc.mc.oldmask = g_sig_saved_mask;
     frame->uc.uc_sigmask = g_sig_saved_mask;
+    frame->uc.mc.fpstate = frame_base + BFREE_OFFSETOF(bfree_rt_sigframe_t, fpu);
+    memset(frame->fpu, 0, sizeof(frame->fpu));
+    __asm__ volatile("fxsave %0" : "=m"(frame->fpu) : : "memory");
 
     g_guest_sig_mask |= g_guest_sig_sa_mask[sig];
     if ((g_guest_sig_flags[sig] & BFREE_SA_NODEFER) == 0UL) {
@@ -9543,6 +10240,11 @@ static long sys_linux_rt_sigreturn(void)
     if (g_sig_mask_pushed) {
         g_guest_sig_mask = g_sig_saved_mask;
         g_sig_mask_pushed = 0;
+    }
+    if (g_sig_nested_pending != 0) {
+        int ns = g_sig_nested_pending;
+        g_sig_nested_pending = 0;
+        bfree_guest_sig_arm_catch(ns);
     }
     g_bfree_sysret_exec_rsp = g_sig_saved_rsp;
     g_bfree_sysret_exec_rcx = g_sig_saved_rip;
@@ -9731,6 +10433,10 @@ static long sys_linux_socket(long domain, long type, long protocol)
     return -24;
 }
 
+static int bfree_inet_is_loopback(uint32_t addr);
+static void bfree_inet_udp_bind_stack(uint16_t port);
+static void bfree_inet_udp_unbind_stack(uint16_t port);
+
 static long sys_linux_bind(long sockfd, long addr, long addrlen)
 {
     int idx, i;
@@ -9766,6 +10472,9 @@ static long sys_linux_bind(long sockfd, long addr, long addrlen)
         g_inet_socks[idx].addr = in_addr;
         g_inet_socks[idx].port = in_port;
         g_inet_socks[idx].bound = 1;
+        if (g_inet_socks[idx].is_dgram) {
+            bfree_inet_udp_bind_stack(in_port);
+        }
         return 0;
     }
     idx = bfree_unix_from_fd((int)sockfd);
@@ -9963,23 +10672,306 @@ static long sys_linux_accept(long sockfd, long addr, long addrlen)
     return bfree_guest_fd_publish(rd);
 }
 
-/* F2: deliver one UDP datagram to a bound loopback receiver (or drop). */
+
+/* B: stub DNS (UDP/53 → 10.0.2.3) answered from /etc/hosts table. */
+#define BFREE_DNS_NS_ADDR 0x0A000203U /* 10.0.2.3 */
+
+static int bfree_hosts_lookup_a(const char *qname, uint32_t *out_addr)
+{
+    const char *p = g_guest_etc_hosts;
+    char ip[32];
+    char host[64];
+    size_t i, j;
+
+    if (!qname || !out_addr) {
+        return 0;
+    }
+    while (*p) {
+        i = 0;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\n' && i + 1U < sizeof(ip)) {
+            ip[i++] = *p++;
+        }
+        ip[i] = '\0';
+        while (*p == ' ' || *p == '\t') {
+            ++p;
+        }
+        j = 0;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\n' && j + 1U < sizeof(host)) {
+            host[j++] = *p++;
+        }
+        host[j] = '\0';
+        while (*p && *p != '\n') {
+            ++p;
+        }
+        if (*p == '\n') {
+            ++p;
+        }
+        if (ip[0] == '\0' || host[0] == '\0' || ip[0] == ':') {
+            continue; /* skip IPv6 lines */
+        }
+        if (strcmp(host, qname) == 0) {
+            unsigned a = 0, b = 0, c = 0, d = 0;
+            const char *s = ip;
+            a = 0;
+            while (*s >= '0' && *s <= '9') {
+                a = a * 10U + (unsigned)(*s - '0');
+                ++s;
+            }
+            if (*s != '.') {
+                continue;
+            }
+            ++s;
+            b = 0;
+            while (*s >= '0' && *s <= '9') {
+                b = b * 10U + (unsigned)(*s - '0');
+                ++s;
+            }
+            if (*s != '.') {
+                continue;
+            }
+            ++s;
+            c = 0;
+            while (*s >= '0' && *s <= '9') {
+                c = c * 10U + (unsigned)(*s - '0');
+                ++s;
+            }
+            if (*s != '.') {
+                continue;
+            }
+            ++s;
+            d = 0;
+            while (*s >= '0' && *s <= '9') {
+                d = d * 10U + (unsigned)(*s - '0');
+                ++s;
+            }
+            *out_addr = (a << 24) | (b << 16) | (c << 8) | d;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static long bfree_dns_stub_reply(int sender, long buf, size_t n)
+{
+    const uint8_t *q;
+    uint8_t resp[512];
+    size_t o = 0;
+    size_t qi;
+    char qname[64];
+    size_t qn = 0;
+    uint32_t addr = BFREE_INADDR_LOOPBACK;
+    int found;
+    bfree_inet_sock_t *ss;
+    int tail;
+
+    if (n < 12 || n > BFREE_INET_DGRAM_SIZE) {
+        return (long)n;
+    }
+    q = (const uint8_t *)(uintptr_t)buf;
+    /* Copy header; set QR|AA|RD, ANCOUNT=1 or 0 */
+    memcpy(resp, q, 12);
+    resp[2] = (uint8_t)(0x80 | (q[2] & 0x01) | 0x04); /* QR + copy RD + AA */
+    resp[3] = 0x00;
+    resp[6] = 0;
+    resp[7] = 0; /* ANCOUNT filled later */
+    o = 12;
+    qi = 12;
+    while (qi < n && q[qi] != 0) {
+        unsigned lab = q[qi++];
+        if (lab > 63 || qi + lab > n) {
+            return (long)n;
+        }
+        if (qn && qn + 1U < sizeof(qname)) {
+            qname[qn++] = '.';
+        }
+        while (lab-- > 0 && qi < n && qn + 1U < sizeof(qname)) {
+            qname[qn++] = (char)q[qi++];
+        }
+    }
+    qname[qn] = '\0';
+    if (qi < n && q[qi] == 0) {
+        ++qi;
+    }
+    /* copy question */
+    if (qi + 4 > n || o + (qi - 12) + 4 > sizeof(resp)) {
+        return (long)n;
+    }
+    memcpy(resp + o, q + 12, qi - 12 + 4);
+    o += qi - 12 + 4;
+    found = bfree_hosts_lookup_a(qname, &addr);
+    if (!found) {
+        found = bfree_hosts_lookup_a("localhost", &addr);
+    }
+    if (found && o + 16 <= sizeof(resp)) {
+        resp[6] = 0;
+        resp[7] = 1;
+        resp[o++] = 0xc0;
+        resp[o++] = 0x0c; /* pointer to QNAME */
+        resp[o++] = 0x00;
+        resp[o++] = 0x01; /* A */
+        resp[o++] = 0x00;
+        resp[o++] = 0x01; /* IN */
+        resp[o++] = 0x00;
+        resp[o++] = 0x00;
+        resp[o++] = 0x00;
+        resp[o++] = 0x3c; /* TTL 60 */
+        resp[o++] = 0x00;
+        resp[o++] = 0x04;
+        resp[o++] = (uint8_t)((addr >> 24) & 0xff);
+        resp[o++] = (uint8_t)((addr >> 16) & 0xff);
+        resp[o++] = (uint8_t)((addr >> 8) & 0xff);
+        resp[o++] = (uint8_t)(addr & 0xff);
+    } else {
+        resp[3] = 0x03; /* NXDOMAIN-ish RCODE */
+    }
+    ss = &g_inet_socks[sender];
+    if (ss->dg_count >= BFREE_INET_DGRAMS) {
+        return (long)n;
+    }
+    tail = (ss->dg_head + ss->dg_count) % BFREE_INET_DGRAMS;
+    memcpy(ss->dg_buf[tail], resp, o);
+    ss->dg_len[tail] = (uint16_t)o;
+    ss->dg_src_addr[tail] = BFREE_DNS_NS_ADDR;
+    ss->dg_src_port[tail] = 53;
+    ss->dg_count++;
+    return (long)n;
+}
+
+/* F2: e1000/udp stack delivers into the bound guest SOCK_DGRAM queue. */
+#define BFREE_UDP_PORT_CB_MAX 8
+static uint16_t g_udp_cb_ports[BFREE_UDP_PORT_CB_MAX];
+
+static void bfree_inet_udp_enqueue(uint16_t dst_port, uint32_t src_ip_le, uint16_t src_port,
+                                  const uint8_t *data, size_t len)
+{
+    int r;
+    uint32_t src_guest = bfree_inet_ntohl(src_ip_le);
+
+    if (!data) {
+        return;
+    }
+    if (len > BFREE_INET_DGRAM_SIZE) {
+        len = BFREE_INET_DGRAM_SIZE;
+    }
+    for (r = 0; r < BFREE_INET_SLOTS; ++r) {
+        bfree_inet_sock_t *rs = &g_inet_socks[r];
+        int tail;
+
+        if (!rs->used || !rs->is_dgram || !rs->bound || rs->port != dst_port) {
+            continue;
+        }
+        if (rs->dg_count >= BFREE_INET_DGRAMS) {
+            break;
+        }
+        tail = (rs->dg_head + rs->dg_count) % BFREE_INET_DGRAMS;
+        memcpy(rs->dg_buf[tail], data, len);
+        rs->dg_len[tail] = (uint16_t)len;
+        rs->dg_src_addr[tail] = src_guest;
+        rs->dg_src_port[tail] = src_port;
+        rs->dg_count++;
+        break;
+    }
+}
+
+static void bfree_inet_udp_cb0(uint32_t a, uint16_t p, const uint8_t *d, size_t n)
+{ bfree_inet_udp_enqueue(g_udp_cb_ports[0], a, p, d, n); }
+static void bfree_inet_udp_cb1(uint32_t a, uint16_t p, const uint8_t *d, size_t n)
+{ bfree_inet_udp_enqueue(g_udp_cb_ports[1], a, p, d, n); }
+static void bfree_inet_udp_cb2(uint32_t a, uint16_t p, const uint8_t *d, size_t n)
+{ bfree_inet_udp_enqueue(g_udp_cb_ports[2], a, p, d, n); }
+static void bfree_inet_udp_cb3(uint32_t a, uint16_t p, const uint8_t *d, size_t n)
+{ bfree_inet_udp_enqueue(g_udp_cb_ports[3], a, p, d, n); }
+static void bfree_inet_udp_cb4(uint32_t a, uint16_t p, const uint8_t *d, size_t n)
+{ bfree_inet_udp_enqueue(g_udp_cb_ports[4], a, p, d, n); }
+static void bfree_inet_udp_cb5(uint32_t a, uint16_t p, const uint8_t *d, size_t n)
+{ bfree_inet_udp_enqueue(g_udp_cb_ports[5], a, p, d, n); }
+static void bfree_inet_udp_cb6(uint32_t a, uint16_t p, const uint8_t *d, size_t n)
+{ bfree_inet_udp_enqueue(g_udp_cb_ports[6], a, p, d, n); }
+static void bfree_inet_udp_cb7(uint32_t a, uint16_t p, const uint8_t *d, size_t n)
+{ bfree_inet_udp_enqueue(g_udp_cb_ports[7], a, p, d, n); }
+
+typedef void (*bfree_udp_cb_fn)(uint32_t, uint16_t, const uint8_t *, size_t);
+static bfree_udp_cb_fn g_udp_cb_fns[BFREE_UDP_PORT_CB_MAX] = {
+    bfree_inet_udp_cb0, bfree_inet_udp_cb1, bfree_inet_udp_cb2, bfree_inet_udp_cb3,
+    bfree_inet_udp_cb4, bfree_inet_udp_cb5, bfree_inet_udp_cb6, bfree_inet_udp_cb7
+};
+
+static void bfree_inet_udp_bind_stack(uint16_t port)
+{
+    int i;
+
+    for (i = 0; i < BFREE_UDP_PORT_CB_MAX; ++i) {
+        if (g_udp_cb_ports[i] == port) {
+            udp_register_port(port, g_udp_cb_fns[i]);
+            return;
+        }
+    }
+    for (i = 0; i < BFREE_UDP_PORT_CB_MAX; ++i) {
+        if (g_udp_cb_ports[i] == 0) {
+            g_udp_cb_ports[i] = port;
+            udp_register_port(port, g_udp_cb_fns[i]);
+            return;
+        }
+    }
+}
+
+static void bfree_inet_udp_unbind_stack(uint16_t port)
+{
+    int i;
+    int still = 0;
+
+    for (i = 0; i < BFREE_INET_SLOTS; ++i) {
+        if (g_inet_socks[i].used && g_inet_socks[i].is_dgram &&
+            g_inet_socks[i].bound && g_inet_socks[i].port == port) {
+            still = 1;
+            break;
+        }
+    }
+    if (still) {
+        return;
+    }
+    udp_unregister_port(port);
+    for (i = 0; i < BFREE_UDP_PORT_CB_MAX; ++i) {
+        if (g_udp_cb_ports[i] == port) {
+            g_udp_cb_ports[i] = 0;
+        }
+    }
+}
+
+/* F2: deliver one UDP datagram to a bound loopback receiver, else e1000. */
 static long bfree_inet_dgram_send(int sender, uint32_t dst_addr, uint16_t dst_port,
                                   long buf, long len)
 {
     int r;
     size_t n;
+    int delivered = 0;
+    uint16_t src_port;
+    uint32_t src_addr;
 
     if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
         return -14;
     }
-    if (!bfree_inet_is_loopback(dst_addr)) {
+    if (!bfree_inet_is_guest_routable(dst_addr)) {
         return -101; /* ENETUNREACH */
     }
     n = (size_t)len;
     if (n > BFREE_INET_DGRAM_SIZE) {
         return -90; /* EMSGSIZE */
     }
+    /* B: nameserver stub (slirp DNS). */
+    if (dst_port == 53 && dst_addr == BFREE_DNS_NS_ADDR) {
+        return bfree_dns_stub_reply(sender, buf, n);
+    }
+    src_addr = g_inet_socks[sender].bound
+                   ? g_inet_socks[sender].addr
+                   : BFREE_INADDR_LOOPBACK;
+    if (src_addr == BFREE_INADDR_ANY) {
+        src_addr = BFREE_INADDR_GUEST_LAN;
+    }
+    src_port = g_inet_socks[sender].bound
+                   ? g_inet_socks[sender].port
+                   : (uint16_t)(40000 + sender);
+
     for (r = 0; r < BFREE_INET_SLOTS; ++r) {
         bfree_inet_sock_t *rs = &g_inet_socks[r];
         int tail;
@@ -9993,14 +10985,23 @@ static long bfree_inet_dgram_send(int sender, uint32_t dst_addr, uint16_t dst_po
         tail = (rs->dg_head + rs->dg_count) % BFREE_INET_DGRAMS;
         memcpy(rs->dg_buf[tail], (const void *)(uintptr_t)buf, n);
         rs->dg_len[tail] = (uint16_t)n;
-        rs->dg_src_addr[tail] = g_inet_socks[sender].bound
-                                    ? g_inet_socks[sender].addr
-                                    : BFREE_INADDR_LOOPBACK;
-        rs->dg_src_port[tail] = g_inet_socks[sender].bound
-                                    ? g_inet_socks[sender].port
-                                    : (uint16_t)(40000 + sender);
+        rs->dg_src_addr[tail] = src_addr;
+        rs->dg_src_port[tail] = src_port;
         rs->dg_count++;
+        delivered = 1;
         break;
+    }
+    if (delivered) {
+        return (long)n;
+    }
+    /* No local receiver: send via e1000/udp stack (10.0.2/24 LAN). */
+    if ((dst_addr & 0xFFFFFF00u) == 0x0A000200u) {
+        int rc = udp_send(bfree_inet_ntohl(dst_addr), dst_port, src_port,
+                          (const uint8_t *)(uintptr_t)buf, n);
+        if (rc < 0) {
+            return -101; /* ENETUNREACH / TX fail */
+        }
+        return (long)n;
     }
     return (long)n; /* UDP: success even if no receiver (dropped) */
 }
@@ -10051,9 +11052,13 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
         bfree_inet_sock_t *s = &g_inet_socks[idx];
         size_t n;
         int h;
+        int spins;
 
         if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
             return -14;
+        }
+        for (spins = 0; s->dg_count == 0 && spins < 64; ++spins) {
+            net_runtime_poll();
         }
         if (s->dg_count == 0) {
             return -11; /* EAGAIN — no datagram queued */
@@ -10698,7 +11703,13 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
     case 60:
     case 231:
         if (g_guest_thread_active) {
-            return bfree_guest_thread_exit(arg1);
+            long te = bfree_guest_thread_exit(arg1);
+
+            /* Non-main thread switch, or still in MT: take the gthr result. */
+            if (g_guest_thread_active || te != -1) {
+                return te;
+            }
+            /* Main thread tore down all guest threads — process exit below. */
         }
         if (g_guest_fork_active) {
             bfree_guest_fork_child_pipe_close_writers();
@@ -10905,10 +11916,18 @@ static long bfree_dispatch_app_role_syscall(long num, long arg1, long arg2, long
     if (num == 1001) {
         return sys_get_framebuffer_info(arg1);
     }
-    if (num == 0 && arg1 > 2 && bfree_user_ptr_mapped(arg1)) {
+    /* Legacy B-Free ABI used nr 0/1 with a *pointer* arg1. Linux musl uses
+     * the same nrs as read/write with an fd in arg1 — magic guest fds such as
+     * eventfd (0x3600) must NOT be treated as pointers (identity-mapped low VA
+     * made bfree_user_ptr_mapped(0x3600) true and stole write(eventfd)). */
+    if (num == 0 && arg1 >= 0x100000L && bfree_user_ptr_mapped(arg1) &&
+        !bfree_guest_is_eventfd((int)arg1) && !bfree_guest_is_pipe_rd((int)arg1) &&
+        !bfree_guest_is_pipe_wr((int)arg1)) {
         return sys_poll_input_event(arg1);
     }
-    if (num == 1 && arg1 > 2 && bfree_user_ptr_mapped(arg1)) {
+    if (num == 1 && arg1 >= 0x100000L && bfree_user_ptr_mapped(arg1) &&
+        !bfree_guest_is_eventfd((int)arg1) && !bfree_guest_is_pipe_rd((int)arg1) &&
+        !bfree_guest_is_pipe_wr((int)arg1)) {
         return sys_get_framebuffer_info(arg1);
     }
 
@@ -10918,6 +11937,7 @@ static long bfree_dispatch_app_role_syscall(long num, long arg1, long arg2, long
             return bfree_guest_sig_try_deliver(linux_ret);
         }
     }
+    bfree_enosys_note(num);
     bfree_audit_log("syscall_deny", "nr", (uint64_t)num);
     return -38;
 }
@@ -10992,9 +12012,13 @@ long knl_syscall_handler(long num, long arg1, long arg2, long arg3, long arg4, l
  * so the IRQ-side contract stays satisfied.
  */
 volatile unsigned long g_bfree_guest_timer_ticks = 0;
+/* C: timer observes preempt_count; cooperative resched hint (no CR3 switch in IRQ). */
 void bfree_guest_timer_tick_hook(void)
 {
     ++g_bfree_guest_timer_ticks;
+    if (g_guest_preempt_count == 0 && g_guest_thread_active) {
+        g_guest_need_resched = 1;
+    }
 }
 
 /* restored from syscall.c.pre_dedup (dedup dropped definition) */
@@ -11036,8 +12060,16 @@ static uint32_t bfree_inet_ntohl(uint32_t x)
 static void bfree_inet_sock_release(int resolved)
 {
     int iidx = bfree_inet_from_fd(resolved);
+    uint16_t port;
+
     if (iidx < 0) {
         return;
+    }
+    port = g_inet_socks[iidx].port;
+    if (g_inet_socks[iidx].is_dgram && g_inet_socks[iidx].bound) {
+        g_inet_socks[iidx].bound = 0;
+        g_inet_socks[iidx].used = 0;
+        bfree_inet_udp_unbind_stack(port);
     }
     g_inet_socks[iidx].used = 0;
     g_inet_socks[iidx].listening = 0;

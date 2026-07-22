@@ -180,10 +180,21 @@ static void mouse_feed_ps2_byte(uint8_t data)
 
 void mouse_poll_ps2(void)
 {
+    /* QEMU/empty controller: OUT_FULL can stick while DATA reads as 0 — unbounded
+     * drain wedged guest input (QQmlEngine path: ppoll → coop_pump → BFreeInput). */
+    int spins = 0;
+
     while ((inb(PS2_STATUS) & PS2_STAT_OUT_FULL) != 0) {
-        uint8_t st = inb(PS2_STATUS);
-        uint8_t data = inb(PS2_DATA);
+        uint8_t st;
+        uint8_t data;
+
+        if (++spins > 64) {
+            break;
+        }
+        st = inb(PS2_STATUS);
+        data = inb(PS2_DATA);
         if ((st & PS2_STAT_AUX_DATA) == 0) {
+            keyboard_on_ps2_data(data);
             continue;
         }
         mouse_feed_ps2_byte(data);
@@ -192,10 +203,18 @@ void mouse_poll_ps2(void)
 
 // --- マウス割り込みハンドラ本体 ---
 void mouse_irq_handler(void *regs) {
+    int spins = 0;
+
     (void)regs;
     while ((inb(PS2_STATUS) & PS2_STAT_OUT_FULL) != 0) {
-        uint8_t st = inb(PS2_STATUS);
-        uint8_t data = inb(PS2_DATA);
+        uint8_t st;
+        uint8_t data;
+
+        if (++spins > 64) {
+            break;
+        }
+        st = inb(PS2_STATUS);
+        data = inb(PS2_DATA);
         if ((st & PS2_STAT_AUX_DATA) == 0) {
             keyboard_on_ps2_data(data);
             continue;

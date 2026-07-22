@@ -228,6 +228,9 @@ syscall_entry:
 
 	je .bfree_syscall_thread_child
 
+	cmpq $-4089, %rax
+
+	je .bfree_syscall_fork_parent
 
 
 .bfree_syscall_normal_return:
