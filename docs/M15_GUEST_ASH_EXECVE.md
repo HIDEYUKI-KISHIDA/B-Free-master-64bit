@@ -46,8 +46,8 @@ cd bfree_x86_64
 
 Rebuild ash regress kernel with `KERNEL_BOOT_CFLAGS=-DBFREE_PREFER_ASH_REGRESS_BOOT=1`.
 
-## Residual (M16+)
+## Residual (M17+)
 
-- Full ash_regress on QEMU (pipe, bg, external — needs ring-3 fork/vfork)
-- Blocking poll via timer / scheduler sleep
+- Per-process FD tables
+- Preemptive scheduling / timer ticks
 - Migrate remaining host LTP/POSIX probes to guest

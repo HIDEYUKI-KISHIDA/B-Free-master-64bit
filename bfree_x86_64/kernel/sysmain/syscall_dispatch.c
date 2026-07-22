@@ -31,6 +31,7 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[61] = 1;  /* wait4 */
     bfree_syscall_implemented[247] = 1; /* waitid */
     bfree_syscall_implemented[22] = 1;  /* pipe */
+    bfree_syscall_implemented[35] = 1;  /* nanosleep */
     bfree_syscall_implemented[12] = 1;  /* brk */
     bfree_syscall_implemented[9] = 1;   /* mmap */
     bfree_syscall_implemented[56] = 1;  /* clone */

@@ -16,10 +16,23 @@ struct bfree_fs;
 #define BFREE_MAX_PROG        8
 #define BFREE_MAX_PIPE        8
 #define BFREE_MAX_PIPE_BUF 4096
+#define BFREE_FD_UNMAPPED    (-1)
+#ifndef BFREE_MAX_FD
+#define BFREE_MAX_FD         64
+#endif
 
 #define BFREE_SIGCHLD  17
 #define BFREE_SIGINT    2
 #define BFREE_SIGPIPE  13
+
+struct bfree_ring3_frame {
+	uint64_t rcx;
+	uint64_t r11;
+	uint64_t rsp;
+	uint64_t rax;
+	int      valid;
+	int      fork_child;
+};
 
 #define P_ALL    0
 #define P_PID    1
@@ -37,7 +50,11 @@ typedef enum {
 	BFREE_PROC_RUNNING,
 	BFREE_PROC_ZOMBIE,
 	BFREE_PROC_BLOCKED_VFORK,
+	BFREE_PROC_BLOCKED_WAIT,
+	BFREE_PROC_BLOCKED_IO,
 } bfree_proc_state_t;
+
+struct bfree_ring3_frame;
 
 struct bfree_proc {
 	int               pid;
@@ -55,6 +72,7 @@ struct bfree_proc {
 	int               sigchld_pending;
 	int               sigint_pending;
 	int               sigpipe_pending;
+	struct bfree_ring3_frame ring3;
 };
 
 struct bfree_pipe {
@@ -74,6 +92,8 @@ struct bfree_proc_mgr {
 	struct bfree_pipe pipes[BFREE_MAX_PIPE];
 	int               current;
 	int               next_pid;
+	int               fd_pipe_map[BFREE_MAX_FD];
+	int               fd_pipe_end[BFREE_MAX_FD];
 };
 
 void bfree_proc_init(struct bfree_proc_mgr *mgr);
@@ -102,6 +122,7 @@ ssize_t bfree_pipe_write(struct bfree_proc_mgr *mgr, int fd,
 void bfree_pipe_close(struct bfree_proc_mgr *mgr, int fd);
 
 int bfree_pipe_is_fd(struct bfree_proc_mgr *mgr, int fd);
+int bfree_pipe_dup2(struct bfree_proc_mgr *mgr, int oldfd, int newfd);
 
 #define BFREE_POLLIN   0x0001
 #define BFREE_POLLOUT  0x0004

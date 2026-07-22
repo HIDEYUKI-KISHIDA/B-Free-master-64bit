@@ -10,6 +10,7 @@
 
 #ifdef BFREE_KERNEL_GUEST
 #include "elf_user_exec.h"
+#include "ring3_sched.h"
 #endif
 #include "fs_ofd.h"
 
@@ -114,6 +115,8 @@ void bfree_proc_attach_fs(struct bfree_fs *fs)
 
 void bfree_proc_init(struct bfree_proc_mgr *mgr)
 {
+	int i;
+
 	memset(mgr, 0, sizeof(*mgr));
 	mgr->next_pid = 2;
 	mgr->current = 0;
@@ -123,6 +126,11 @@ void bfree_proc_init(struct bfree_proc_mgr *mgr)
 	mgr->procs[0].sid = 0;
 	mgr->procs[0].state = BFREE_PROC_RUNNING;
 	bfree_as_init(&mgr->procs[0].as, 65536);
+	for (i = 0; i < BFREE_MAX_FD; i++)
+		mgr->fd_pipe_map[i] = BFREE_FD_UNMAPPED;
+#ifdef BFREE_KERNEL_GUEST
+	bfree_ring3_proc_init(&mgr->procs[0]);
+#endif
 }
 
 int bfree_proc_register(const char *path, bfree_prog_fn fn)
@@ -156,10 +164,16 @@ int bfree_vfork(struct bfree_proc_mgr *mgr)
 	child->state = BFREE_PROC_RUNNING;
 	bfree_as_init(&child->as, parent->as.size);
 	memcpy(child->as.mem, parent->as.mem, parent->as.size);
+#ifdef BFREE_KERNEL_GUEST
+	bfree_ring3_proc_init(child);
+#endif
 
 	parent->state = BFREE_PROC_BLOCKED_VFORK;
 	parent->vfork_done = 0;
 	mgr->current = child_idx;
+#ifdef BFREE_KERNEL_GUEST
+	bfree_ring3_on_vfork(mgr);
+#endif
 	return 0;
 }
 
@@ -216,8 +230,12 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 		rc = bfree_user_execve_ring3(g_exec_fs, path,
 					      (char *const *)argv,
 					      (char *const *)envp);
-		if (rc == 0)
+		if (rc == 0) {
+#ifdef BFREE_KERNEL_GUEST
+			bfree_ring3_on_execve_parent(mgr);
+#endif
 			return 0;
+		}
 		if (rc < 0)
 			return rc;
 #else
@@ -279,6 +297,9 @@ void bfree_exit(struct bfree_proc_mgr *mgr, int status)
 	}
 	if (parent_idx >= 0)
 		mgr->current = parent_idx;
+#ifdef BFREE_KERNEL_GUEST
+	bfree_ring3_after_exit(mgr);
+#endif
 }
 
 static int reap_one(struct bfree_proc_mgr *mgr, struct bfree_proc *zombie,
@@ -303,24 +324,31 @@ int bfree_wait4(struct bfree_proc_mgr *mgr, int pid, int *status,
 	int i;
 
 	(void)rusage;
-	(void)options;
 	self = current_proc(mgr);
 	if (self == NULL)
 		return -ESRCH;
 
-	for (i = 0; i < BFREE_MAX_PROC; i++) {
-		struct bfree_proc *p = &mgr->procs[i];
+	for (;;) {
+		for (i = 0; i < BFREE_MAX_PROC; i++) {
+			struct bfree_proc *p = &mgr->procs[i];
 
-		if (p->state != BFREE_PROC_ZOMBIE)
-			continue;
-		if (p->ppid != self->pid)
-			continue;
-		if (pid > 0 && p->pid != pid)
-			continue;
-		if (pid == 0 || pid == -1 || p->pid == pid)
-			return reap_one(mgr, p, status);
+			if (p->state != BFREE_PROC_ZOMBIE)
+				continue;
+			if (p->ppid != self->pid)
+				continue;
+			if (pid > 0 && p->pid != pid)
+				continue;
+			if (pid == 0 || pid == -1 || p->pid == pid)
+				return reap_one(mgr, p, status);
+		}
+		if (options & WNOHANG)
+			return 0;
+#ifdef BFREE_KERNEL_GUEST
+		bfree_ring3_block(mgr, BFREE_PROC_BLOCKED_WAIT);
+#else
+		return -ECHILD;
+#endif
 	}
-	return -ECHILD;
 }
 
 int bfree_waitid(struct bfree_proc_mgr *mgr, int idtype, int id,
@@ -375,10 +403,16 @@ int bfree_fork(struct bfree_proc_mgr *mgr)
 	child->pgid = parent->pgid;
 	child->sid = parent->sid;
 	child->state = BFREE_PROC_RUNNABLE;
+#ifdef BFREE_KERNEL_GUEST
+	bfree_ring3_proc_init(child);
+#endif
 	if (bfree_as_fork_copy(&child->as, &parent->as) < 0) {
 		child->state = BFREE_PROC_FREE;
 		return -ENOMEM;
 	}
+#ifdef BFREE_KERNEL_GUEST
+	bfree_ring3_on_fork(mgr, child_idx, child->pid);
+#endif
 	return child->pid;
 }
 
@@ -415,6 +449,10 @@ int bfree_pipe_open(struct bfree_proc_mgr *mgr, int pipefd[2])
 			mgr->pipes[i].write_fd = next_fd++;
 			pipefd[0] = mgr->pipes[i].read_fd;
 			pipefd[1] = mgr->pipes[i].write_fd;
+			mgr->fd_pipe_map[pipefd[0]] = i;
+			mgr->fd_pipe_map[pipefd[1]] = i;
+			mgr->fd_pipe_end[pipefd[0]] = 0;
+			mgr->fd_pipe_end[pipefd[1]] = 1;
 			return 0;
 		}
 	}
@@ -425,6 +463,17 @@ static struct bfree_pipe *pipe_for_fd(struct bfree_proc_mgr *mgr, int fd,
 				      int write_end)
 {
 	int i;
+	int idx;
+
+	if (fd >= 0 && fd < BFREE_MAX_FD &&
+	    mgr->fd_pipe_map[fd] != BFREE_FD_UNMAPPED) {
+		idx = mgr->fd_pipe_map[fd];
+		if (idx >= 0 && idx < BFREE_MAX_PIPE &&
+		    mgr->pipes[idx].in_use &&
+		    mgr->fd_pipe_end[fd] == write_end)
+			return &mgr->pipes[idx];
+		return NULL;
+	}
 
 	for (i = 0; i < BFREE_MAX_PIPE; i++) {
 		if (!mgr->pipes[i].in_use)
@@ -435,6 +484,55 @@ static struct bfree_pipe *pipe_for_fd(struct bfree_proc_mgr *mgr, int fd,
 			return &mgr->pipes[i];
 	}
 	return NULL;
+}
+
+int bfree_pipe_dup2(struct bfree_proc_mgr *mgr, int oldfd, int newfd)
+{
+	struct bfree_pipe *p;
+	int idx;
+	int end;
+
+	if (newfd < 0 || newfd >= BFREE_MAX_FD)
+		return -EBADF;
+	if (oldfd == newfd)
+		return newfd;
+
+	p = pipe_for_fd(mgr, oldfd, 0);
+	end = 0;
+	if (p == NULL) {
+		p = pipe_for_fd(mgr, oldfd, 1);
+		end = 1;
+	}
+	if (p == NULL)
+		return -EBADF;
+
+	for (idx = 0; idx < BFREE_MAX_PIPE; idx++) {
+		if (&mgr->pipes[idx] == p)
+			break;
+	}
+	if (idx >= BFREE_MAX_PIPE)
+		return -EBADF;
+
+	if (mgr->fd_pipe_map[newfd] != BFREE_FD_UNMAPPED) {
+		int old_idx = mgr->fd_pipe_map[newfd];
+		int old_end = mgr->fd_pipe_end[newfd];
+
+		if (old_idx >= 0 && old_idx < BFREE_MAX_PIPE &&
+		    mgr->pipes[old_idx].in_use) {
+			if (old_end)
+				mgr->pipes[old_idx].write_ref--;
+			else
+				mgr->pipes[old_idx].read_ref--;
+		}
+	}
+
+	mgr->fd_pipe_map[newfd] = idx;
+	mgr->fd_pipe_end[newfd] = end;
+	if (end)
+		p->write_ref++;
+	else
+		p->read_ref++;
+	return newfd;
 }
 
 int bfree_pipe_is_fd(struct bfree_proc_mgr *mgr, int fd)
@@ -451,19 +549,39 @@ ssize_t bfree_pipe_read(struct bfree_proc_mgr *mgr, int fd, void *buf,
 {
 	struct bfree_pipe *p;
 	size_t done = 0;
+	int pipe_idx = -1;
+	int i;
 
 	p = pipe_for_fd(mgr, fd, 0);
 	if (p == NULL)
 		return -EBADF;
-	while (done < count) {
-		if (p->count == 0) {
-			if (p->write_ref == 0)
-				return (ssize_t)done;
+	for (i = 0; i < BFREE_MAX_PIPE; i++) {
+		if (&mgr->pipes[i] == p) {
+			pipe_idx = i;
 			break;
 		}
-		((char *)buf)[done++] = p->buf[p->head];
-		p->head = (p->head + 1) % BFREE_MAX_PIPE_BUF;
-		p->count--;
+	}
+
+	for (;;) {
+		done = 0;
+		while (done < count) {
+			if (p->count == 0) {
+				if (p->write_ref == 0)
+					return (ssize_t)done;
+				break;
+			}
+			((char *)buf)[done++] = p->buf[p->head];
+			p->head = (p->head + 1) % BFREE_MAX_PIPE_BUF;
+			p->count--;
+		}
+		if (done > 0 || p->write_ref == 0)
+			return (ssize_t)done;
+#ifdef BFREE_KERNEL_GUEST
+		bfree_ring3_block(mgr, BFREE_PROC_BLOCKED_IO);
+#else
+		break;
+#endif
+		(void)pipe_idx;
 	}
 	return (ssize_t)done;
 }
@@ -491,12 +609,46 @@ ssize_t bfree_pipe_write(struct bfree_proc_mgr *mgr, int fd, const void *buf,
 		p->tail = (p->tail + 1) % BFREE_MAX_PIPE_BUF;
 		p->count++;
 	}
+#ifdef BFREE_KERNEL_GUEST
+	{
+		int i;
+
+		for (i = 0; i < BFREE_MAX_PIPE; i++) {
+			if (&mgr->pipes[i] == p) {
+				bfree_ring3_wake_pipe_readers(mgr, i);
+				break;
+			}
+		}
+	}
+#endif
 	return (ssize_t)done;
 }
 
 void bfree_pipe_close(struct bfree_proc_mgr *mgr, int fd)
 {
 	int i;
+	int idx;
+	int end;
+
+	if (fd >= 0 && fd < BFREE_MAX_FD &&
+	    mgr->fd_pipe_map[fd] != BFREE_FD_UNMAPPED) {
+		idx = mgr->fd_pipe_map[fd];
+		end = mgr->fd_pipe_end[fd];
+		mgr->fd_pipe_map[fd] = BFREE_FD_UNMAPPED;
+		if (idx >= 0 && idx < BFREE_MAX_PIPE && mgr->pipes[idx].in_use) {
+			if (end)
+				mgr->pipes[idx].write_ref--;
+			else
+				mgr->pipes[idx].read_ref--;
+			if (mgr->pipes[idx].read_ref == 0 &&
+			    mgr->pipes[idx].write_ref == 0)
+				mgr->pipes[idx].in_use = 0;
+#ifdef BFREE_KERNEL_GUEST
+			bfree_ring3_wake_pipe_readers(mgr, idx);
+#endif
+		}
+		return;
+	}
 
 	for (i = 0; i < BFREE_MAX_PIPE; i++) {
 		if (!mgr->pipes[i].in_use)
@@ -544,6 +696,32 @@ static short pipe_poll_events(struct bfree_proc_mgr *mgr, int fd, short events)
 
 #define BFREE_POLL_SPIN_ITERS 65536U
 
+#ifdef BFREE_KERNEL_GUEST
+#define BFREE_POLL_TSC_PER_MS 2000000ULL
+
+static uint64_t bfree_poll_read_tsc(void)
+{
+	uint32_t lo;
+	uint32_t hi;
+
+	__asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+	return ((uint64_t)hi << 32) | lo;
+}
+
+static void bfree_poll_delay_ms(int ms)
+{
+	uint64_t start;
+	uint64_t deadline;
+
+	if (ms <= 0)
+		return;
+	start = bfree_poll_read_tsc();
+	deadline = start + (uint64_t)ms * BFREE_POLL_TSC_PER_MS;
+	while (bfree_poll_read_tsc() < deadline)
+		__asm__ volatile("pause");
+}
+#endif
+
 static int poll_scan(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 		     struct bfree_pollfd *fds, unsigned int nfds)
 {
@@ -587,7 +765,6 @@ int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 	       struct bfree_pollfd *fds, unsigned int nfds, int timeout)
 {
 	int ready;
-	unsigned int spin;
 
 	if (fds == NULL)
 		return -EFAULT;
@@ -600,10 +777,23 @@ int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 			return ready;
 		if (timeout == 0)
 			return 0;
-		for (spin = 0; spin < BFREE_POLL_SPIN_ITERS; spin++)
-			__asm__ volatile("pause");
+#ifdef BFREE_KERNEL_GUEST
+		if (timeout > 0) {
+			bfree_poll_delay_ms(1);
+			timeout--;
+		} else {
+			bfree_ring3_block(mgr, BFREE_PROC_BLOCKED_IO);
+		}
+#else
+		{
+			unsigned int spin;
+
+			for (spin = 0; spin < BFREE_POLL_SPIN_ITERS; spin++)
+				__asm__ volatile("pause");
+		}
 		if (timeout > 0)
 			timeout--;
+#endif
 	}
 }
 

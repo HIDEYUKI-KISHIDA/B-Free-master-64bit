@@ -17,7 +17,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p9_gdt test_p9_user_boot test_p10_dispatch_wiring test_p10_kernel_guest \
 	test_p11_musl_guest test_p12_busybox_guest test_p13_guest_regress \
 	test_p14_stat_poll test_p14_guest_regress test_p15_poll_blocking \
-	test_p15_ash_regress_staged
+	test_p15_ash_regress_staged test_p16_pipe_dup2 test_p16_ash_full_staged
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -70,6 +70,7 @@ KERNEL_SYSMAIN_OBJS := $(addprefix $(KERNEL_DIR)/,fs_ofd.o blk_vol.o blk_persist
 KERNEL_FREESTANDING_OBJS := $(KERNEL_DIR)/libc_stubs.o $(KERNEL_DIR)/exec_stubs.o \
 	$(KERNEL_DIR)/guest_kernel.o $(KERNEL_DIR)/elf_user_load.o \
 	$(KERNEL_DIR)/elf_user_exec.o $(KERNEL_DIR)/guest_initramfs_seed.o \
+	$(KERNEL_DIR)/ring3_sched.o \
 	$(KERNEL_DIR)/ash_guest_boot.o $(KERNEL_DIR)/ash_regress_guest_boot.o
 
 KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
@@ -79,6 +80,7 @@ KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/syscall_entry.o $(KERNEL_DIR)/gdt.o $(KERNEL_DIR)/user_boot.o \
 	$(KERNEL_DIR)/user_boot_ring3.o $(KERNEL_DIR)/ash_guest_tramp.o \
 	$(KERNEL_DIR)/ash_regress_tramp.o $(KERNEL_DIR)/guest_exec_tramp.o \
+	$(KERNEL_DIR)/ring3_userret.o \
 	$(KERNEL_DIR)/syscall_insn_entry.o
 
 .PHONY: all host-tests clean musl-static busybox-guest guest-regress boot-smoke kernel boot-trap-payload initramfs
@@ -382,6 +384,9 @@ $(KERNEL_DIR)/elf_user_exec.o: kernel/freestanding/elf_user_exec.c | $(KERNEL_DI
 $(KERNEL_DIR)/guest_initramfs_seed.o: kernel/freestanding/guest_initramfs_seed.c | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
 
+$(KERNEL_DIR)/ring3_sched.o: kernel/freestanding/ring3_sched.c | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
 $(KERNEL_DIR)/libc_stubs.o: kernel/freestanding/libc_stubs.c | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
 
@@ -477,6 +482,19 @@ $(BUILD_DIR)/test_p15_ash_regress_staged: $(BUILD_DIR)/test_p15_ash_regress_stag
 		| $(ASH_REGRESS_STAGED)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+$(BUILD_DIR)/test_p16_pipe_dup2.o: tools/test_p16_pipe_dup2.c kernel/sysmain/guest_io.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p16_pipe_dup2: $(BUILD_DIR)/test_p16_pipe_dup2.o $(COMMON_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p16_ash_full_staged.o: tools/test_p16_ash_full_staged.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/test_p16_ash_full_staged: $(BUILD_DIR)/test_p16_ash_full_staged.o \
+		| $(ASH_REGRESS_STAGED)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
 
@@ -514,6 +532,9 @@ $(KERNEL_DIR)/ash_regress_tramp.o: kernel/arch/x86_64/ash_regress_tramp.S | $(KE
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
 $(KERNEL_DIR)/guest_exec_tramp.o: kernel/arch/x86_64/guest_exec_tramp.S | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
+
+$(KERNEL_DIR)/ring3_userret.o: kernel/arch/x86_64/ring3_userret.S | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
 $(KERNEL_DIR)/syscall_insn_entry.o: kernel/arch/x86_64/syscall_insn_entry.S | $(KERNEL_DIR)

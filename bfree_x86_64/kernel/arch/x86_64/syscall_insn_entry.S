@@ -18,9 +18,10 @@ kernel_syscall_stack_top:
 bfree_syscall_insn_entry:
 	mov %rsp, user_rsp_save(%rip)
 	mov $kernel_syscall_stack_top, %rsp
-	push %r11
-	push %rcx
-	push %r9
+	mov user_rsp_save(%rip), %rdi
+	mov %rcx, %rsi
+	mov %r11, %rdx
+	call bfree_ring3_syscall_pre
 	mov %r8, %r9
 	mov %r10, %r8
 	mov %rdx, %rcx
@@ -28,9 +29,11 @@ bfree_syscall_insn_entry:
 	mov %rdi, %rsi
 	mov %rax, %rdi
 	call bfree_invoke_syscall
-	add $8, %rsp
 	call bfree_syscall_exec_resume_if_needed
-	pop %rcx
-	pop %r11
-	mov user_rsp_save(%rip), %rsp
+	mov %rax, %rdi
+	call bfree_ring3_syscall_post
+	mov ring3_sysret_rcx(%rip), %rcx
+	mov ring3_sysret_r11(%rip), %r11
+	mov ring3_sysret_rsp(%rip), %rsp
+	mov ring3_sysret_rax(%rip), %rax
 	sysretq

@@ -97,6 +97,10 @@ run_test test_p14_guest_regress
 run_test test_p15_poll_blocking
 run_test test_p15_ash_regress_staged
 
+# M16 ring-3 fork + full ash regress on booted QEMU
+run_test test_p16_pipe_dup2
+run_test test_p16_ash_full_staged
+
 echo "== phase3_guest_auto: QEMU user boot smoke =="
 if ! "${ROOT}/tools/qemu_user_boot_smoke.sh"; then
   FAIL=1
