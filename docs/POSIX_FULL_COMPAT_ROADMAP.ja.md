@@ -80,6 +80,13 @@
 - [x] QEMU `kernel.elf` ブート（`boot_kernel.S`、検証 `P7_KERNEL_BOOT` — QEMU 無しは SKIP）
 - [x] LTP スタイルゲート（`ltp_regress/` + `phase3_guest_ltp.sh`）
 
+### M8 — 実ブート経路（ホスト + QEMU）
+
+- [x] 恒等ページング（`paging.c`、検証 `P8_PAGING`）
+- [x] newc cpio initramfs パーサ（`initramfs.c`、検証 `P8_INITRAMFS`）
+- [x] ハードウェア trap インストール（`trap_hw.c` lidt/wrmsr、検証 `P8_TRAP_HW`）
+- [x] フリースタンディング C カーネル + 埋め込み initramfs（`kernel_boot.c`、`kernel.elf`、検証 `P8_KERNEL_BOOT`）
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」

@@ -17,7 +17,7 @@ run_test() {
 mkdir -p "${BUILD_DIR}"
 
 echo "== phase3_guest_auto: build host tests =="
-make -C "${ROOT}" -s host-tests boot-smoke kernel boot-trap-payload
+make -C "${ROOT}" -s host-tests boot-smoke initramfs kernel boot-trap-payload
 
 # M1 filesystem
 run_test test_p4_dirent_ofd
@@ -65,6 +65,12 @@ run_test test_p7_kernel_main
 run_test test_p7_trap_setup
 run_test test_p7_trap_payload
 run_test test_p7_musl_trap
+
+# M8 real boot path
+run_test test_p8_paging
+run_test test_p8_initramfs
+run_test test_p8_trap_hw
+run_test test_p8_kernel_boot
 
 echo "== phase3_guest_auto: QEMU kernel boot =="
 if ! "${ROOT}/tools/qemu_kernel_smoke.sh"; then

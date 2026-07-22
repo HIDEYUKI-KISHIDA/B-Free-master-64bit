@@ -25,7 +25,8 @@ void bfree_trap_init(void)
 	idt_set_gate(0x80, (uintptr_t)bfree_trap_syscall_entry);
 	bfree_trap.idtr.limit = (uint16_t)(sizeof(bfree_trap.gates) - 1);
 	bfree_trap.idtr.base = (uint64_t)(uintptr_t)bfree_trap.gates;
-	bfree_trap.syscall_star = 0;
+	/* kernel CS 0x08, user CS/SS base 0x10 for future SYSRET */
+	bfree_trap.syscall_star = ((uint64_t)0x08 << 32) | ((uint64_t)0x10 << 48);
 	bfree_trap.syscall_lstar = (uint64_t)(uintptr_t)bfree_trap_syscall_entry;
 	bfree_trap.syscall_fmask = 0x200;
 	bfree_trap.initialized = 1;
