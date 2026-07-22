@@ -105,6 +105,15 @@
 
 手順: `docs/M10_SYSCALL_KERNEL.md`
 
+### M11 — musl on booted guest ✅ 完了
+
+- [x] musl `ET_EXEC` in initramfs (`musl_static.elf`)
+- [x] Freestanding ELF user loader (`elf_user_load.c`)
+- [x] `BFREE_PREFER_MUSL_BOOT` kernel boot path
+- [x] 検証 `P11_MUSL_GUEST`, `P11_MUSL_GUEST_QEMU`
+
+手順: `docs/M11_MUSL_GUEST.md`
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」

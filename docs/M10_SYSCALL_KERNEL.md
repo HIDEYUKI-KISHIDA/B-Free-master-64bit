@@ -37,6 +37,5 @@ cd bfree_x86_64
 
 ## Residual (M11+)
 
-- musl static ELF on booted guest (`P11_MUSL_GUEST`)
+- BusyBox ash in QEMU initramfs (M12)
 - `stat` / `poll` / `fstatat`
-- BusyBox ash in QEMU initramfs

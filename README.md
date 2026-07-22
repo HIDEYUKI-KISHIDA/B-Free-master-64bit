@@ -93,3 +93,13 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P10_* + RESULT: ALL PASS
 ```
 
 See [docs/M10_SYSCALL_KERNEL.md](docs/M10_SYSCALL_KERNEL.md).
+
+### musl on booted guest (M11)
+
+```bash
+git checkout cursor/m11-musl-guest-695c
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P11_MUSL_GUEST
+./tools/qemu_musl_guest_smoke.sh                 # MUSL_STATIC (needs QEMU)
+```
+
+See [docs/M11_MUSL_GUEST.md](docs/M11_MUSL_GUEST.md).

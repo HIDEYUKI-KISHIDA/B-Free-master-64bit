@@ -24,25 +24,25 @@ Install QEMU if missing:
 - **macOS:** `brew install qemu`
 - **Windows:** QEMU for Windows + WSL optional for build
 
-## Continue M10 (complete on branch `cursor/m10-syscall-kernel-695c`)
+## Continue M11 (complete on branch `cursor/m11-musl-guest-695c`)
 
 ```bash
 git fetch origin
-git checkout cursor/m10-syscall-kernel-695c
+git checkout cursor/m11-musl-guest-695c
 cd bfree_x86_64
 bash tools/setup_home_dev.sh
 ./tools/phase3_guest_auto.sh
-./tools/qemu_user_boot_smoke.sh
+./tools/qemu_musl_guest_smoke.sh
 ```
 
-See [docs/M10_SYSCALL_KERNEL.md](M10_SYSCALL_KERNEL.md).
+See [docs/M11_MUSL_GUEST.md](M11_MUSL_GUEST.md).
 
 ## Cursor prompt
 
 ```
-Branch cursor/m10-syscall-kernel-695c — M10 wires sysmain into kernel.elf.
-Run setup_home_dev.sh, phase3_guest_auto.sh, qemu_user_boot_smoke.sh.
-Continue M11 musl-on-guest per docs/M10_SYSCALL_KERNEL.md.
+Branch cursor/m11-musl-guest-695c — M11 musl-on-guest is implemented.
+Run setup_home_dev.sh, phase3_guest_auto.sh, qemu_musl_guest_smoke.sh.
+Continue M12 BusyBox-on-guest per docs/M11_MUSL_GUEST.md.
 Arch: x86_64 (bfree_x86_64).
 ```
 
