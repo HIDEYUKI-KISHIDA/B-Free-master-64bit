@@ -39,16 +39,19 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[13] = 1;  /* rt_sigaction */
     bfree_syscall_implemented[14] = 1;  /* rt_sigprocmask */
     bfree_syscall_implemented[15] = 1;  /* rt_sigreturn */
-    bfree_syscall_implemented[111] = 1; /* getpid */
-    bfree_syscall_implemented[110] = 1; /* getppid */
-    bfree_syscall_implemented[39] = 1;  /* getpgid */
-    bfree_syscall_implemented[109] = 1; /* getpgrp */
+    bfree_syscall_implemented[16] = 1;  /* ioctl */
+    bfree_syscall_implemented[39] = 1;  /* getpid */
+    bfree_syscall_implemented[87] = 1;  /* unlink */
     bfree_syscall_implemented[90] = 1;  /* capget */
     bfree_syscall_implemented[91] = 1;  /* capset */
-    bfree_syscall_implemented[112] = 1; /* setsid */
     bfree_syscall_implemented[109] = 1; /* setpgid */
-    bfree_syscall_implemented[352] = 1; /* tcgetpgrp */
-    bfree_syscall_implemented[351] = 1; /* tcsetpgrp */
+    bfree_syscall_implemented[110] = 1; /* getppid */
+    bfree_syscall_implemented[112] = 1; /* setsid */
+    bfree_syscall_implemented[121] = 1; /* getpgid */
+    bfree_syscall_implemented[217] = 1; /* getdents64 */
+    bfree_syscall_implemented[257] = 1; /* openat */
+    bfree_syscall_implemented[258] = 1; /* mkdirat */
+    bfree_syscall_implemented[263] = 1; /* unlinkat */
     /* M5 */
     bfree_syscall_implemented[165] = 1; /* mount */
     bfree_syscall_implemented[166] = 1; /* umount2 */

@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 void *memset(void *s, int c, unsigned long n)
 {
 	unsigned char *p = s;
@@ -50,4 +52,14 @@ char *strncpy(char *dst, const char *src, unsigned long n)
 	for (; i < n; i++)
 		dst[i] = '\0';
 	return dst;
+}
+
+char *strchr(const char *s, int c)
+{
+	while (*s != '\0') {
+		if (*s == (char)c)
+			return (char *)s;
+		s++;
+	}
+	return (c == '\0') ? (char *)s : (char *)0;
 }

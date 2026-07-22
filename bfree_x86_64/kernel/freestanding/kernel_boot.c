@@ -3,6 +3,7 @@
  */
 #include "debugcon.h"
 #include "gdt.h"
+#include "guest_kernel.h"
 #include "initramfs.h"
 #include "paging.h"
 #include "trap_hw.h"
@@ -37,6 +38,8 @@ void bfree_kernel_boot(void)
 				  (size_t)(_initramfs_end - _initramfs_start)) == 0 &&
 	    bfree_initramfs_file_count() > 0)
 		bfree_debug_puts("INITRAMFS_OK\n");
+
+	bfree_kernel_guest_init();
 
 	if (bfree_initramfs_lookup("user_payload.bin", &payload,
 				   &payload_len) == 0 &&

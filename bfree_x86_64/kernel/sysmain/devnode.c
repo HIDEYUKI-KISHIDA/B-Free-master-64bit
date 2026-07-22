@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef BFREE_KERNEL_GUEST
+#include "debugcon.h"
+#endif
+
 static struct bfree_vnode *ensure_dev_dir(struct bfree_fs *fs)
 {
 	size_t i;
@@ -61,6 +65,7 @@ void bfree_devnodes_init(struct bfree_fs *fs)
 		return;
 	add_dev(dev, "null", BFREE_DEV_NULL);
 	add_dev(dev, "zero", BFREE_DEV_ZERO);
+	add_dev(dev, "console", BFREE_DEV_CONSOLE);
 }
 
 ssize_t bfree_dev_read(struct bfree_fs *fs, int fd, void *buf, size_t count)
@@ -91,5 +96,11 @@ ssize_t bfree_dev_write(struct bfree_fs *fs, int fd, const void *buf,
 	if (ofd->vnode->dev_id == BFREE_DEV_NULL ||
 	    ofd->vnode->dev_id == BFREE_DEV_ZERO)
 		return (ssize_t)count;
+	if (ofd->vnode->dev_id == BFREE_DEV_CONSOLE) {
+#ifdef BFREE_KERNEL_GUEST
+		bfree_debug_write(buf, count);
+#endif
+		return (ssize_t)count;
+	}
 	return -EINVAL;
 }

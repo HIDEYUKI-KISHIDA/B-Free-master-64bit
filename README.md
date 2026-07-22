@@ -4,7 +4,7 @@
 
 ## POSIX compatibility roadmap
 
-See [docs/POSIX_FULL_COMPAT_ROADMAP.ja.md](docs/POSIX_FULL_COMPAT_ROADMAP.ja.md) for milestone tracking (M0–M9 handoff).
+See [docs/POSIX_FULL_COMPAT_ROADMAP.ja.md](docs/POSIX_FULL_COMPAT_ROADMAP.ja.md) for milestone tracking (M0–M10).
 
 ### Run verification (host tests)
 
@@ -84,3 +84,12 @@ cd bfree_x86_64 && bash tools/setup_home_dev.sh
 ```
 
 See [docs/M9_USER_BOOT.md](docs/M9_USER_BOOT.md) and [docs/HOME_PC_SETUP.md](docs/HOME_PC_SETUP.md).
+
+### Sysmain in kernel.elf (M10)
+
+```bash
+git checkout cursor/m10-syscall-kernel-695c
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P10_* + RESULT: ALL PASS
+```
+
+See [docs/M10_SYSCALL_KERNEL.md](docs/M10_SYSCALL_KERNEL.md).

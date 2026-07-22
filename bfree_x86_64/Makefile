@@ -14,7 +14,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p6_syscall_invoke test_p6_trap_entry \
 	test_p7_kernel_main test_p7_trap_setup test_p7_trap_payload test_p7_musl_trap \
 	test_p8_paging test_p8_initramfs test_p8_trap_hw test_p8_kernel_boot \
-	test_p9_gdt test_p9_user_boot
+	test_p9_gdt test_p9_user_boot test_p10_dispatch_wiring test_p10_kernel_guest
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -46,12 +46,19 @@ P7_OBJS := $(P6_OBJS) $(M7_OBJS)
 P8_OBJS := $(P7_OBJS) $(M8_OBJS)
 TRAP_PAYLOAD_OBJS := $(P6_OBJS) $(BUILD_DIR)/trap_setup.o
 
+KERNEL_FREESTANDING_INC := -nostdinc -Ikernel/freestanding/include -DBFREE_KERNEL_GUEST
+KERNEL_SYSMAIN_OBJS := $(addprefix $(KERNEL_DIR)/,fs_ofd.o blk_vol.o blk_persist.o devnode.o \
+	mount.o cred.o net_unix.o ipc_shm.o syscall_dispatch.o syscall.o process.o vmm.o \
+	guest_io.o elf_load.o thread.o tty.o)
+KERNEL_FREESTANDING_OBJS := $(KERNEL_DIR)/libc_stubs.o $(KERNEL_DIR)/exec_stubs.o \
+	$(KERNEL_DIR)/guest_kernel.o
+
 KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/kernel_boot.o $(KERNEL_DIR)/paging.o $(KERNEL_DIR)/trap_setup.o \
 	$(KERNEL_DIR)/trap_hw.o $(KERNEL_DIR)/debugcon.o $(KERNEL_DIR)/initramfs.o \
-	$(KERNEL_DIR)/string.o $(KERNEL_DIR)/syscall_min.o $(KERNEL_DIR)/syscall_entry.o \
-	$(KERNEL_DIR)/gdt.o $(KERNEL_DIR)/user_boot.o $(KERNEL_DIR)/user_boot_ring3.o \
-	$(KERNEL_DIR)/syscall_insn_entry.o
+	$(KERNEL_DIR)/string.o $(KERNEL_SYSMAIN_OBJS) $(KERNEL_FREESTANDING_OBJS) \
+	$(KERNEL_DIR)/syscall_entry.o $(KERNEL_DIR)/gdt.o $(KERNEL_DIR)/user_boot.o \
+	$(KERNEL_DIR)/user_boot_ring3.o $(KERNEL_DIR)/syscall_insn_entry.o
 
 .PHONY: all host-tests clean musl-static boot-smoke kernel boot-trap-payload initramfs
 
@@ -291,7 +298,38 @@ $(KERNEL_DIR)/initramfs_embed.o: kernel/arch/x86_64/initramfs_embed.S $(INITRAMF
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
 $(KERNEL_DIR)/kernel_boot.o: kernel/freestanding/kernel_boot.c | $(KERNEL_DIR)
-	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
+$(KERNEL_DIR)/libc_stubs.o: kernel/freestanding/libc_stubs.c | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
+$(KERNEL_DIR)/exec_stubs.o: kernel/freestanding/exec_stubs.c | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
+$(KERNEL_DIR)/guest_kernel.o: kernel/freestanding/guest_kernel.c | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
+$(KERNEL_DIR)/%.o: kernel/sysmain/%.c | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p10_dispatch_wiring.o: tools/test_p10_dispatch_wiring.c kernel/sysmain/syscall.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p10_kernel_guest.o: tools/test_p10_kernel_guest.c kernel/freestanding/guest_kernel.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -Ikernel/freestanding -c $< -o $@
+
+$(BUILD_DIR)/guest_kernel_host.o: kernel/freestanding/guest_kernel.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -Ikernel/freestanding -DBFREE_KERNEL_GUEST -c $< -o $@
+
+$(BUILD_DIR)/debugcon_host_stub.o: tools/debugcon_host_stub.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/arch/x86_64 -c $< -o $@
+
+$(BUILD_DIR)/test_p10_dispatch_wiring: $(BUILD_DIR)/test_p10_dispatch_wiring.o $(P6_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p10_kernel_guest: $(BUILD_DIR)/test_p10_kernel_guest.o $(P6_OBJS) \
+	$(BUILD_DIR)/guest_kernel_host.o $(BUILD_DIR)/debugcon_host_stub.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
@@ -306,12 +344,9 @@ $(KERNEL_DIR)/debugcon.o: kernel/arch/x86_64/debugcon.c kernel/arch/x86_64/debug
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
 
 $(KERNEL_DIR)/initramfs.o: kernel/sysmain/initramfs.c kernel/sysmain/initramfs.h | $(KERNEL_DIR)
-	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
 
 $(KERNEL_DIR)/string.o: kernel/freestanding/string.c | $(KERNEL_DIR)
-	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
-
-$(KERNEL_DIR)/syscall_min.o: kernel/freestanding/syscall_min.c | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
 
 $(KERNEL_DIR)/syscall_entry.o: kernel/arch/x86_64/syscall_entry.S | $(KERNEL_DIR)
