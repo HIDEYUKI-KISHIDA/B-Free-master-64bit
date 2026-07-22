@@ -17,7 +17,10 @@ int main(void)
 	int enosys;
 
 	bfree_syscall_registry_init();
-	CHECK(bfree_syscall_is_implemented(0), "read");
+	CHECK(bfree_syscall_is_implemented(4), "stat");
+	CHECK(bfree_syscall_is_implemented(5), "fstat");
+	CHECK(bfree_syscall_is_implemented(7), "poll");
+	CHECK(bfree_syscall_is_implemented(262), "fstatat");
 	CHECK(bfree_syscall_is_implemented(165), "mount");
 	CHECK(bfree_syscall_is_implemented(41), "socket");
 	CHECK(bfree_syscall_is_implemented(29), "shmget");

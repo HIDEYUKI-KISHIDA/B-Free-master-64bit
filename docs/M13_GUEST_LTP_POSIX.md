@@ -46,7 +46,6 @@ Host LTP/POSIX scripts still run in `phase3_guest_auto.sh` before guest QEMU smo
 
 ## Residual (M14+)
 
-- Migrate additional `ltp_regress` / `posix_regress` cases to guest probes
-- `stat` / `poll` / `fstatat` syscalls for fuller libc and ash coverage
-- Guest `ash_regress` on QEMU (needs `execve` from VFS)
+- Blocking `poll` with timeout; guest ash_regress on QEMU
+- Migrate remaining host LTP/POSIX cases to guest probes
 - Full upstream LTP checkout (out of scope for this track)

@@ -15,7 +15,8 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p7_kernel_main test_p7_trap_setup test_p7_trap_payload test_p7_musl_trap \
 	test_p8_paging test_p8_initramfs test_p8_trap_hw test_p8_kernel_boot \
 	test_p9_gdt test_p9_user_boot test_p10_dispatch_wiring test_p10_kernel_guest \
-	test_p11_musl_guest test_p12_busybox_guest test_p13_guest_regress
+	test_p11_musl_guest test_p12_busybox_guest test_p13_guest_regress \
+	test_p14_stat_poll test_p14_guest_regress
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -31,6 +32,10 @@ LTP_OPEN_GUEST_ELF := $(BUILD_DIR)/ltp_open_guest.elf
 POSIX_IO_GUEST_ELF := $(BUILD_DIR)/posix_io_guest.elf
 LTP_OPEN_INITRAMFS := guest/initramfs/ltp_open_guest.elf
 POSIX_IO_INITRAMFS := guest/initramfs/posix_io_guest.elf
+STAT_GUEST_ELF := $(BUILD_DIR)/stat_guest.elf
+POLL_GUEST_ELF := $(BUILD_DIR)/poll_guest.elf
+STAT_GUEST_INITRAMFS := guest/initramfs/stat_guest.elf
+POLL_GUEST_INITRAMFS := guest/initramfs/poll_guest.elf
 TRAP_PAYLOAD_ELF := build/trap_payload.elf
 KERNEL_DIR := build/kernel
 KERNEL_BOOT_CFLAGS ?=
@@ -88,11 +93,13 @@ musl-static: $(MUSL_STATIC_ELF)
 
 busybox-guest: $(BUSYBOX_ROOTFS)
 
-guest-regress: $(LTP_OPEN_GUEST_ELF) $(POSIX_IO_GUEST_ELF)
+guest-regress: $(LTP_OPEN_GUEST_ELF) $(POSIX_IO_GUEST_ELF) \
+	$(STAT_GUEST_ELF) $(POLL_GUEST_ELF)
 
 $(INITRAMFS_CPIO): tools/build_initramfs.sh tools/build_initramfs.py \
 		guest/initramfs/hello.txt $(USER_PAYLOAD_BIN) $(MUSL_INITRAMFS_ELF) \
-		$(BUSYBOX_INITRAMFS) $(LTP_OPEN_INITRAMFS) $(POSIX_IO_INITRAMFS)
+		$(BUSYBOX_INITRAMFS) $(LTP_OPEN_INITRAMFS) $(POSIX_IO_INITRAMFS) \
+		$(STAT_GUEST_INITRAMFS) $(POLL_GUEST_INITRAMFS)
 	mkdir -p build
 	bash tools/build_initramfs.sh
 
@@ -112,8 +119,10 @@ $(BUSYBOX_INITRAMFS): $(BUSYBOX_ROOTFS)
 	mkdir -p guest/initramfs/bin
 	cp "$<" "$@"
 
-$(LTP_OPEN_GUEST_ELF) $(POSIX_IO_GUEST_ELF): tools/build_guest_regress.sh \
+$(LTP_OPEN_GUEST_ELF) $(POSIX_IO_GUEST_ELF) $(STAT_GUEST_ELF) $(POLL_GUEST_ELF): \
+		tools/build_guest_regress.sh \
 		tools/guest_regress/ltp_open_guest.S tools/guest_regress/posix_io_guest.S \
+		tools/guest_regress/stat_guest.S tools/guest_regress/poll_guest.S \
 		tools/guest_regress/guest_regress.ld | $(BUILD_DIR)
 	bash tools/build_guest_regress.sh
 
@@ -122,6 +131,14 @@ $(LTP_OPEN_INITRAMFS): $(LTP_OPEN_GUEST_ELF)
 	cp "$<" "$@"
 
 $(POSIX_IO_INITRAMFS): $(POSIX_IO_GUEST_ELF)
+	mkdir -p guest/initramfs
+	cp "$<" "$@"
+
+$(STAT_GUEST_INITRAMFS): $(STAT_GUEST_ELF)
+	mkdir -p guest/initramfs
+	cp "$<" "$@"
+
+$(POLL_GUEST_INITRAMFS): $(POLL_GUEST_ELF)
 	mkdir -p guest/initramfs
 	cp "$<" "$@"
 
@@ -401,6 +418,25 @@ $(BUILD_DIR)/test_p13_guest_regress.o: tools/test_p13_guest_regress.c | $(BUILD_
 
 $(BUILD_DIR)/test_p13_guest_regress: $(BUILD_DIR)/test_p13_guest_regress.o \
 		| $(LTP_OPEN_INITRAMFS) $(POSIX_IO_INITRAMFS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p14_stat_poll.o: tools/test_p14_stat_poll.c kernel/sysmain/syscall.h \
+		kernel/sysmain/fs_ofd.h kernel/sysmain/process.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p14_stat_poll: $(BUILD_DIR)/test_p14_stat_poll.o $(P6_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p14_guest_regress.o: tools/test_p14_guest_regress.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) \
+		-DSTAT_GUEST_BUILT_PATH=\"$(STAT_GUEST_ELF)\" \
+		-DSTAT_GUEST_STAGED_PATH=\"$(STAT_GUEST_INITRAMFS)\" \
+		-DPOLL_GUEST_BUILT_PATH=\"$(POLL_GUEST_ELF)\" \
+		-DPOLL_GUEST_STAGED_PATH=\"$(POLL_GUEST_INITRAMFS)\" \
+		-c $< -o $@
+
+$(BUILD_DIR)/test_p14_guest_regress: $(BUILD_DIR)/test_p14_guest_regress.o \
+		| $(STAT_GUEST_INITRAMFS) $(POLL_GUEST_INITRAMFS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)

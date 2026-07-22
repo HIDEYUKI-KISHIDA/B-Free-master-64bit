@@ -124,3 +124,14 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P13_GUEST_REGRESS
 ```
 
 See [docs/M13_GUEST_LTP_POSIX.md](docs/M13_GUEST_LTP_POSIX.md).
+
+### stat / poll / fstatat (M14)
+
+```bash
+git checkout cursor/m14-stat-poll-fstatat-695c
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P14_STAT_POLL
+./tools/qemu_stat_guest_smoke.sh                 # STAT_GUEST_OK (needs QEMU)
+./tools/qemu_poll_guest_smoke.sh                 # POLL_GUEST_OK (needs QEMU)
+```
+
+See [docs/M14_STAT_POLL.md](docs/M14_STAT_POLL.md).

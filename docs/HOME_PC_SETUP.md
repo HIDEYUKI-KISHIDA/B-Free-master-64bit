@@ -24,27 +24,27 @@ Install QEMU if missing:
 - **macOS:** `brew install qemu`
 - **Windows:** QEMU for Windows + WSL optional for build
 
-## Continue M13 (on branch `cursor/m13-guest-ltp-posix-695c`)
+## Continue M14 (on branch `cursor/m14-stat-poll-fstatat-695c`)
 
 ```bash
 git fetch origin
-git checkout cursor/m13-guest-ltp-posix-695c
+git checkout cursor/m14-stat-poll-fstatat-695c
 cd bfree_x86_64
 bash tools/setup_home_dev.sh
 ./tools/phase3_guest_auto.sh
-./tools/qemu_ltp_open_guest_smoke.sh
-./tools/qemu_posix_io_guest_smoke.sh
+./tools/qemu_stat_guest_smoke.sh
+./tools/qemu_poll_guest_smoke.sh
 ```
 
-See [docs/M13_GUEST_LTP_POSIX.md](M13_GUEST_LTP_POSIX.md).
+See [docs/M14_STAT_POLL.md](M14_STAT_POLL.md).
 
 ## Cursor prompt
 
 ```
-Branch cursor/m13-guest-ltp-posix-695c — M13 guest LTP/POSIX probes are implemented.
-Run setup_home_dev.sh, phase3_guest_auto.sh, qemu_ltp_open_guest_smoke.sh,
-qemu_posix_io_guest_smoke.sh.
-Continue M14 stat/poll/fstatat per docs/M13_GUEST_LTP_POSIX.md.
+Branch cursor/m14-stat-poll-fstatat-695c — M14 stat/poll/fstatat is implemented.
+Run setup_home_dev.sh, phase3_guest_auto.sh, qemu_stat_guest_smoke.sh,
+qemu_poll_guest_smoke.sh.
+Continue M15 guest ash_regress on QEMU per docs/M14_STAT_POLL.md.
 Arch: x86_64 (bfree_x86_64).
 ```
 

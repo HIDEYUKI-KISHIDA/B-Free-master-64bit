@@ -131,6 +131,14 @@
 
 手順: `docs/M13_GUEST_LTP_POSIX.md`
 
+### M14 — stat / poll / fstatat ✅ 完了
+
+- [x] `stat` (4), `fstat` (5), `poll` (7), `newfstatat` (262) in syscall path
+- [x] Guest probes `stat_guest.elf`, `poll_guest.elf` in initramfs
+- [x] 検証 `P14_STAT_POLL`, `P14_GUEST_STAT_POLL`, QEMU smokes
+
+手順: `docs/M14_STAT_POLL.md`
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」

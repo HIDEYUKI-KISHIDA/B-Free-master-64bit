@@ -22,5 +22,7 @@ build_probe() {
 
 build_probe ltp_open_guest.S ltp_open_guest.elf
 build_probe posix_io_guest.S posix_io_guest.elf
+build_probe stat_guest.S stat_guest.elf
+build_probe poll_guest.S poll_guest.elf
 
 echo "OK: guest regress probes in ${BUILD}"
