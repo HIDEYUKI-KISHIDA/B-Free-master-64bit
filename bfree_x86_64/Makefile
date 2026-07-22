@@ -14,7 +14,8 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p6_syscall_invoke test_p6_trap_entry \
 	test_p7_kernel_main test_p7_trap_setup test_p7_trap_payload test_p7_musl_trap \
 	test_p8_paging test_p8_initramfs test_p8_trap_hw test_p8_kernel_boot \
-	test_p9_gdt test_p9_user_boot test_p10_dispatch_wiring test_p10_kernel_guest
+	test_p9_gdt test_p9_user_boot test_p10_dispatch_wiring test_p10_kernel_guest \
+	test_p11_musl_guest
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -23,8 +24,10 @@ KERNEL_ELF := build/kernel.elf
 INITRAMFS_CPIO := build/initramfs.cpio
 USER_PAYLOAD_ELF := build/user_payload.elf
 USER_PAYLOAD_BIN := guest/initramfs/user_payload.bin
+MUSL_INITRAMFS_ELF := guest/initramfs/musl_static.elf
 TRAP_PAYLOAD_ELF := build/trap_payload.elf
 KERNEL_DIR := build/kernel
+KERNEL_BOOT_CFLAGS ?=
 
 FREESTANDING_CFLAGS := -Wall -Wextra -std=c11 -O2 -ffreestanding -fno-builtin \
 	-fno-pie -fno-stack-protector -mno-red-zone -mcmodel=kernel
@@ -51,7 +54,7 @@ KERNEL_SYSMAIN_OBJS := $(addprefix $(KERNEL_DIR)/,fs_ofd.o blk_vol.o blk_persist
 	mount.o cred.o net_unix.o ipc_shm.o syscall_dispatch.o syscall.o process.o vmm.o \
 	guest_io.o elf_load.o thread.o tty.o)
 KERNEL_FREESTANDING_OBJS := $(KERNEL_DIR)/libc_stubs.o $(KERNEL_DIR)/exec_stubs.o \
-	$(KERNEL_DIR)/guest_kernel.o
+	$(KERNEL_DIR)/guest_kernel.o $(KERNEL_DIR)/elf_user_load.o
 
 KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/kernel_boot.o $(KERNEL_DIR)/paging.o $(KERNEL_DIR)/trap_setup.o \
@@ -77,9 +80,13 @@ initramfs: $(INITRAMFS_CPIO)
 musl-static: $(MUSL_STATIC_ELF)
 
 $(INITRAMFS_CPIO): tools/build_initramfs.sh tools/build_initramfs.py \
-		guest/initramfs/hello.txt $(USER_PAYLOAD_BIN)
+		guest/initramfs/hello.txt $(USER_PAYLOAD_BIN) $(MUSL_INITRAMFS_ELF)
 	mkdir -p build
 	bash tools/build_initramfs.sh
+
+$(MUSL_INITRAMFS_ELF): $(MUSL_STATIC_ELF)
+	mkdir -p guest/initramfs
+	cp "$<" "$@"
 
 $(USER_PAYLOAD_BIN): $(USER_PAYLOAD_ELF)
 	mkdir -p guest/initramfs
@@ -298,6 +305,9 @@ $(KERNEL_DIR)/initramfs_embed.o: kernel/arch/x86_64/initramfs_embed.S $(INITRAMF
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
 $(KERNEL_DIR)/kernel_boot.o: kernel/freestanding/kernel_boot.c | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_BOOT_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
+$(KERNEL_DIR)/elf_user_load.o: kernel/freestanding/elf_user_load.c | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
 
 $(KERNEL_DIR)/libc_stubs.o: kernel/freestanding/libc_stubs.c | $(KERNEL_DIR)
@@ -329,6 +339,13 @@ $(BUILD_DIR)/test_p10_dispatch_wiring: $(BUILD_DIR)/test_p10_dispatch_wiring.o $
 
 $(BUILD_DIR)/test_p10_kernel_guest: $(BUILD_DIR)/test_p10_kernel_guest.o $(P6_OBJS) \
 	$(BUILD_DIR)/guest_kernel_host.o $(BUILD_DIR)/debugcon_host_stub.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p11_musl_guest.o: tools/test_p11_musl_guest.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DMUSL_STATIC_ELF_PATH=\"$(MUSL_STATIC_ELF)\" \
+		-DMUSL_INITRAMFS_ELF_PATH=\"$(MUSL_INITRAMFS_ELF)\" -c $< -o $@
+
+$(BUILD_DIR)/test_p11_musl_guest: $(BUILD_DIR)/test_p11_musl_guest.o | $(MUSL_INITRAMFS_ELF)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)

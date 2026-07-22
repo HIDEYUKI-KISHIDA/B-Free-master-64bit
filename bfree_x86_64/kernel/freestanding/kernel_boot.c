@@ -1,7 +1,8 @@
 /*
- * Freestanding QEMU kernel entry (M8–M9).
+ * Freestanding QEMU kernel entry (M8–M11).
  */
 #include "debugcon.h"
+#include "elf_user_load.h"
 #include "gdt.h"
 #include "guest_kernel.h"
 #include "initramfs.h"
@@ -17,12 +18,43 @@ extern void bfree_syscall_insn_entry(void);
 extern char _initramfs_start[];
 extern char _initramfs_end[];
 
+#ifndef BFREE_PREFER_MUSL_BOOT
+#define BFREE_PREFER_MUSL_BOOT 0
+#endif
+
+static int boot_musl_elf(void)
+{
+	const void *payload;
+	size_t payload_len;
+	uintptr_t entry;
+
+	if (bfree_initramfs_lookup("musl_static.elf", &payload,
+				   &payload_len) != 0)
+		return 0;
+	if (bfree_user_elf_install(payload, payload_len, &entry) != 0)
+		return 0;
+	bfree_user_boot_exec(entry, BFREE_USER_STACK_TOP);
+	return 1;
+}
+
+static int boot_user_payload(void)
+{
+	const void *payload;
+	size_t payload_len;
+
+	if (bfree_initramfs_lookup("user_payload.bin", &payload,
+				   &payload_len) != 0)
+		return 0;
+	if (bfree_user_payload_install(payload, payload_len) != 0)
+		return 0;
+	bfree_user_boot_exec(BFREE_USER_LOAD_ADDR, BFREE_USER_STACK_TOP);
+	return 1;
+}
+
 void bfree_kernel_boot(void)
 {
 	struct bfree_paging_state pg;
 	struct bfree_gdt_state gdt;
-	const void *payload;
-	size_t payload_len;
 
 	bfree_paging_build_identity(&pg);
 	bfree_paging_install(&pg);
@@ -41,10 +73,13 @@ void bfree_kernel_boot(void)
 
 	bfree_kernel_guest_init();
 
-	if (bfree_initramfs_lookup("user_payload.bin", &payload,
-				   &payload_len) == 0 &&
-	    bfree_user_payload_install(payload, payload_len) == 0)
-		bfree_user_boot_exec(BFREE_USER_LOAD_ADDR, BFREE_USER_STACK_TOP);
+#if BFREE_PREFER_MUSL_BOOT
+	if (!boot_musl_elf())
+		(void)boot_user_payload();
+#else
+	if (!boot_user_payload())
+		(void)boot_musl_elf();
+#endif
 
 	for (;;)
 		__asm__ volatile("hlt");

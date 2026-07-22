@@ -80,8 +80,16 @@ run_test test_p9_user_boot
 run_test test_p10_dispatch_wiring
 run_test test_p10_kernel_guest
 
+# M11 musl static on booted guest
+run_test test_p11_musl_guest
+
 echo "== phase3_guest_auto: QEMU user boot smoke =="
 if ! "${ROOT}/tools/qemu_user_boot_smoke.sh"; then
+  FAIL=1
+fi
+
+echo "== phase3_guest_auto: QEMU musl guest smoke =="
+if ! "${ROOT}/tools/qemu_musl_guest_smoke.sh"; then
   FAIL=1
 fi
 
