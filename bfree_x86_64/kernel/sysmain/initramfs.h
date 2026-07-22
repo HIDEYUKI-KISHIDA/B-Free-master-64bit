@@ -8,4 +8,8 @@ int bfree_initramfs_parse(const void *base, size_t len);
 int bfree_initramfs_lookup(const char *name, const void **data, size_t *size);
 int bfree_initramfs_file_count(void);
 
+typedef void (*bfree_initramfs_cb)(const char *name, const void *data,
+				   size_t size, void *arg);
+int bfree_initramfs_foreach(bfree_initramfs_cb cb, void *arg);
+
 #endif

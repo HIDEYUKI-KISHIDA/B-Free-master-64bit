@@ -29,6 +29,7 @@ bfree_syscall_insn_entry:
 	mov %rax, %rdi
 	call bfree_invoke_syscall
 	add $8, %rsp
+	call bfree_syscall_exec_resume_if_needed
 	pop %rcx
 	pop %r11
 	mov user_rsp_save(%rip), %rsp

@@ -139,6 +139,16 @@
 
 手順: `docs/M14_STAT_POLL.md`
 
+### M15 — guest ash regress + ring-3 execve ✅ 完了
+
+- [x] Initramfs → VFS seed (`guest_initramfs_seed.c`)
+- [x] Ring-3 `execve` (`elf_user_exec.c`)
+- [x] Blocking `poll` (busy-wait timeout)
+- [x] Ash subshell/cmdsubst on QEMU (`ASH_*_GUEST_OK`)
+- [x] 検証 `P15_POLL_BLOCKING`, `P15_ASH_REGRESS_STAGED`, `P15_ASH_REGRESS_GUEST_QEMU`
+
+手順: `docs/M15_GUEST_ASH_EXECVE.md`
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」

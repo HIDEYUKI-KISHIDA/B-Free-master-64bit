@@ -129,3 +129,14 @@ int bfree_initramfs_file_count(void)
 {
 	return entry_count;
 }
+
+int bfree_initramfs_foreach(bfree_initramfs_cb cb, void *arg)
+{
+	int i;
+
+	if (cb == NULL)
+		return -1;
+	for (i = 0; i < entry_count; i++)
+		cb(entries[i].name, entries[i].data, entries[i].size, arg);
+	return 0;
+}

@@ -135,3 +135,13 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P14_STAT_POLL
 ```
 
 See [docs/M14_STAT_POLL.md](docs/M14_STAT_POLL.md).
+
+### Guest ash regress on QEMU (M15)
+
+```bash
+git checkout cursor/m15-guest-ash-execve-695c
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P15_*
+./tools/qemu_ash_regress_guest_smoke.sh          # ASH_*_GUEST_OK (needs QEMU)
+```
+
+See [docs/M15_GUEST_ASH_EXECVE.md](docs/M15_GUEST_ASH_EXECVE.md).
