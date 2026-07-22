@@ -33,6 +33,7 @@ struct bfree_trap_state {
 };
 
 void bfree_trap_init(void);
+void bfree_trap_set_lstar(uintptr_t entry);
 const struct bfree_trap_state *bfree_trap_state(void);
 int bfree_trap_is_ready(void);
 

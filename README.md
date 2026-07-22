@@ -4,7 +4,7 @@
 
 ## POSIX compatibility roadmap
 
-See [docs/POSIX_FULL_COMPAT_ROADMAP.ja.md](docs/POSIX_FULL_COMPAT_ROADMAP.ja.md) for milestone tracking (M0–M8).
+See [docs/POSIX_FULL_COMPAT_ROADMAP.ja.md](docs/POSIX_FULL_COMPAT_ROADMAP.ja.md) for milestone tracking (M0–M9 handoff).
 
 ### Run verification (host tests)
 
@@ -74,3 +74,12 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P8_* + embedded initramfs ker
 ```
 
 See [docs/M8_REAL_BOOT.md](docs/M8_REAL_BOOT.md).
+
+### Ring-3 user boot (M9 — continue on home PC)
+
+```bash
+git checkout cursor/m9-user-boot-695c
+cd bfree_x86_64 && bash tools/setup_home_dev.sh
+```
+
+See [docs/M9_USER_BOOT.md](docs/M9_USER_BOOT.md) and [docs/HOME_PC_SETUP.md](docs/HOME_PC_SETUP.md).

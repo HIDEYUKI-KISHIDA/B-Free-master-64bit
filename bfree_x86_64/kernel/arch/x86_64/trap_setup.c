@@ -32,6 +32,11 @@ void bfree_trap_init(void)
 	bfree_trap.initialized = 1;
 }
 
+void bfree_trap_set_lstar(uintptr_t entry)
+{
+	bfree_trap.syscall_lstar = (uint64_t)entry;
+}
+
 const struct bfree_trap_state *bfree_trap_state(void)
 {
 	return &bfree_trap;

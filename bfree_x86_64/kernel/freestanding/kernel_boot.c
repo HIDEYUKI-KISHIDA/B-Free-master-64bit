@@ -9,6 +9,8 @@
 
 #include <stddef.h>
 
+extern void bfree_syscall_insn_entry(void);
+
 extern char _initramfs_start[];
 extern char _initramfs_end[];
 
@@ -19,6 +21,7 @@ void bfree_kernel_boot(void)
 	bfree_paging_build_identity(&pg);
 	bfree_paging_install(&pg);
 	bfree_trap_init();
+	bfree_trap_set_lstar((uintptr_t)bfree_syscall_insn_entry);
 	bfree_trap_install();
 
 	bfree_debug_puts("KERNEL_OK\n");
