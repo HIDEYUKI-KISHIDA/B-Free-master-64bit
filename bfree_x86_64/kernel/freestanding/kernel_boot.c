@@ -1,5 +1,5 @@
 /*
- * Freestanding QEMU kernel entry (M8–M12).
+ * Freestanding QEMU kernel entry (M8–M13).
  */
 #include "ash_guest_boot.h"
 #include "debugcon.h"
@@ -19,6 +19,14 @@ extern void bfree_syscall_insn_entry(void);
 extern char _initramfs_start[];
 extern char _initramfs_end[];
 
+#ifndef BFREE_PREFER_LTP_OPEN_BOOT
+#define BFREE_PREFER_LTP_OPEN_BOOT 0
+#endif
+
+#ifndef BFREE_PREFER_POSIX_IO_BOOT
+#define BFREE_PREFER_POSIX_IO_BOOT 0
+#endif
+
 #ifndef BFREE_PREFER_BUSYBOX_BOOT
 #define BFREE_PREFER_BUSYBOX_BOOT 0
 #endif
@@ -27,19 +35,23 @@ extern char _initramfs_end[];
 #define BFREE_PREFER_MUSL_BOOT 0
 #endif
 
-static int boot_musl_elf(void)
+static int boot_elf_from_initramfs(const char *name)
 {
 	const void *payload;
 	size_t payload_len;
 	uintptr_t entry;
 
-	if (bfree_initramfs_lookup("musl_static.elf", &payload,
-				   &payload_len) != 0)
+	if (bfree_initramfs_lookup(name, &payload, &payload_len) != 0)
 		return 0;
 	if (bfree_user_elf_install(payload, payload_len, &entry) != 0)
 		return 0;
 	bfree_user_boot_exec(entry, BFREE_USER_STACK_TOP);
 	return 1;
+}
+
+static int boot_musl_elf(void)
+{
+	return boot_elf_from_initramfs("musl_static.elf");
 }
 
 static int boot_user_payload(void)
@@ -54,6 +66,12 @@ static int boot_user_payload(void)
 		return 0;
 	bfree_user_boot_exec(BFREE_USER_LOAD_ADDR, BFREE_USER_STACK_TOP);
 	return 1;
+}
+
+static void boot_default_guest(void)
+{
+	if (!boot_user_payload())
+		(void)boot_musl_elf();
 }
 
 void bfree_kernel_boot(void)
@@ -78,7 +96,13 @@ void bfree_kernel_boot(void)
 
 	bfree_kernel_guest_init();
 
-#if BFREE_PREFER_BUSYBOX_BOOT
+#if BFREE_PREFER_LTP_OPEN_BOOT
+	if (!boot_elf_from_initramfs("ltp_open_guest.elf"))
+		boot_default_guest();
+#elif BFREE_PREFER_POSIX_IO_BOOT
+	if (!boot_elf_from_initramfs("posix_io_guest.elf"))
+		boot_default_guest();
+#elif BFREE_PREFER_BUSYBOX_BOOT
 	if (!bfree_ash_guest_boot()) {
 		if (!boot_musl_elf())
 			(void)boot_user_payload();
@@ -87,8 +111,7 @@ void bfree_kernel_boot(void)
 	if (!boot_musl_elf())
 		(void)boot_user_payload();
 #else
-	if (!boot_user_payload())
-		(void)boot_musl_elf();
+	boot_default_guest();
 #endif
 
 	for (;;)

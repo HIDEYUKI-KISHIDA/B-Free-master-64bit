@@ -123,6 +123,14 @@
 
 手順: `docs/M12_BUSYBOX_GUEST.md`
 
+### M13 — guest LTP/POSIX on booted QEMU ✅ 完了
+
+- [x] Guest probe ELFs (`ltp_open_guest.elf`, `posix_io_guest.elf`) in initramfs
+- [x] `BFREE_PREFER_LTP_OPEN_BOOT` / `BFREE_PREFER_POSIX_IO_BOOT` boot paths
+- [x] 検証 `P13_GUEST_REGRESS`, `P13_LTP_OPEN_GUEST_QEMU`, `P13_POSIX_IO_GUEST_QEMU`
+
+手順: `docs/M13_GUEST_LTP_POSIX.md`
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」
