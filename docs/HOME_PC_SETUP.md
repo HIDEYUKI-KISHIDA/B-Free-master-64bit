@@ -24,25 +24,26 @@ Install QEMU if missing:
 - **macOS:** `brew install qemu`
 - **Windows:** QEMU for Windows + WSL optional for build
 
-## Continue M11 (complete on branch `cursor/m11-musl-guest-695c`)
+## Continue M12 (on branch `cursor/m12-busybox-guest-695c`)
 
 ```bash
 git fetch origin
-git checkout cursor/m11-musl-guest-695c
+git checkout cursor/m12-busybox-guest-695c
 cd bfree_x86_64
 bash tools/setup_home_dev.sh
 ./tools/phase3_guest_auto.sh
 ./tools/qemu_musl_guest_smoke.sh
+./tools/qemu_busybox_guest_smoke.sh
 ```
 
-See [docs/M11_MUSL_GUEST.md](M11_MUSL_GUEST.md).
+See [docs/M12_BUSYBOX_GUEST.md](M12_BUSYBOX_GUEST.md).
 
 ## Cursor prompt
 
 ```
-Branch cursor/m11-musl-guest-695c — M11 musl-on-guest is implemented.
-Run setup_home_dev.sh, phase3_guest_auto.sh, qemu_musl_guest_smoke.sh.
-Continue M12 BusyBox-on-guest per docs/M11_MUSL_GUEST.md.
+Branch cursor/m12-busybox-guest-695c — M12 BusyBox-on-guest is implemented.
+Run setup_home_dev.sh, phase3_guest_auto.sh, qemu_busybox_guest_smoke.sh.
+Continue M13 guest LTP/POSIX per docs/M12_BUSYBOX_GUEST.md.
 Arch: x86_64 (bfree_x86_64).
 ```
 

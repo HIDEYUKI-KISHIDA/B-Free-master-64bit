@@ -1,6 +1,7 @@
 /*
- * Freestanding QEMU kernel entry (M8–M11).
+ * Freestanding QEMU kernel entry (M8–M12).
  */
+#include "ash_guest_boot.h"
 #include "debugcon.h"
 #include "elf_user_load.h"
 #include "gdt.h"
@@ -17,6 +18,10 @@ extern void bfree_syscall_insn_entry(void);
 
 extern char _initramfs_start[];
 extern char _initramfs_end[];
+
+#ifndef BFREE_PREFER_BUSYBOX_BOOT
+#define BFREE_PREFER_BUSYBOX_BOOT 0
+#endif
 
 #ifndef BFREE_PREFER_MUSL_BOOT
 #define BFREE_PREFER_MUSL_BOOT 0
@@ -73,7 +78,12 @@ void bfree_kernel_boot(void)
 
 	bfree_kernel_guest_init();
 
-#if BFREE_PREFER_MUSL_BOOT
+#if BFREE_PREFER_BUSYBOX_BOOT
+	if (!bfree_ash_guest_boot()) {
+		if (!boot_musl_elf())
+			(void)boot_user_payload();
+	}
+#elif BFREE_PREFER_MUSL_BOOT
 	if (!boot_musl_elf())
 		(void)boot_user_payload();
 #else

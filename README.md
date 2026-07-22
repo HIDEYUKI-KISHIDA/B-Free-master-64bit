@@ -103,3 +103,13 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P11_MUSL_GUEST
 ```
 
 See [docs/M11_MUSL_GUEST.md](docs/M11_MUSL_GUEST.md).
+
+### BusyBox ash on booted guest (M12)
+
+```bash
+git checkout cursor/m12-busybox-guest-695c
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P12_BUSYBOX_GUEST
+./tools/qemu_busybox_guest_smoke.sh              # ASH_GUEST_OK (needs QEMU)
+```
+
+See [docs/M12_BUSYBOX_GUEST.md](docs/M12_BUSYBOX_GUEST.md).

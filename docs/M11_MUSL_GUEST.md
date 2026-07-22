@@ -35,6 +35,6 @@ cd bfree_x86_64
 
 ## Residual (M12+)
 
-- BusyBox ash in QEMU initramfs
+- Guest LTP / POSIX regression on booted QEMU (M13)
 - `stat` / `poll` / `fstatat` for fuller libc coverage
 - `execve` from guest VFS without kernel hand-boot

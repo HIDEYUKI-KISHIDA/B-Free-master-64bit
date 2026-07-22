@@ -15,7 +15,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p7_kernel_main test_p7_trap_setup test_p7_trap_payload test_p7_musl_trap \
 	test_p8_paging test_p8_initramfs test_p8_trap_hw test_p8_kernel_boot \
 	test_p9_gdt test_p9_user_boot test_p10_dispatch_wiring test_p10_kernel_guest \
-	test_p11_musl_guest
+	test_p11_musl_guest test_p12_busybox_guest
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -25,6 +25,8 @@ INITRAMFS_CPIO := build/initramfs.cpio
 USER_PAYLOAD_ELF := build/user_payload.elf
 USER_PAYLOAD_BIN := guest/initramfs/user_payload.bin
 MUSL_INITRAMFS_ELF := guest/initramfs/musl_static.elf
+BUSYBOX_ROOTFS := guest/rootfs/bin/busybox
+BUSYBOX_INITRAMFS := guest/initramfs/bin/busybox
 TRAP_PAYLOAD_ELF := build/trap_payload.elf
 KERNEL_DIR := build/kernel
 KERNEL_BOOT_CFLAGS ?=
@@ -54,16 +56,17 @@ KERNEL_SYSMAIN_OBJS := $(addprefix $(KERNEL_DIR)/,fs_ofd.o blk_vol.o blk_persist
 	mount.o cred.o net_unix.o ipc_shm.o syscall_dispatch.o syscall.o process.o vmm.o \
 	guest_io.o elf_load.o thread.o tty.o)
 KERNEL_FREESTANDING_OBJS := $(KERNEL_DIR)/libc_stubs.o $(KERNEL_DIR)/exec_stubs.o \
-	$(KERNEL_DIR)/guest_kernel.o $(KERNEL_DIR)/elf_user_load.o
+	$(KERNEL_DIR)/guest_kernel.o $(KERNEL_DIR)/elf_user_load.o $(KERNEL_DIR)/ash_guest_boot.o
 
 KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/kernel_boot.o $(KERNEL_DIR)/paging.o $(KERNEL_DIR)/trap_setup.o \
 	$(KERNEL_DIR)/trap_hw.o $(KERNEL_DIR)/debugcon.o $(KERNEL_DIR)/initramfs.o \
 	$(KERNEL_DIR)/string.o $(KERNEL_SYSMAIN_OBJS) $(KERNEL_FREESTANDING_OBJS) \
 	$(KERNEL_DIR)/syscall_entry.o $(KERNEL_DIR)/gdt.o $(KERNEL_DIR)/user_boot.o \
-	$(KERNEL_DIR)/user_boot_ring3.o $(KERNEL_DIR)/syscall_insn_entry.o
+	$(KERNEL_DIR)/user_boot_ring3.o $(KERNEL_DIR)/ash_guest_tramp.o \
+	$(KERNEL_DIR)/syscall_insn_entry.o
 
-.PHONY: all host-tests clean musl-static boot-smoke kernel boot-trap-payload initramfs
+.PHONY: all host-tests clean musl-static busybox-guest boot-smoke kernel boot-trap-payload initramfs
 
 all: host-tests boot-smoke initramfs kernel boot-trap-payload
 
@@ -79,8 +82,11 @@ initramfs: $(INITRAMFS_CPIO)
 
 musl-static: $(MUSL_STATIC_ELF)
 
+busybox-guest: $(BUSYBOX_ROOTFS)
+
 $(INITRAMFS_CPIO): tools/build_initramfs.sh tools/build_initramfs.py \
-		guest/initramfs/hello.txt $(USER_PAYLOAD_BIN) $(MUSL_INITRAMFS_ELF)
+		guest/initramfs/hello.txt $(USER_PAYLOAD_BIN) $(MUSL_INITRAMFS_ELF) \
+		$(BUSYBOX_INITRAMFS)
 	mkdir -p build
 	bash tools/build_initramfs.sh
 
@@ -90,7 +96,15 @@ $(MUSL_INITRAMFS_ELF): $(MUSL_STATIC_ELF)
 
 $(USER_PAYLOAD_BIN): $(USER_PAYLOAD_ELF)
 	mkdir -p guest/initramfs
-	objcopy -O binary $< $@
+	objcopy -O binary $< "$@"
+
+$(BUSYBOX_ROOTFS): tools/build_guest_busybox.sh configs/busybox_m3.config \
+		third_party/BUSYBOX_VERSION
+	bash tools/build_guest_busybox.sh
+
+$(BUSYBOX_INITRAMFS): $(BUSYBOX_ROOTFS)
+	mkdir -p guest/initramfs/bin
+	cp "$<" "$@"
 
 $(USER_PAYLOAD_ELF): tools/user_payload/user_payload.S tools/user_payload/user_payload.ld
 	mkdir -p build
@@ -310,6 +324,9 @@ $(KERNEL_DIR)/kernel_boot.o: kernel/freestanding/kernel_boot.c | $(KERNEL_DIR)
 $(KERNEL_DIR)/elf_user_load.o: kernel/freestanding/elf_user_load.c | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
 
+$(KERNEL_DIR)/ash_guest_boot.o: kernel/freestanding/ash_guest_boot.c | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
 $(KERNEL_DIR)/libc_stubs.o: kernel/freestanding/libc_stubs.c | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
 
@@ -348,6 +365,13 @@ $(BUILD_DIR)/test_p11_musl_guest.o: tools/test_p11_musl_guest.c | $(BUILD_DIR)
 $(BUILD_DIR)/test_p11_musl_guest: $(BUILD_DIR)/test_p11_musl_guest.o | $(MUSL_INITRAMFS_ELF)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+$(BUILD_DIR)/test_p12_busybox_guest.o: tools/test_p12_busybox_guest.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -DBUSYBOX_ROOTFS_PATH=\"$(BUSYBOX_ROOTFS)\" \
+		-DBUSYBOX_INITRAMFS_PATH=\"$(BUSYBOX_INITRAMFS)\" -c $< -o $@
+
+$(BUILD_DIR)/test_p12_busybox_guest: $(BUILD_DIR)/test_p12_busybox_guest.o | $(BUSYBOX_INITRAMFS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
 
@@ -376,6 +400,9 @@ $(KERNEL_DIR)/user_boot.o: kernel/arch/x86_64/user_boot.c kernel/arch/x86_64/use
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
 
 $(KERNEL_DIR)/user_boot_ring3.o: kernel/arch/x86_64/user_boot_ring3.S | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
+
+$(KERNEL_DIR)/ash_guest_tramp.o: kernel/arch/x86_64/ash_guest_tramp.S | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
 $(KERNEL_DIR)/syscall_insn_entry.o: kernel/arch/x86_64/syscall_insn_entry.S | $(KERNEL_DIR)
