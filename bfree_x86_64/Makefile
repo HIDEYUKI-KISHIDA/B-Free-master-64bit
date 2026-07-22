@@ -13,13 +13,16 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p5_devnode test_p5_mount test_p5_cred test_p5_net_unix test_p5_ipc_shm test_p5_syscall_gate \
 	test_p6_syscall_invoke test_p6_trap_entry \
 	test_p7_kernel_main test_p7_trap_setup test_p7_trap_payload test_p7_musl_trap \
-	test_p8_paging test_p8_initramfs test_p8_trap_hw test_p8_kernel_boot
+	test_p8_paging test_p8_initramfs test_p8_trap_hw test_p8_kernel_boot \
+	test_p9_gdt test_p9_user_boot
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
 BOOT_SMOKE_ELF := build/boot_smoke.elf
 KERNEL_ELF := build/kernel.elf
 INITRAMFS_CPIO := build/initramfs.cpio
+USER_PAYLOAD_ELF := build/user_payload.elf
+USER_PAYLOAD_BIN := guest/initramfs/user_payload.bin
 TRAP_PAYLOAD_ELF := build/trap_payload.elf
 KERNEL_DIR := build/kernel
 
@@ -46,7 +49,9 @@ TRAP_PAYLOAD_OBJS := $(P6_OBJS) $(BUILD_DIR)/trap_setup.o
 KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/kernel_boot.o $(KERNEL_DIR)/paging.o $(KERNEL_DIR)/trap_setup.o \
 	$(KERNEL_DIR)/trap_hw.o $(KERNEL_DIR)/debugcon.o $(KERNEL_DIR)/initramfs.o \
-	$(KERNEL_DIR)/string.o $(KERNEL_DIR)/syscall_min.o $(KERNEL_DIR)/syscall_entry.o
+	$(KERNEL_DIR)/string.o $(KERNEL_DIR)/syscall_min.o $(KERNEL_DIR)/syscall_entry.o \
+	$(KERNEL_DIR)/gdt.o $(KERNEL_DIR)/user_boot.o $(KERNEL_DIR)/user_boot_ring3.o \
+	$(KERNEL_DIR)/syscall_insn_entry.o
 
 .PHONY: all host-tests clean musl-static boot-smoke kernel boot-trap-payload initramfs
 
@@ -64,9 +69,19 @@ initramfs: $(INITRAMFS_CPIO)
 
 musl-static: $(MUSL_STATIC_ELF)
 
-$(INITRAMFS_CPIO): tools/build_initramfs.sh tools/build_initramfs.py guest/initramfs/hello.txt
+$(INITRAMFS_CPIO): tools/build_initramfs.sh tools/build_initramfs.py \
+		guest/initramfs/hello.txt $(USER_PAYLOAD_BIN)
 	mkdir -p build
 	bash tools/build_initramfs.sh
+
+$(USER_PAYLOAD_BIN): $(USER_PAYLOAD_ELF)
+	mkdir -p guest/initramfs
+	objcopy -O binary $< $@
+
+$(USER_PAYLOAD_ELF): tools/user_payload/user_payload.S tools/user_payload/user_payload.ld
+	mkdir -p build
+	$(CC) $(FREESTANDING_CFLAGS) -nostdlib -static \
+		-Wl,-T,tools/user_payload/user_payload.ld -o $@ tools/user_payload/user_payload.S
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -245,6 +260,18 @@ $(BUILD_DIR)/test_p8_trap_hw.o: tools/test_p8_trap_hw.c kernel/arch/x86_64/trap_
 $(BUILD_DIR)/test_p8_kernel_boot.o: tools/test_p8_kernel_boot.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SYS_INC) -DINITRAMFS_CPIO_PATH=\"$(INITRAMFS_CPIO)\" -c $< -o $@
 
+$(BUILD_DIR)/test_p9_gdt.o: tools/test_p9_gdt.c kernel/arch/x86_64/gdt.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p9_user_boot.o: tools/test_p9_user_boot.c kernel/arch/x86_64/user_boot.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/gdt.o: kernel/arch/x86_64/gdt.c kernel/arch/x86_64/gdt.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/user_boot.o: kernel/arch/x86_64/user_boot.c kernel/arch/x86_64/user_boot.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
 $(BOOT_SMOKE_ELF): kernel/arch/x86_64/boot_smoke.S kernel/arch/x86_64/boot_smoke.ld
 	mkdir -p build
 	$(CC) $(CFLAGS) -nostdlib -static -fno-pie -fno-stack-protector \
@@ -290,6 +317,18 @@ $(KERNEL_DIR)/syscall_min.o: kernel/freestanding/syscall_min.c | $(KERNEL_DIR)
 $(KERNEL_DIR)/syscall_entry.o: kernel/arch/x86_64/syscall_entry.S | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
+$(KERNEL_DIR)/gdt.o: kernel/arch/x86_64/gdt.c kernel/arch/x86_64/gdt.h | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
+
+$(KERNEL_DIR)/user_boot.o: kernel/arch/x86_64/user_boot.c kernel/arch/x86_64/user_boot.h | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
+
+$(KERNEL_DIR)/user_boot_ring3.o: kernel/arch/x86_64/user_boot_ring3.S | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
+
+$(KERNEL_DIR)/syscall_insn_entry.o: kernel/arch/x86_64/syscall_insn_entry.S | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
+
 $(TRAP_PAYLOAD_ELF): tools/trap_payload/trap_payload.c $(TRAP_PAYLOAD_OBJS)
 	mkdir -p build
 	$(CC) $(CFLAGS) $(SYS_INC) -o $@ tools/trap_payload/trap_payload.c $(TRAP_PAYLOAD_OBJS) $(LDFLAGS)
@@ -328,6 +367,12 @@ $(BUILD_DIR)/test_p8_kernel_boot: $(BUILD_DIR)/test_p8_kernel_boot.o $(BUILD_DIR
 	$(CC) $(CFLAGS) $(BUILD_DIR)/test_p8_kernel_boot.o $(BUILD_DIR)/paging.o \
 		$(BUILD_DIR)/trap_setup.o $(BUILD_DIR)/trap_hw.o $(BUILD_DIR)/initramfs.o \
 		$(BUILD_DIR)/syscall_entry.o $(BUILD_DIR)/syscall_invoke_stub.o -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p9_gdt: $(BUILD_DIR)/test_p9_gdt.o $(BUILD_DIR)/gdt.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p9_user_boot: $(BUILD_DIR)/test_p9_user_boot.o $(BUILD_DIR)/user_boot.o
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(BUILD_DIR)/%: $(BUILD_DIR)/%.o $(COMMON_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)

@@ -72,6 +72,15 @@ run_test test_p8_initramfs
 run_test test_p8_trap_hw
 run_test test_p8_kernel_boot
 
+# M9 user boot (handoff — QEMU USER_BOOT_OK is next goal)
+run_test test_p9_gdt
+run_test test_p9_user_boot
+
+echo "== phase3_guest_auto: QEMU user boot smoke =="
+if ! "${ROOT}/tools/qemu_user_boot_smoke.sh"; then
+  FAIL=1
+fi
+
 echo "== phase3_guest_auto: QEMU kernel boot =="
 if ! "${ROOT}/tools/qemu_kernel_smoke.sh"; then
   FAIL=1

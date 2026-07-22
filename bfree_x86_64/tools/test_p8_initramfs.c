@@ -38,7 +38,7 @@ int main(void)
 	fclose(fp);
 
 	CHECK(bfree_initramfs_parse(buf, (size_t)sz) == 0, "parse");
-	CHECK(bfree_initramfs_file_count() == 1, "count");
+	CHECK(bfree_initramfs_file_count() >= 1, "count");
 	CHECK(bfree_initramfs_lookup("hello.txt", &data, &size) == 0, "lookup");
 	CHECK(size > 0, "size");
 	CHECK(memcmp(data, "hello", 5) == 0, "payload");

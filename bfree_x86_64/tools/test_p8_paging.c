@@ -22,7 +22,7 @@ int main(void)
 	CHECK(pg.pml4 != NULL && pg.pdpt != NULL && pg.pd != NULL, "tables");
 	CHECK((pg.pml4[0] & 1) != 0, "pml4 present");
 	CHECK((pg.pd[0] & (1ULL << 7)) != 0, "2M page");
-	CHECK(pg.pd[0] == 0x83ULL, "first 2M identity");
+	CHECK(pg.pd[0] == 0x87ULL, "first 2M identity+user");
 
 	rc = bfree_paging_install(&pg);
 	CHECK(rc == -2, "host install skipped");

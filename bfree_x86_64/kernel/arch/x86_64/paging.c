@@ -5,6 +5,7 @@
 
 #define PTE_PRESENT (1ULL << 0)
 #define PTE_WRITE   (1ULL << 1)
+#define PTE_USER    (1ULL << 2)
 #define PTE_PS      (1ULL << 7)
 #define PAGE_2M     (2UL * 1024UL * 1024UL)
 
@@ -36,7 +37,8 @@ void bfree_paging_build_identity(struct bfree_paging_state *st)
 	pml4[0] = (uint64_t)(uintptr_t)pdpt | PTE_PRESENT | PTE_WRITE;
 	pdpt[0] = (uint64_t)(uintptr_t)pd | PTE_PRESENT | PTE_WRITE;
 	for (i = 0; i < pages; i++)
-		pd[i] = (uint64_t)(i * PAGE_2M) | PTE_PRESENT | PTE_WRITE | PTE_PS;
+		pd[i] = (uint64_t)(i * PAGE_2M) | PTE_PRESENT | PTE_WRITE |
+			PTE_USER | PTE_PS;
 
 	st->pml4 = pml4;
 	st->pdpt = pdpt;
