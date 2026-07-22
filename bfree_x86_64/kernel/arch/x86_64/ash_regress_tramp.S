@@ -31,6 +31,6 @@ str1:
 str2:
 	.asciz "-c"
 str3:
-	.asciz "marker=parent; ( marker=subshell ); [ \"$marker\" = \"parent\" ] || exit 1; echo ASH_SUBSHELL_GUEST_OK; out=$(echo hello); [ \"$out\" = \"hello\" ] || exit 1; echo ASH_CMDSUBST_GUEST_OK"
+	.asciz "out=$(echo pipe-data | cat); [ \"$out\" = \"pipe-data\" ] || exit 1; echo ASH_PIPE_GUEST_OK; marker=parent; ( marker=subshell ); [ \"$marker\" = \"parent\" ] || exit 1; echo ASH_SUBSHELL_GUEST_OK; out=$(echo hello); [ \"$out\" = \"hello\" ] || exit 1; echo ASH_CMDSUBST_GUEST_OK; sleep 0 & wait; echo ASH_BG_GUEST_OK; /bin/true || exit 1; /bin/false && exit 1; echo ASH_EXTERNAL_GUEST_OK"
 
 ash_regress_tramp_end:

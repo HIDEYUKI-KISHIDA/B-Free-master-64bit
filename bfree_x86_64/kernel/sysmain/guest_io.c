@@ -4,16 +4,7 @@
 
 static int is_pipe_fd(struct bfree_proc_mgr *proc, int fd)
 {
-	int i;
-
-	for (i = 0; i < BFREE_MAX_PIPE; i++) {
-		if (!proc->pipes[i].in_use)
-			continue;
-		if (fd == proc->pipes[i].read_fd ||
-		    fd == proc->pipes[i].write_fd)
-			return 1;
-	}
-	return 0;
+	return bfree_pipe_is_fd(proc, fd);
 }
 
 void guest_io_init(struct guest_io *io, struct bfree_fs *fs,
@@ -79,7 +70,7 @@ int guest_dup2(struct guest_io *io, int oldfd, int newfd)
 	if (oldfd == newfd)
 		return newfd;
 	if (is_pipe_fd(io->proc, oldfd))
-		return -EBADF;
+		return bfree_pipe_dup2(io->proc, oldfd, newfd);
 	return bfree_dup2(io->fs, oldfd, newfd);
 }
 

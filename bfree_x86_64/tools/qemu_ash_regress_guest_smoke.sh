@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# P15_ASH_REGRESS_GUEST_QEMU — BusyBox ash subshell/cmdsubst on booted guest.
+# P16_ASH_REGRESS_GUEST_QEMU — full BusyBox ash regress on booted guest.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KERNEL="${ROOT}/build/kernel.elf"
 
 if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
-	echo "P15_ASH_REGRESS_GUEST_QEMU: SKIP (no qemu-system-x86_64)"
+	echo "P16_ASH_REGRESS_GUEST_QEMU: SKIP (no qemu-system-x86_64)"
 	exit 0
 fi
 
@@ -18,13 +18,16 @@ if [[ ! -f "${KERNEL}" ]]; then
 	exit 1
 fi
 
-out="$(timeout 10 qemu-system-x86_64 -kernel "${KERNEL}" -nographic \
+out="$(timeout 20 qemu-system-x86_64 -kernel "${KERNEL}" -nographic \
 	-device isa-debugcon,chardev=dbg -chardev stdio,id=dbg 2>/dev/null || true)"
-if [[ "${out}" == *"ASH_SUBSHELL_GUEST_OK"* &&
-      "${out}" == *"ASH_CMDSUBST_GUEST_OK"* ]]; then
-	echo "P15_ASH_REGRESS_GUEST_QEMU: PASS"
+if [[ "${out}" == *"ASH_PIPE_GUEST_OK"* &&
+      "${out}" == *"ASH_SUBSHELL_GUEST_OK"* &&
+      "${out}" == *"ASH_CMDSUBST_GUEST_OK"* &&
+      "${out}" == *"ASH_BG_GUEST_OK"* &&
+      "${out}" == *"ASH_EXTERNAL_GUEST_OK"* ]]; then
+	echo "P16_ASH_REGRESS_GUEST_QEMU: PASS"
 	exit 0
 fi
 
-echo "P15_ASH_REGRESS_GUEST_QEMU: FAIL (output: ${out})" >&2
+echo "P16_ASH_REGRESS_GUEST_QEMU: FAIL (output: ${out})" >&2
 exit 1

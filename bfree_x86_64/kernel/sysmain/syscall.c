@@ -297,6 +297,13 @@ int sys_ioctl(int fd, unsigned long req, void *arg)
 	return -EINVAL;
 }
 
+int sys_nanosleep(const void *req, void *rem)
+{
+	(void)req;
+	(void)rem;
+	return 0;
+}
+
 int sys_mount(const char *target, const char *source, const char *fstype,
 	      unsigned long flags, const void *data)
 {
@@ -473,6 +480,8 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_dup((int)a0);
 	case 33:
 		return sys_dup2((int)a0, (int)a1);
+	case 35:
+		return sys_nanosleep((const void *)a0, (void *)a1);
 	case 39:
 		return sys_getpid();
 	case 87:
