@@ -113,3 +113,14 @@ cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P12_BUSYBOX_GUEST
 ```
 
 See [docs/M12_BUSYBOX_GUEST.md](docs/M12_BUSYBOX_GUEST.md).
+
+### Guest LTP/POSIX on booted QEMU (M13)
+
+```bash
+git checkout cursor/m13-guest-ltp-posix-695c
+cd bfree_x86_64 && ./tools/phase3_guest_auto.sh  # P13_GUEST_REGRESS
+./tools/qemu_ltp_open_guest_smoke.sh             # LTP_OPEN_GUEST_OK (needs QEMU)
+./tools/qemu_posix_io_guest_smoke.sh             # POSIX_IO_GUEST_OK (needs QEMU)
+```
+
+See [docs/M13_GUEST_LTP_POSIX.md](docs/M13_GUEST_LTP_POSIX.md).

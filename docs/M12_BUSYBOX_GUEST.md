@@ -35,8 +35,8 @@ cd bfree_x86_64
 ./tools/qemu_busybox_guest_smoke.sh     # P12 ASH_GUEST_OK (busybox-preferred kernel)
 ```
 
-## Residual (M13+)
+## Residual (M14+)
 
-- Guest LTP / POSIX regression migration on booted QEMU
+- Additional guest LTP/POSIX probe migration (M13 partial)
 - `stat` / `poll` / `fstatat` for fuller libc and ash coverage
 - `execve` from guest VFS without kernel hand-boot

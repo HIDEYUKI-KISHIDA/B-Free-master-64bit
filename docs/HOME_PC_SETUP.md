@@ -24,26 +24,27 @@ Install QEMU if missing:
 - **macOS:** `brew install qemu`
 - **Windows:** QEMU for Windows + WSL optional for build
 
-## Continue M12 (on branch `cursor/m12-busybox-guest-695c`)
+## Continue M13 (on branch `cursor/m13-guest-ltp-posix-695c`)
 
 ```bash
 git fetch origin
-git checkout cursor/m12-busybox-guest-695c
+git checkout cursor/m13-guest-ltp-posix-695c
 cd bfree_x86_64
 bash tools/setup_home_dev.sh
 ./tools/phase3_guest_auto.sh
-./tools/qemu_musl_guest_smoke.sh
-./tools/qemu_busybox_guest_smoke.sh
+./tools/qemu_ltp_open_guest_smoke.sh
+./tools/qemu_posix_io_guest_smoke.sh
 ```
 
-See [docs/M12_BUSYBOX_GUEST.md](M12_BUSYBOX_GUEST.md).
+See [docs/M13_GUEST_LTP_POSIX.md](M13_GUEST_LTP_POSIX.md).
 
 ## Cursor prompt
 
 ```
-Branch cursor/m12-busybox-guest-695c — M12 BusyBox-on-guest is implemented.
-Run setup_home_dev.sh, phase3_guest_auto.sh, qemu_busybox_guest_smoke.sh.
-Continue M13 guest LTP/POSIX per docs/M12_BUSYBOX_GUEST.md.
+Branch cursor/m13-guest-ltp-posix-695c — M13 guest LTP/POSIX probes are implemented.
+Run setup_home_dev.sh, phase3_guest_auto.sh, qemu_ltp_open_guest_smoke.sh,
+qemu_posix_io_guest_smoke.sh.
+Continue M14 stat/poll/fstatat per docs/M13_GUEST_LTP_POSIX.md.
 Arch: x86_64 (bfree_x86_64).
 ```
 

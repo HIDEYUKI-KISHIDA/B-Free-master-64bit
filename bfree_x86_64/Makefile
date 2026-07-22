@@ -15,7 +15,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p7_kernel_main test_p7_trap_setup test_p7_trap_payload test_p7_musl_trap \
 	test_p8_paging test_p8_initramfs test_p8_trap_hw test_p8_kernel_boot \
 	test_p9_gdt test_p9_user_boot test_p10_dispatch_wiring test_p10_kernel_guest \
-	test_p11_musl_guest test_p12_busybox_guest
+	test_p11_musl_guest test_p12_busybox_guest test_p13_guest_regress
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -27,6 +27,10 @@ USER_PAYLOAD_BIN := guest/initramfs/user_payload.bin
 MUSL_INITRAMFS_ELF := guest/initramfs/musl_static.elf
 BUSYBOX_ROOTFS := guest/rootfs/bin/busybox
 BUSYBOX_INITRAMFS := guest/initramfs/bin/busybox
+LTP_OPEN_GUEST_ELF := $(BUILD_DIR)/ltp_open_guest.elf
+POSIX_IO_GUEST_ELF := $(BUILD_DIR)/posix_io_guest.elf
+LTP_OPEN_INITRAMFS := guest/initramfs/ltp_open_guest.elf
+POSIX_IO_INITRAMFS := guest/initramfs/posix_io_guest.elf
 TRAP_PAYLOAD_ELF := build/trap_payload.elf
 KERNEL_DIR := build/kernel
 KERNEL_BOOT_CFLAGS ?=
@@ -66,7 +70,7 @@ KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/user_boot_ring3.o $(KERNEL_DIR)/ash_guest_tramp.o \
 	$(KERNEL_DIR)/syscall_insn_entry.o
 
-.PHONY: all host-tests clean musl-static busybox-guest boot-smoke kernel boot-trap-payload initramfs
+.PHONY: all host-tests clean musl-static busybox-guest guest-regress boot-smoke kernel boot-trap-payload initramfs
 
 all: host-tests boot-smoke initramfs kernel boot-trap-payload
 
@@ -84,9 +88,11 @@ musl-static: $(MUSL_STATIC_ELF)
 
 busybox-guest: $(BUSYBOX_ROOTFS)
 
+guest-regress: $(LTP_OPEN_GUEST_ELF) $(POSIX_IO_GUEST_ELF)
+
 $(INITRAMFS_CPIO): tools/build_initramfs.sh tools/build_initramfs.py \
 		guest/initramfs/hello.txt $(USER_PAYLOAD_BIN) $(MUSL_INITRAMFS_ELF) \
-		$(BUSYBOX_INITRAMFS)
+		$(BUSYBOX_INITRAMFS) $(LTP_OPEN_INITRAMFS) $(POSIX_IO_INITRAMFS)
 	mkdir -p build
 	bash tools/build_initramfs.sh
 
@@ -104,6 +110,19 @@ $(BUSYBOX_ROOTFS): tools/build_guest_busybox.sh configs/busybox_m3.config \
 
 $(BUSYBOX_INITRAMFS): $(BUSYBOX_ROOTFS)
 	mkdir -p guest/initramfs/bin
+	cp "$<" "$@"
+
+$(LTP_OPEN_GUEST_ELF) $(POSIX_IO_GUEST_ELF): tools/build_guest_regress.sh \
+		tools/guest_regress/ltp_open_guest.S tools/guest_regress/posix_io_guest.S \
+		tools/guest_regress/guest_regress.ld | $(BUILD_DIR)
+	bash tools/build_guest_regress.sh
+
+$(LTP_OPEN_INITRAMFS): $(LTP_OPEN_GUEST_ELF)
+	mkdir -p guest/initramfs
+	cp "$<" "$@"
+
+$(POSIX_IO_INITRAMFS): $(POSIX_IO_GUEST_ELF)
+	mkdir -p guest/initramfs
 	cp "$<" "$@"
 
 $(USER_PAYLOAD_ELF): tools/user_payload/user_payload.S tools/user_payload/user_payload.ld
@@ -370,6 +389,18 @@ $(BUILD_DIR)/test_p12_busybox_guest.o: tools/test_p12_busybox_guest.c | $(BUILD_
 		-DBUSYBOX_INITRAMFS_PATH=\"$(BUSYBOX_INITRAMFS)\" -c $< -o $@
 
 $(BUILD_DIR)/test_p12_busybox_guest: $(BUILD_DIR)/test_p12_busybox_guest.o | $(BUSYBOX_INITRAMFS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p13_guest_regress.o: tools/test_p13_guest_regress.c | $(BUILD_DIR)
+	$(CC) $(CFLAGS) \
+		-DLTP_OPEN_BUILT_PATH=\"$(LTP_OPEN_GUEST_ELF)\" \
+		-DLTP_OPEN_STAGED_PATH=\"$(LTP_OPEN_INITRAMFS)\" \
+		-DPOSIX_IO_BUILT_PATH=\"$(POSIX_IO_GUEST_ELF)\" \
+		-DPOSIX_IO_STAGED_PATH=\"$(POSIX_IO_INITRAMFS)\" \
+		-c $< -o $@
+
+$(BUILD_DIR)/test_p13_guest_regress: $(BUILD_DIR)/test_p13_guest_regress.o \
+		| $(LTP_OPEN_INITRAMFS) $(POSIX_IO_INITRAMFS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
