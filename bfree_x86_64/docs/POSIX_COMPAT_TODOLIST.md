@@ -119,6 +119,7 @@ P3  [x] musl hello MUSL_HELLO_OK (2026-07-22)
 P3  [x] H20 futex waiter queue (E2, 2026-07-22)
 P4  [x] Phase7 agreed scope green (2026-07-22)
 F1  [x] ATA PIO + /persist BFP1 reboot green (_f1_persist_smoke.sh, 2026-07-22)
-F2  [x] UDP loopback + e1000 sendto TX (_f2_e1000_udp_smoke.sh, 2026-07-22)
+F2  [x] UDP loopback + e1000 TX/RX echo (_f2_e1000_udp_smoke.sh / _f2_e1000_udp_rx_smoke.sh, 2026-07-22)
+F2b [x] pthread→CLONE_THREAD wrap + _pthread_clone_smoke.sh PASS; desktop.elf relinked (relink_desktop_compat.sh)
 F3  [x] LTP curated subset in-tree
 ```

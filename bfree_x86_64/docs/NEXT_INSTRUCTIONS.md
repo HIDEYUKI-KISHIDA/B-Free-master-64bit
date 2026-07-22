@@ -12,13 +12,13 @@
 ## 指示
 
 本線: `work/posix-holes-redo`。Polish→Phase7。
-進捗 2026-07-22: E1–E3 / F1 / **F2 e1000 TX** / F3 green。
+進捗 2026-07-22: E1–E3 / F1 / **F2 e1000 TX+RX echo** / F3 green。
 
 ## 現在の状態（エージェントが更新）
 
 - **Updated:** 2026-07-22
 - F1: ATA PIO + `/persist` BFP1 — `_f1_persist_smoke.sh`
-- F2: loopback + e1000 `sendto`→`udp_send` — `_f2_e1000_udp_smoke.sh` → `F2_E1000_TX_OK`
+- F2: loopback + e1000 TX (`_f2_e1000_udp_smoke.sh`) + **RX/echo** (`_f2_e1000_udp_rx_smoke.sh` → hostfwd PING/PONG)
 - F3: LTP curated subset
-- gthr wait/wake PASS（カーネル差分に含む）
-- 次: RX echo / slirp 外向き、または desktop.elf 本線
+- gthr wait/wake PASS；**pthread→clone** wrap；smoke `_pthread_clone_smoke.sh`；**desktop.elf relink + 起動で `[wrap] pthread_create clone` 確認**（`_desktop_pthread_clone_smoke.sh`）
+- 次: slirp 外向き TCP / desktop 本線回帰

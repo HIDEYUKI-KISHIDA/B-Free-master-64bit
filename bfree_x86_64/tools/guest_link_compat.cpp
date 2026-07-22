@@ -22,7 +22,6 @@
 #include <poll.h>
 #include <sys/epoll.h>
 #include <sched.h>
-#include <chrono>
 #include <time.h>
 #include <sys/time.h>
 #include <unwind.h>
@@ -526,11 +525,16 @@ extern "C" const char *BrotliDecoderErrorString(int code)
     return "brotli-stub";
 }
 
-/* libstdc++ futex TU may be omitted from the guest archive; match Qt/libstdc++ ABI. */
+/* libstdc++ futex TU may be omitted from the guest archive; match Qt/libstdc++ ABI.
+ * Avoid <chrono> so this TU builds without a full x86_64-elf libstdc++ header tree. */
 namespace std {
 namespace __atomic_futex_unsigned_base {
-using __futex_sec = std::chrono::duration<long, std::ratio<1>>;
-using __futex_nsec = std::chrono::duration<long, std::ratio<1, 1000000000>>;
+struct __futex_sec {
+    long __v;
+};
+struct __futex_nsec {
+    long __v;
+};
 
 unsigned _M_futex_wait_until(unsigned *__addr, unsigned __val, bool __has_timeout, __futex_sec __s,
                              __futex_nsec __ns)
@@ -558,8 +562,9 @@ extern "C" int pthread_cond_clockwait(pthread_cond_t *cond, pthread_mutex_t *mut
     return __wrap_pthread_cond_timedwait(cond, mutex, abstime);
 }
 
-/* musl pthread_create may use clone(2), which B-Free does not implement. */
+/* pthread_create: prefer kernel CLONE_THREAD (gthr); coop queue is fallback. */
 #define BFREE_PTHREAD_SLOTS 8
+#define BFREE_PTHREAD_STACK_BYTES (64 * 1024)
 
 struct bfree_pthread_slot {
     pthread_t id;
@@ -568,7 +573,15 @@ struct bfree_pthread_slot {
     void *result;
     int joined;
     int coop_alive;
+    int use_clone;          /* 1 = real gthr clone path */
+    volatile int done;      /* set by child before exit */
+    volatile int gate;      /* 0=wait, 1=run fn (handshake so create returns) */
+    int gate_efd;
 };
+
+static uint8_t g_pthread_stacks[BFREE_PTHREAD_SLOTS][BFREE_PTHREAD_STACK_BYTES]
+    __attribute__((aligned(16)));
+static volatile struct bfree_pthread_slot *g_pthread_clone_boot;
 
 /* musl treats pthread_t as struct __pthread*; integer ids fault in pthread_getattr_np. */
 struct bfree_guest_pthread_obj {
@@ -1009,6 +1022,131 @@ static void bfree_guest_coop_pump_main_on_exec(void)
 
 static unsigned g_wrap_pthread_create_diag;
 
+#define BFREE_SYS_clone 56
+#define BFREE_SYS_exit 60
+#define BFREE_SYS_futex 202
+#define BFREE_SYS_ppoll 271
+#define BFREE_SYS_eventfd2 290
+#define BFREE_CLONE_VM 0x00000100UL
+#define BFREE_CLONE_FILES 0x00000400UL
+#define BFREE_CLONE_SIGHAND 0x00000800UL
+#define BFREE_CLONE_THREAD 0x00010000UL
+#define BFREE_FUTEX_WAIT 0
+#define BFREE_FUTEX_WAKE 1
+
+static long bfree_pthread_sys6(long n, long a, long b, long c, long d, long e, long f)
+{
+    long r;
+    register long r10 __asm__("r10") = d;
+    register long r8 __asm__("r8") = e;
+    register long r9 __asm__("r9") = f;
+    __asm__ volatile("syscall"
+                     : "=a"(r)
+                     : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
+                     : "rcx", "r11", "memory");
+    return r;
+}
+
+static void __attribute__((noreturn)) bfree_pthread_clone_child(void)
+{
+    struct bfree_pthread_slot *slot = (struct bfree_pthread_slot *)g_pthread_clone_boot;
+    void *(*fn)(void *);
+    void *arg;
+    struct pollfd pfd;
+
+    if (!slot) {
+        bfree_pthread_sys6(BFREE_SYS_exit, 1, 0, 0, 0, 0, 0);
+        for (;;)
+            __asm__ volatile("pause");
+    }
+    /* Park once so parent can return from clone/create, then run start_routine. */
+    if (slot->gate_efd >= 0) {
+        pfd.fd = slot->gate_efd;
+        pfd.events = POLLIN;
+        pfd.revents = 0;
+        (void)bfree_pthread_sys6(BFREE_SYS_ppoll, (long)&pfd, 1, 0, 0, 0, 0);
+    } else {
+        while (slot->gate == 0) {
+            (void)bfree_pthread_sys6(BFREE_SYS_futex, (long)&slot->gate, BFREE_FUTEX_WAIT, 0, 0, 0, 0);
+        }
+    }
+    fn = slot->fn;
+    arg = slot->arg;
+    if (fn)
+        slot->result = fn(arg);
+    slot->fn = 0;
+    slot->done = 1;
+    (void)bfree_pthread_sys6(BFREE_SYS_futex, (long)&slot->done, BFREE_FUTEX_WAKE, 1, 0, 0, 0);
+    bfree_pthread_sys6(BFREE_SYS_exit, 0, 0, 0, 0, 0, 0);
+    for (;;)
+        __asm__ volatile("pause");
+}
+
+static long bfree_pthread_clone_thread(void *child_sp, void *child_fn)
+{
+    long ret;
+    unsigned long flags = BFREE_CLONE_VM | BFREE_CLONE_FILES | BFREE_CLONE_SIGHAND | BFREE_CLONE_THREAD;
+
+    __asm__ volatile(
+        "mov %[flags], %%rdi\n\t"
+        "mov %[stack], %%rsi\n\t"
+        "mov %[fn], %%r9\n\t"
+        "mov $56, %%rax\n\t"
+        "xor %%rdx, %%rdx\n\t"
+        "xor %%r10, %%r10\n\t"
+        "xor %%r8, %%r8\n\t"
+        "syscall\n\t"
+        "test %%rax, %%rax\n\t"
+        "jnz 1f\n\t"
+        "xor %%rbp, %%rbp\n\t"
+        "jmp *%%r9\n\t"
+        "1:\n\t"
+        : "=a"(ret)
+        : [flags] "r"(flags), [stack] "r"(child_sp), [fn] "r"(child_fn)
+        : "rdi", "rsi", "rdx", "r10", "r8", "r9", "rcx", "r11", "memory");
+    return ret;
+}
+
+static int bfree_pthread_create_clone(struct bfree_pthread_slot *slot, int slot_i,
+                                      pthread_t *thread, void *(*start_routine)(void *), void *arg)
+{
+    void *sp;
+    long tid;
+    uint64_t one = 1;
+
+    slot->id = (pthread_t)(uintptr_t)&g_pthread_worker_objs[slot_i];
+    slot->arg = arg;
+    slot->result = 0;
+    slot->joined = 0;
+    slot->coop_alive = 0;
+    slot->use_clone = 1;
+    slot->done = 0;
+    slot->gate = 0;
+    slot->fn = start_routine;
+    slot->gate_efd = (int)bfree_pthread_sys6(BFREE_SYS_eventfd2, 0, 0, 0, 0, 0, 0);
+    g_pthread_clone_boot = slot;
+    sp = g_pthread_stacks[slot_i] + BFREE_PTHREAD_STACK_BYTES;
+    sp = (void *)(((uintptr_t)sp) & ~(uintptr_t)0xFULL);
+    tid = bfree_pthread_clone_thread(sp, (void *)bfree_pthread_clone_child);
+    if (tid < 0) {
+        slot->fn = 0;
+        slot->use_clone = 0;
+        slot->gate_efd = -1;
+        g_pthread_clone_boot = 0;
+        return -1;
+    }
+    /* Child is parked on gate; release it to run start_routine. */
+    if (slot->gate_efd >= 0) {
+        (void)bfree_pthread_sys6(1 /* write */, slot->gate_efd, (long)&one, 8, 0, 0, 0);
+    } else {
+        slot->gate = 1;
+        (void)bfree_pthread_sys6(BFREE_SYS_futex, (long)&slot->gate, BFREE_FUTEX_WAKE, 1, 0, 0, 0);
+    }
+    if (thread)
+        *thread = slot->id;
+    return 0;
+}
+
 extern "C" int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                               void *(*start_routine)(void *), void *arg)
 {
@@ -1022,47 +1160,75 @@ extern "C" int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *at
         bfree_guest_qv4_trace_tag("pthread_create");
     for (int i = 0; i < BFREE_PTHREAD_SLOTS; ++i) {
         struct bfree_pthread_slot *slot = &g_pthread_slots[i];
-        if (slot->fn == 0) {
+        if (slot->fn == 0 && !slot->use_clone && !slot->coop_alive) {
+            if (bfree_pthread_create_clone(slot, i, thread, start_routine, arg) == 0) {
+                if (g_wrap_pthread_create_diag <= 6u)
+                    bfree_guest_serial_lit("[wrap] pthread_create clone\n");
+                return 0;
+            }
+            /* Fall back to cooperative queue. */
             pthread_t id = (pthread_t)(uintptr_t)&g_pthread_worker_objs[i];
             slot->id = id;
             slot->arg = arg;
             slot->result = 0;
             slot->joined = 0;
             slot->coop_alive = 0;
-            if (thread) {
+            slot->use_clone = 0;
+            slot->done = 0;
+            if (thread)
                 *thread = id;
-            }
             slot->fn = start_routine;
-            slot->joined = 0;
+            if (g_wrap_pthread_create_diag <= 6u)
+                bfree_guest_serial_lit("[wrap] pthread_create coop\n");
             return 0;
         }
     }
     return EAGAIN;
 }
 
-extern "C" int pthread_join(pthread_t thread, void **retval)
+extern "C" int __wrap_pthread_join(pthread_t thread, void **retval)
 {
     for (int i = 0; i < BFREE_PTHREAD_SLOTS; ++i) {
         struct bfree_pthread_slot *slot = &g_pthread_slots[i];
-        if (slot->id != thread) {
+        if (slot->id != thread)
             continue;
+        if (slot->use_clone) {
+            while (!slot->done) {
+                (void)bfree_pthread_sys6(BFREE_SYS_futex, (long)&slot->done, BFREE_FUTEX_WAIT, 0, 0, 0, 0);
+            }
+            if (retval)
+                *retval = slot->result;
+            if (slot->gate_efd >= 0) {
+                (void)bfree_pthread_sys6(3 /* close */, slot->gate_efd, 0, 0, 0, 0, 0);
+                slot->gate_efd = -1;
+            }
+            slot->id = 0;
+            slot->use_clone = 0;
+            slot->done = 0;
+            slot->result = 0;
+            slot->joined = 0;
+            return 0;
         }
         if (slot->fn != 0) {
             slot->result = slot->fn(slot->arg);
             slot->fn = 0;
         }
-        if (retval) {
+        if (retval)
             *retval = slot->result;
-        }
         slot->id = 0;
         slot->joined = 0;
+        slot->coop_alive = 0;
         slot->result = 0;
         return 0;
     }
-    if (retval) {
+    if (retval)
         *retval = 0;
-    }
     return 0;
+}
+
+extern "C" int pthread_join(pthread_t thread, void **retval)
+{
+    return __wrap_pthread_join(thread, retval);
 }
 
 /* Static Qt: plugins disabled; satisfy linker if Core still references dl* symbols. */
@@ -1258,6 +1424,8 @@ static void bfree_pthread_run_pending(void)
         uintptr_t exec_rsp;
         uintptr_t cur_rsp;
 
+        if (slot->use_clone)
+            continue; /* kernel gthr owns this slot */
         if (slot->coop_alive) {
             bfree_guest_coop_pump_thread_on_exec(slot->arg);
             continue;

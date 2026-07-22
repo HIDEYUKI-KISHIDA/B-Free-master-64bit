@@ -11057,7 +11057,8 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
         if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
             return -14;
         }
-        for (spins = 0; s->dg_count == 0 && spins < 64; ++spins) {
+        /* F2 RX: drain e1000 longer — hostfwd packets often arrive between calls. */
+        for (spins = 0; s->dg_count == 0 && spins < 4096; ++spins) {
             net_runtime_poll();
         }
         if (s->dg_count == 0) {

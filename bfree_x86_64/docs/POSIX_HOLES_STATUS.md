@@ -17,7 +17,7 @@
 - [x] **E2** futex 4-slot waiter queue + cleartid wake
 - [x] **E3** nestable `preempt_disable`（timer preempt は未）
 - [x] **F1** ATA PIO + `/persist` ディスク永続化 — **再起動をまたいで green**（`tools/_f1_persist_smoke.sh`）
-- [x] **F2** UDP loopback + **e1000 TX**（`sendto`→`udp_send` / bind→`udp_register_port`；`tools/_f2_e1000_udp_smoke.sh`）
+- [x] **F2** UDP loopback + **e1000 TX/RX echo**（`_f2_e1000_udp_smoke.sh` / `_f2_e1000_udp_rx_smoke.sh`）
 - [x] **F3** LTP curated subset（`userland/ltp_curated/` 13 testcases, LTP 形式 TPASS/TFAIL）
 - [x] **A** ENOSYS appearance tracer（`[ENOSYS] nr=…` UART + histogram）
 - [x] **B** UDP DNS stub → `10.0.2.3:53` answered from `/etc/hosts`
@@ -25,15 +25,17 @@
 - [x] **D** sigframe `fxsave` blob + nested CATCH queue（1）
 - [x] **E** `/persist`+`/home` getdents、`ls /` に persist、`/tmp` NS 汚染除外
 - [x] **F** BusyBox curated +17 applets（tee/mktemp/nslookup/sha256sum/…）
+- [x] **gthr / pthread→clone** wrap（`guest_link_compat`；`_pthread_clone_smoke.sh` PASS；**desktop.elf relink済み**）
 
 ## Phase7 残り
 
 | 済み | 残り |
 |------|------|
 | `/persist` 実ディスク永続（ATA PIO + BFP1 レコード） | tiny FAT/ext2 での本マウント |
-| UDP loopback + e1000 DGRAM TX（`_f2_e1000_udp_smoke.sh`） | slirp 外向き TCP / 本格 RX echo |
+| UDP loopback + e1000 DGRAM TX/RX echo（hostfwd PING/PONG） | slirp 外向き TCP |
 | LTP curated 13 cases in-tree | full LTP vendor（任意） |
 | ENOSYS tracer（出現ログ） | 残 ENOSYS ゼロ化 / 本プリエンプト |
+| pthread clone wrap + freestanding smoke + **desktop.elf relink** | desktop 実機で clone 経路の回帰 |
 
 ## Git
 

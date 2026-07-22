@@ -7,6 +7,7 @@ cd "$ROOT"
 export PATH="${HOME}/x86_64-elf-toolchain/bin:/usr/bin:/bin:${PATH:-}"
 CC="${BFREE_ELF_CC:-$(command -v x86_64-elf-gcc)}"
 
+touch kernel/sysmain/main.c
 make -C kernel ENABLE_RUNTIME_NET=1 -j4 2>&1 | tail -8
 
 cat > /tmp/bfree_f2_udp.c <<'EOF'
