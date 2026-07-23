@@ -75,7 +75,7 @@ typedef struct {
     uint64_t addr;
     uint16_t length;
     uint16_t checksum;
-    uint8_t status;
+    volatile uint8_t status;
     uint8_t errors;
     uint16_t special;
 } __attribute__((packed)) e1000_rx_desc_t;
@@ -405,6 +405,48 @@ static int e1000_send_packet(const void *buf, unsigned int len)
     return -1;
 }
 
+void netdrv_rx_kick(void)
+{
+    uint32_t rdt;
+    if (!e1000_runtime.active)
+        return;
+    /* QEMU e1000: set_rdt flushes queued packets when ring has space. */
+    rdt = e1000_read_reg(E1000_RDT);
+    e1000_write_reg(E1000_RDT, rdt);
+}
+
+void netdrv_debug_rx_ring(void)
+{
+    uint32_t i;
+    if (!e1000_runtime.active)
+        return;
+    uart_puts("[NETDRV] RDH=");
+    uart_puthex64((uint64_t)e1000_read_reg(E1000_RDH));
+    uart_puts(" RDT=");
+    uart_puthex64((uint64_t)e1000_read_reg(E1000_RDT));
+    uart_puts(" idx=");
+    uart_puthex64((uint64_t)e1000_runtime.rx_index);
+    uart_puts("\n");
+    for (i = 0; i < E1000_DESC_COUNT; ++i) {
+        uart_puts("[NETDRV] rxdesc ");
+        uart_puthex64((uint64_t)i);
+        uart_puts(" st=");
+        uart_puthex64((uint64_t)e1000_runtime.rx_descs[i].status);
+        uart_puts(" len=");
+        uart_puthex64((uint64_t)e1000_runtime.rx_descs[i].length);
+        uart_puts(" addr=");
+        uart_puthex64((uint64_t)e1000_runtime.rx_descs[i].addr);
+        uart_puts("\n");
+    }
+    uart_puts("[NETDRV] RCTL=");
+    uart_puthex64((uint64_t)e1000_read_reg(E1000_RCTL));
+    uart_puts(" STATUS=");
+    uart_puthex64((uint64_t)e1000_read_reg(E1000_STATUS));
+    uart_puts(" RDBAL=");
+    uart_puthex64((uint64_t)e1000_read_reg(E1000_RDBAL));
+    uart_puts("\n");
+}
+
 static int e1000_recv_packet(void *buf, unsigned int maxlen)
 {
     e1000_rx_desc_t *desc;
@@ -416,6 +458,7 @@ static int e1000_recv_packet(void *buf, unsigned int maxlen)
         return -1;
 
     desc = &e1000_runtime.rx_descs[index];
+    __sync_synchronize();
     if ((desc->status & E1000_RX_STATUS_DD) == 0)
         return 0;
 

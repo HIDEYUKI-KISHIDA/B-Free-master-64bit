@@ -64,6 +64,7 @@ BFREE_ENFORCE_WX ?= 0
 BFREE_ENABLE_ASLR ?= 0
 BFREE_BOOT_GUI_FIRST ?= 0
 BFREE_WAYLAND_INPUT_STRICT ?= 0
+BFREE_PERSIST_FAT_PROBE ?= 0
 
 ifeq ($(RELEASE),1)
 BFREE_ENFORCE_WX ?= 1
@@ -76,6 +77,7 @@ CFLAGS += -DBFREE_ENFORCE_WX=$(BFREE_ENFORCE_WX)
 CFLAGS += -DBFREE_ENABLE_ASLR=$(BFREE_ENABLE_ASLR)
 CFLAGS += -DBFREE_BOOT_GUI_FIRST=$(BFREE_BOOT_GUI_FIRST)
 CFLAGS += -DBFREE_WAYLAND_INPUT_STRICT=$(BFREE_WAYLAND_INPUT_STRICT)
+CFLAGS += -DBFREE_PERSIST_FAT_PROBE=$(BFREE_PERSIST_FAT_PROBE)
 CFLAGS += -DDEBUG=$(DEBUG) -DRELEASE=$(RELEASE)
 
 USER_HELLO_DIR := ../userland/embedded
@@ -99,7 +101,7 @@ SRCS := $(wildcard sysmain/*.c) \
 ifeq ($(ENABLE_RUNTIME_NET),1)
 # Guest LAN stack lives one tree above Program/ (B-Free-master/kernel).
 BFREE_NET_ROOT := $(abspath $(CURDIR)/../../../kernel)
-SRCS += netdrv_runtime.c devnet0_runtime.c net_runtime.c
+SRCS += netdrv_runtime.c devnet0_runtime.c net_runtime.c net_tcp_min.c
 SRCS += $(BFREE_NET_ROOT)/net_udp.c $(BFREE_NET_ROOT)/net_ipv4.c \
         $(BFREE_NET_ROOT)/net_arp.c $(BFREE_NET_ROOT)/net_icmp.c
 CFLAGS += -I$(BFREE_NET_ROOT) -I$(abspath $(CURDIR)/../../x86_64/kernel)

@@ -1,7 +1,7 @@
 # POSIX holes — mobile status
 
 **Branch:** `work/posix-holes-redo`  
-**Updated:** 2026-07-22 (A–F compat thicken)  
+**Updated:** 2026-07-23 (F2 TCP + FAT probe scaffold)  
 **Full TODOLIST:** [POSIX_COMPAT_TODOLIST.md](./POSIX_COMPAT_TODOLIST.md)  
 **P4 scope:** [POSIX_PHASE7_AGREED_SCOPE.md](./POSIX_PHASE7_AGREED_SCOPE.md)  
 **📱 指示はこちら:** [NEXT_INSTRUCTIONS.md](./NEXT_INSTRUCTIONS.md)
@@ -17,7 +17,9 @@
 - [x] **E2** futex 4-slot waiter queue + cleartid wake
 - [x] **E3** nestable `preempt_disable`（timer preempt は未）
 - [x] **F1** ATA PIO + `/persist` ディスク永続化 — **再起動をまたいで green**（`tools/_f1_persist_smoke.sh`）
+- [x] **F1b** FAT BPB probe scaffold（`BFREE_PERSIST_FAT_PROBE=1`；`_f1_persist_fat_probe_smoke.sh`）— mount は未
 - [x] **F2** UDP loopback + **e1000 TX/RX echo**（`_f2_e1000_udp_smoke.sh` / `_f2_e1000_udp_rx_smoke.sh`）
+- [x] **F2c** slirp **外向き TCP** active-open（`_f2_e1000_tcp_smoke.sh` → CONNECT_OK / F2_E1000_TCP_OK）
 - [x] **F3** LTP curated subset（`userland/ltp_curated/` 13 testcases, LTP 形式 TPASS/TFAIL）
 - [x] **A** ENOSYS appearance tracer（`[ENOSYS] nr=…` UART + histogram）
 - [x] **B** UDP DNS stub → `10.0.2.3:53` answered from `/etc/hosts`
@@ -31,8 +33,8 @@
 
 | 済み | 残り |
 |------|------|
-| `/persist` 実ディスク永続（ATA PIO + BFP1 レコード） | tiny FAT/ext2 での本マウント |
-| UDP loopback + e1000 DGRAM TX/RX echo（hostfwd PING/PONG） | slirp 外向き TCP |
+| `/persist` 実ディスク永続（ATA PIO + BFP1）+ FAT BPB probe | tiny FAT/ext2 での本マウント |
+| UDP + e1000 DGRAM TX/RX + **外向き TCP** | listen/accept / 本スタック統合 |
 | LTP curated 13 cases in-tree | full LTP vendor（任意） |
 | ENOSYS tracer（出現ログ） | 残 ENOSYS ゼロ化 / 本プリエンプト |
 | pthread clone wrap + freestanding smoke + **desktop.elf relink** | desktop 実機で clone 経路の回帰 |

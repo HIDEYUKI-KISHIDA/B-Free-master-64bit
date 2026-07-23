@@ -158,6 +158,11 @@ extern int udp_send(uint32_t dst_ip, uint16_t dst_port, uint16_t src_port,
 extern void udp_register_port(uint16_t port, void (*cb)(uint32_t, uint16_t, const uint8_t *, size_t));
 extern void udp_unregister_port(uint16_t port);
 extern void net_runtime_poll(void);
+extern int tcp_min_connect(uint32_t dst_ip, uint16_t dst_port, uint16_t src_port);
+extern int tcp_min_pump(int pcb);
+extern int tcp_min_send(int pcb, const uint8_t *data, size_t len);
+extern int tcp_min_recv(int pcb, uint8_t *buf, size_t len);
+extern void tcp_min_close(int pcb);
 
 /* Weak stubs when ENABLE_RUNTIME_NET=0 (no e1000 / udp objects linked). */
 __attribute__((weak)) int udp_send(uint32_t dst_ip, uint16_t dst_port, uint16_t src_port,
@@ -178,6 +183,30 @@ __attribute__((weak)) void udp_unregister_port(uint16_t port)
 __attribute__((weak)) void net_runtime_poll(void)
 {
 }
+__attribute__((weak)) int tcp_min_connect(uint32_t dst_ip, uint16_t dst_port, uint16_t src_port)
+{
+    (void)dst_ip; (void)dst_port; (void)src_port;
+    return -101;
+}
+__attribute__((weak)) int tcp_min_pump(int pcb)
+{
+    (void)pcb;
+    return -101;
+}
+__attribute__((weak)) int tcp_min_send(int pcb, const uint8_t *data, size_t len)
+{
+    (void)pcb; (void)data; (void)len;
+    return -101;
+}
+__attribute__((weak)) int tcp_min_recv(int pcb, uint8_t *buf, size_t len)
+{
+    (void)pcb; (void)buf; (void)len;
+    return -11;
+}
+__attribute__((weak)) void tcp_min_close(int pcb)
+{
+    (void)pcb;
+}
 
 typedef struct {
     int used;
@@ -189,6 +218,7 @@ typedef struct {
     uint16_t port;
     int accept_rd;
     int pipe_magic;
+    int tcp_pcb; /* >=0: minimal e1000 TCP client pcb (SOCK_STREAM LAN) */
     uint32_t peer_addr; /* dgram connect() default destination */
     uint16_t peer_port;
     int dg_head;
@@ -3412,6 +3442,10 @@ static void bfree_persist_flush_all(void)
     (void)bfree_ata_rw_sector(0, g_persist_sec, 1);
 }
 
+#if BFREE_PERSIST_FAT_PROBE
+#include "persist_fat_probe.h"
+#endif
+
 static void bfree_persist_load_once(void)
 {
     uint32_t count;
@@ -3427,6 +3461,20 @@ static void bfree_persist_load_once(void)
     if (bfree_ata_rw_sector(0, g_persist_sec, 0) != 0) {
         return;
     }
+#if BFREE_PERSIST_FAT_PROBE
+    {
+        int fat = bfree_persist_fat_probe(g_persist_sec);
+        if (fat == 12 || fat == 16 || fat == 32) {
+            uart_puts("[PERSIST] FAT BPB detected type=");
+            {
+                extern void uart_puthex64(uint64_t v);
+                uart_puthex64((uint64_t)(unsigned)fat);
+            }
+            uart_puts(" (mount deferred; skip BFP1)\n");
+            return;
+        }
+    }
+#endif
     if (*(uint32_t *)(g_persist_sec + 0) != BFREE_PERSIST_MAGIC) {
         uart_puts("[PERSIST] blank disk (no BFP1)\n");
         return;
@@ -4469,6 +4517,39 @@ static long sys_linux_read(long fd, long buf, long count)
     bfree_guest_ofd_t *ofd;
 
     fd = bfree_guest_fd_resolve((int)fd);
+    {
+        int iidx = bfree_inet_from_fd((int)fd);
+        if (iidx >= 0 && g_inet_socks[iidx].tcp_pcb >= 0) {
+            int pcb = g_inet_socks[iidx].tcp_pcb;
+            int got;
+            int spins;
+            if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf)) {
+                return -14;
+            }
+            for (spins = 0; spins < 64; ++spins) {
+                int st = tcp_min_pump(pcb);
+                if (st == 0) {
+                    g_inet_socks[iidx].connected = 1;
+                    break;
+                }
+                if (st != -115) {
+                    return (long)st;
+                }
+                net_runtime_poll();
+            }
+            if (!g_inet_socks[iidx].connected) {
+                return -115;
+            }
+            for (spins = 0; spins < 64; ++spins) {
+                got = tcp_min_recv(pcb, (uint8_t *)(uintptr_t)buf, (size_t)count);
+                if (got != -11) {
+                    return (long)got;
+                }
+                net_runtime_poll();
+            }
+            return -11;
+        }
+    }
     if (fd == 0) {
         return bfree_stdin_read_user(buf, count);
     }
@@ -4824,8 +4905,26 @@ static long sys_linux_write(long fd, long buf, long count)
     int orig_fd = (int)fd;
     bfree_guest_vfile_t *vf;
     bfree_guest_ofd_t *ofd;
+    int iidx;
 
     fd = bfree_guest_fd_resolve((int)fd);
+    iidx = bfree_inet_from_fd((int)fd);
+    if (iidx >= 0 && g_inet_socks[iidx].tcp_pcb >= 0) {
+        int st;
+        if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf)) {
+            return -14;
+        }
+        st = tcp_min_pump(g_inet_socks[iidx].tcp_pcb);
+        if (st == 0) {
+            g_inet_socks[iidx].connected = 1;
+        } else if (st == -115) {
+            return -115;
+        } else if (st < 0) {
+            return (long)st;
+        }
+        return (long)tcp_min_send(g_inet_socks[iidx].tcp_pcb,
+                                  (const uint8_t *)(uintptr_t)buf, (size_t)count);
+    }
     if (bfree_guest_is_eventfd((int)fd) || bfree_guest_is_eventfd(orig_fd)) {
         int efd = bfree_guest_is_eventfd((int)fd) ? (int)fd : orig_fd;
         int idx = bfree_guest_eventfd_index(efd);
@@ -10407,6 +10506,7 @@ static long sys_linux_socket(long domain, long type, long protocol)
                 g_inet_socks[i].port = 0;
                 g_inet_socks[i].accept_rd = -1;
                 g_inet_socks[i].pipe_magic = -1;
+                g_inet_socks[i].tcp_pcb = -1;
                 g_inet_socks[i].peer_addr = 0;
                 g_inet_socks[i].peer_port = 0;
                 g_inet_socks[i].dg_head = 0;
@@ -10563,6 +10663,25 @@ static long sys_linux_connect(long sockfd, long addr, long addrlen)
             }
         }
         if (li >= BFREE_INET_SLOTS) {
+            /* F2: outbound TCP via e1000/slirp (10.0.2/24) when no local listener. */
+            if ((in_addr & 0xFFFFFF00u) == 0x0A000200u) {
+                uint16_t sport = g_inet_socks[idx].bound
+                                     ? g_inet_socks[idx].port
+                                     : 0;
+                int pcb = tcp_min_connect(bfree_inet_ntohl(in_addr), in_port, sport);
+                if (pcb < 0) {
+                    return (long)pcb;
+                }
+                g_inet_socks[idx].connected = 0; /* until ESTABLISHED */
+                g_inet_socks[idx].tcp_pcb = pcb;
+                g_inet_socks[idx].pipe_magic = -1;
+                g_inet_socks[idx].peer_addr = in_addr;
+                g_inet_socks[idx].peer_port = in_port;
+                g_inet_socks[idx].addr = in_addr;
+                g_inet_socks[idx].port = in_port;
+                /* Non-blocking handshake: SYN sent; complete via read/write pumps. */
+                return -115; /* EINPROGRESS */
+            }
             return -111; /* ECONNREFUSED — no loopback listener */
         }
         if (g_inet_socks[li].accept_rd >= 0) {
@@ -11031,6 +11150,16 @@ static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr,
         }
         return bfree_inet_dgram_send(idx, dst_addr, dst_port, buf, len);
     }
+    if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].tcp_pcb >= 0) {
+        int pcb = g_inet_socks[idx].tcp_pcb;
+        int n;
+
+        if (buf == 0 || len <= 0 || !bfree_user_ptr_mapped(buf)) {
+            return -14;
+        }
+        n = tcp_min_send(pcb, (const uint8_t *)(uintptr_t)buf, (size_t)len);
+        return (long)n;
+    }
     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
         return sys_linux_write(g_inet_socks[idx].pipe_magic, buf, len);
     }
@@ -11048,6 +11177,23 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
     (void)addrlen;
     fd = bfree_guest_fd_resolve((int)fd);
     idx = bfree_inet_from_fd((int)fd);
+    if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].tcp_pcb >= 0) {
+        int pcb = g_inet_socks[idx].tcp_pcb;
+        int n;
+        int spins;
+
+        if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
+            return -14;
+        }
+        for (spins = 0; spins < 20000; ++spins) {
+            n = tcp_min_recv(pcb, (uint8_t *)(uintptr_t)buf, (size_t)len);
+            if (n != -11) {
+                return (long)n;
+            }
+            net_runtime_poll();
+        }
+        return -11;
+    }
     if (idx >= 0 && g_inet_socks[idx].is_dgram) {
         bfree_inet_sock_t *s = &g_inet_socks[idx];
         size_t n;
@@ -12067,6 +12213,10 @@ static void bfree_inet_sock_release(int resolved)
         return;
     }
     port = g_inet_socks[iidx].port;
+    if (g_inet_socks[iidx].tcp_pcb >= 0) {
+        tcp_min_close(g_inet_socks[iidx].tcp_pcb);
+        g_inet_socks[iidx].tcp_pcb = -1;
+    }
     if (g_inet_socks[iidx].is_dgram && g_inet_socks[iidx].bound) {
         g_inet_socks[iidx].bound = 0;
         g_inet_socks[iidx].used = 0;

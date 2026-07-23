@@ -46,6 +46,12 @@ void net_runtime_init(void)
     ipv4_init();
     udp_init();
     icmp_init();
+#if ENABLE_RUNTIME_NET
+    {
+        extern void tcp_min_init(void);
+        tcp_min_init();
+    }
+#endif
     
     // Set static IP: 10.0.2.15 (QEMU default)
     ipv4_set_local_ip(IPV4(10, 0, 2, 15));
@@ -55,7 +61,44 @@ void net_runtime_init(void)
     extern void arp_cache_insert(uint32_t ip_addr, const uint8_t mac[6]);
     uint8_t qemu_router_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02};
     arp_cache_insert(IPV4(10, 0, 2, 2), qemu_router_mac);
+    /* guestfwd targets on 10.0.2/24 (slirp); seed so TCP SYN is not stuck on ARP. */
+    arp_cache_insert(IPV4(10, 0, 2, 100), qemu_router_mac);
 
+    /* Gratuitous ARP announce (broadcast reply) so slirp learns our MAC. */
+    {
+        extern int netdrv_send(const void *buf, unsigned int len);
+        extern uint8_t local_mac[6];
+        uint8_t ga[42];
+        uint32_t lip = IPV4(10, 0, 2, 15);
+        int i;
+        for (i = 0; i < 6; ++i)
+            ga[i] = 0xff;
+        for (i = 0; i < 6; ++i)
+            ga[6 + i] = local_mac[i];
+        ga[12] = 0x08;
+        ga[13] = 0x06;
+        ga[14] = 0x00;
+        ga[15] = 0x01;
+        ga[16] = 0x08;
+        ga[17] = 0x00;
+        ga[18] = 6;
+        ga[19] = 4;
+        ga[20] = 0x00;
+        ga[21] = 0x02; /* reply */
+        for (i = 0; i < 6; ++i)
+            ga[22 + i] = local_mac[i];
+        ga[28] = (uint8_t)(lip & 0xff);
+        ga[29] = (uint8_t)((lip >> 8) & 0xff);
+        ga[30] = (uint8_t)((lip >> 16) & 0xff);
+        ga[31] = (uint8_t)((lip >> 24) & 0xff);
+        for (i = 0; i < 6; ++i)
+            ga[32 + i] = 0xff;
+        ga[38] = ga[28];
+        ga[39] = ga[29];
+        ga[40] = ga[30];
+        ga[41] = ga[31];
+        (void)netdrv_send(ga, sizeof(ga));
+    }
 }
 
 void net_runtime_poll(void)
@@ -65,7 +108,16 @@ void net_runtime_poll(void)
     static uint32_t logged_short_frames;
     static uint32_t logged_arp_frames;
     static uint32_t logged_ipv4_frames;
+    static int reentering;
 
+    if (reentering)
+        return;
+    reentering = 1;
+
+    {
+        extern void netdrv_rx_kick(void);
+        netdrv_rx_kick();
+    }
     arp_tick();
 
     for (;;) {
@@ -107,4 +159,5 @@ void net_runtime_poll(void)
             ipv4_input(pkt + sizeof(eth_hdr_t), (size_t)packet_len - sizeof(eth_hdr_t));
         }
     }
+    reentering = 0;
 }
