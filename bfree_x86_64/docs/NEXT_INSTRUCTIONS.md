@@ -11,15 +11,15 @@
 
 ## 指示
 
-本線: `work/posix-holes-redo`。Polish→Phase7。
-進捗 2026-07-23: E1–E3 / F1 / F2 UDP+TCP / F3 / pthread-clone / FAT BPB probe scaffold。
+本線: `work/posix-holes-redo`。**使うもの（desktop）を安定**が優先。FAT 本マウントは後回し。
 
 ## 現在の状態（エージェントが更新）
 
 - **Updated:** 2026-07-23
-- F1: ATA PIO + `/persist` BFP1 — `_f1_persist_smoke.sh`
-- F1b: FAT BPB probe（`BFREE_PERSIST_FAT_PROBE=1`）— `_f1_persist_fat_probe_smoke.sh`；本マウントは未
-- F2: UDP TX/RX + **外向き TCP**（`_f2_e1000_tcp_smoke.sh` green）
-- F3: LTP curated subset
-- gthr / pthread→clone；desktop.elf relink済み
-- 次: FAT 本マウント（read-only から）/ desktop 本線回帰
+- 方針: Linux らしさより **desktop.elf 本線の安定**
+- Desktop 回帰 green（`_desktop_pthread_clone_smoke.sh`）:
+  - `[wrap] pthread_create clone`
+  - `[desktop_qt] QQmlEngine ok`
+  - no ENOSYS / no panic（当該ログ）
+- F1/F2/F3 / FAT probe は維持（FAT 本マウントは非優先）
+- 次: desktop 起動後の QML/UI 深掘り（入力・描画）、壊れたらすぐ clone/futex/ENOSYS を見る

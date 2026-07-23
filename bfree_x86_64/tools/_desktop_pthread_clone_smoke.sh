@@ -57,11 +57,17 @@ else
   echo 'FAIL wrap_pthread_create_any (no pthread_create yet — boot may be early)'
   fail=1
 fi
+if grep -aqF '[desktop_qt] QQmlEngine ok' "$QLOG"; then
+  echo 'PASS QQmlEngine_ok'
+else
+  echo 'FAIL QQmlEngine_ok'
+  fail=1
+fi
 if grep -aqiE 'Page Fault|PANIC' "$QLOG"; then
   echo 'FAIL panic'
   fail=1
 else
   echo 'PASS no_panic'
 fi
-grep -aE '\[wrap\] pthread|pthread_create|PANIC|Page Fault|desktop_qt|QV4|QML' "$QLOG" | tail -40
+grep -aE '\[wrap\] pthread|pthread_create|QQmlEngine|GuestMvpShell|PANIC|Page Fault|desktop_qt' "$QLOG" | tail -40
 exit "$fail"

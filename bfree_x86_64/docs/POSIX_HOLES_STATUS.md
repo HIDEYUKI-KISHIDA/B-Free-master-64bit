@@ -1,7 +1,7 @@
 # POSIX holes — mobile status
 
 **Branch:** `work/posix-holes-redo`  
-**Updated:** 2026-07-23 (F2 TCP + FAT probe scaffold)  
+**Updated:** 2026-07-23 (desktop 本線安定優先)  
 **Full TODOLIST:** [POSIX_COMPAT_TODOLIST.md](./POSIX_COMPAT_TODOLIST.md)  
 **P4 scope:** [POSIX_PHASE7_AGREED_SCOPE.md](./POSIX_PHASE7_AGREED_SCOPE.md)  
 **📱 指示はこちら:** [NEXT_INSTRUCTIONS.md](./NEXT_INSTRUCTIONS.md)
@@ -28,16 +28,17 @@
 - [x] **E** `/persist`+`/home` getdents、`ls /` に persist、`/tmp` NS 汚染除外
 - [x] **F** BusyBox curated +17 applets（tee/mktemp/nslookup/sha256sum/…）
 - [x] **gthr / pthread→clone** wrap（`guest_link_compat`；`_pthread_clone_smoke.sh` PASS；**desktop.elf relink済み**）
+- [x] **desktop 本線回帰**（`_desktop_pthread_clone_smoke.sh`：clone wrap + `QQmlEngine ok` + no panic）
 
 ## Phase7 残り
 
 | 済み | 残り |
 |------|------|
-| `/persist` 実ディスク永続（ATA PIO + BFP1）+ FAT BPB probe | tiny FAT/ext2 での本マウント |
+| `/persist` 実ディスク永続（ATA PIO + BFP1）+ FAT BPB probe | tiny FAT/ext2 での本マウント（**後回し**；desktop 優先） |
 | UDP + e1000 DGRAM TX/RX + **外向き TCP** | listen/accept / 本スタック統合 |
 | LTP curated 13 cases in-tree | full LTP vendor（任意） |
 | ENOSYS tracer（出現ログ） | 残 ENOSYS ゼロ化 / 本プリエンプト |
-| pthread clone wrap + freestanding smoke + **desktop.elf relink** | desktop 実機で clone 経路の回帰 |
+| pthread clone wrap + **desktop 回帰 green** | QML/UI・入力・描画の深掘り |
 
 ## Git
 
