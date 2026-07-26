@@ -1,0 +1,14 @@
+---
+description: Read phone/GitHub NEXT_INSTRUCTIONS at session start and follow スマホ指示
+alwaysApply: true
+---
+
+# NEXT_INSTRUCTIONS (mobile)
+
+At the start of a coding session in this workspace (and whenever the user says「次へ」「NEXT」「指示を見て」or similar):
+
+1. Read `docs/NEXT_INSTRUCTIONS.md`.
+2. Prefer the block between `PHONE_START` and `PHONE_END` as the user's latest instruction from phone/GitHub.
+3. If that block is empty or only placeholder text, use the **Next** bullet under「現在の状態」.
+4. After completing work, update「現在の状態」and **Next** in that file; leave `PHONE_START`/`PHONE_END` for the user (clear or leave a short default like「次へ」only if you finished their phone ask).
+5. Do not require the user to paste instructions if this file already has them.
