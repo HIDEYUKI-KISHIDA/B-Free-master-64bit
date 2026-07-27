@@ -21,14 +21,14 @@ bash tools/phase3_guest_auto.sh   # RESULT: ALL PASS 維持
 | A2 | Linux `case 56` / `sys_linux_clone` | clone | **P0** | THREAD+VM → coop threads；VFORK → vfork；**それ以外 → AS-copy fork**（2026-07-27 **DONE**） | musl 静的が process-spawn `clone` で ENOSYS しない |
 | A3 | Linux `case 247` | `waitid` = ENOSYS | **P0** | ~~wait4 相当を waitid ABI で実装~~ **DONE** | BusyBox/musl waitid 呼び出し OK |
 | A4 | `sys_linux_execve` 非 fork 時 | fork 外 exec = -38 | **P0** | ~~単独 execve~~ **DONE**（in-place replace）+ 子は private AS 必須 | `BFREE_NOFORK_ALL=0` で外部 applet が Page Fault しない |
-| A5 | `sys_mmap` fd 付き | ファイル mmap | **P1** | ~~ENOSYS~~ **partial DONE**：`/tmp` vfile を anon+memcpy；**R9 offset/pgoff 対応**（2026-07-27）。MAP_SHARED writeback は未 | open+mmap+read が `read()` と一致（offset 含む） |
-| A6 | `sys_shm_open` | ENOSYS | **P2** | memfd へマップ、または最小 shm | 必要アプリが通るまで後回し可 |
-| A7 | `sys_shm_unlink` | ENOSYS | **P2** | A6 とセット | 同上 |
+| A5 | `sys_mmap` fd 付き | ファイル mmap | **P1** | ~~ENOSYS~~ **DONE（簡易）**：`/tmp` vfile を anon+memcpy；R9 offset；**MAP_SHARED は munmap/read 前 writeback**（2026-07-28）。真の CoW/ページ共有は未 | SHARED 書込が `read()` で見える；PRIVATE はコピー |
+| A6 | `sys_shm_open` | vfile `shm/<name>` | **P2** | ~~ENOSYS~~ **DONE**（`bfree_guest_shm_open` → `/tmp` vfile + publish） | shm_open+mmap(+SHARED) が通る |
+| A7 | `sys_shm_unlink` | vfile unlink | **P2** | ~~ENOSYS~~ **DONE**（`bfree_guest_shm_unlink`） | unlink 後 open が ENOENT |
 | A8 | 旧 `sys_pipe` (B-Free 番号) | ホスト向け ENOSYS | **P3** | ゲスト Linux は `pipe2` 済み。触らない／削除候補 | ゲスト回帰に影響しない |
 | A9 | unhandled default → -38 | 未登録番号すべて | **継続** | 下表 B の番号を 1 本ずつ dispatch に載せる | トレースで ENOSYS が減る |
 
 **A の実質 P0 は A1–A4（プロセス／exec）。A5 がメモリ。A6–A8 は後回し可。**
-A1/A2/A5 は 2026-07-27 スプリントで上記どおり更新。
+A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`memfd_create`（Linux 319）も vfile stub 配線済み（= B3.3）。
 ---
 
 ## トラック B — 実用ギャップ（目標 40–80 本のうち、まず ~50）
@@ -90,7 +90,7 @@ A1/A2/A5 は 2026-07-27 スプリントで上記どおり更新。
 |----|----------------|------|------|
 | B3.1 | `epoll_*` 深化 | P1 | 既に case あり → 実イベント接続 |
 | B3.2 | `eventfd` / `timerfd` | P1 | 既にある → Qt が使う意味論 |
-| B3.3 | `memfd_create` | P1 | case 319 あり → 確認 |
+| B3.3 | `memfd_create` | P1 | ~~確認~~ **DONE（簡易）**：`sys_linux_memfd_create` → vfile + ftruncate（A5 mmap 経路） |
 | B3.4 | `poll`/`ppoll` | P1 | 深化 |
 | B3.5 | `ioctl` FB/input | P1 | QPA 経路 |
 | B3.6–B3.12 | socket 系 7 本 | P2 | socket/bind/connect/listen/accept/sendto/recvfrom（ネット無しなら後回し） |

@@ -184,6 +184,8 @@ static int g_qml_rect_configured = 0;
 /* W3: sparse Quick window chrome (host desktopWindowLayer look). */
 static int g_w3_layer_ready = 0;
 static int g_w3_sg_pixels = 0; /* 1 = skip FB window bodies (SG presented chrome) */
+/* W3.5: force one window outer visible once at attach (FB still pixel authority). */
+static int g_w35_force_outer = 0;
 static QQuickItem *g_w3_layer = nullptr;
 /* W3.1: sparse Quick taskbar + Start panel (host taskbar / launcherPanel). */
 static int g_w31_layer_ready = 0;
@@ -1114,9 +1116,12 @@ static void guest_w3_sync_one(int wi)
     /* While FB owns pixels, keep Quick chrome invisible so software SG never
      * materializes ItemHasContents (historically PFs). Geometry still synced. */
     const int show_quick = (g_w3_sg_pixels != 0);
+    const int show_outer = show_quick || (g_w35_force_outer != 0 && wi == 0);
     if (!win->open || win->minimized || win->app_id < 0 || win->app_id >= g_desk_n_icons) {
-        if (c->outer)
-            c->outer->setVisible(false);
+        if (c->outer) {
+            /* W3.5 may force outer visible before any window is open. */
+            c->outer->setVisible(show_outer);
+        }
         return;
     }
     const int focused = (wi == g_win_focus);
@@ -1125,7 +1130,7 @@ static void guest_w3_sync_one(int wi)
     const QColor borderCol = focused ? QColor(0x64, 0x74, 0x8b) : QColor(0x94, 0xa3, 0xb8);
     const qreal bw = focused ? 2.0 : 1.0;
 
-    c->outer->setVisible(show_quick);
+    c->outer->setVisible(show_outer);
     c->outer->setX(win->x);
     c->outer->setY(win->y);
     c->outer->setWidth(win->w);
@@ -1387,6 +1392,11 @@ static void guest_w32_sg_taskbar_probe(QQuickWindow *win)
     guest_serial_puts("[desktop_qt] W3.4 sustained SG ok\n");
     g_w34_ok = 1;
     g_w34_pulses = G_W34_PULSES_NEED;
+    /* W3.5: reuse guest_w3_sync_one — one outer setVisible; no new Qt linkage. */
+    g_w35_force_outer = 1;
+    guest_w3_sync_one(0);
+    g_w35_force_outer = 0;
+    guest_serial_puts("[desktop_qt] W3.5 window setVisible ok\n");
 }
 
 static void guest_paint_fb_win_client(unsigned char *fb, unsigned pitch, const GuestWin *win)

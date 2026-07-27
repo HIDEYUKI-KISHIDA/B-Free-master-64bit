@@ -39,6 +39,8 @@ extern void uart_putc(char c);
 extern void uart_puthex64(uint64_t val);
 extern void *pmm_alloc(void);
 
+#define MAP_SHARED    0x01L
+#define MAP_PRIVATE   0x02L
 #define MAP_ANONYMOUS 0x20L
 #define MAP_FIXED     0x10L
 
@@ -1988,6 +1990,7 @@ static void bfree_guest_heap_unmap_range(page_table_t *pt, uint64_t lo, uint64_t
 }
 
 static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, long offset);
+static void bfree_guest_shared_mmap_flush_range(uint64_t lo, uint64_t hi);
 static long sys_mmap_anonymous_heap(long addr, long length, long flags)
 {
     uint64_t want_bytes;
@@ -2308,6 +2311,9 @@ long sys_munmap(long addr, long length)
         hi > (uint64_t)BFREE_GUEST_HEAP_LIMIT) {
         return 0;
     }
+
+    /* A5: flush MAP_SHARED vfile mappings before pages go away. */
+    bfree_guest_shared_mmap_flush_range(lo, hi);
 
     pt = (page_table_t *)knl_current_task->page_table_base;
     bfree_kernel_phys_io_begin();
@@ -2874,6 +2880,112 @@ typedef struct {
 
 static bfree_guest_vfile_t g_guest_vfiles[BFREE_GUEST_VFILE_SLOTS];
 
+/* MAP_SHARED vfile mmap: anon pages + writeback into vf->data on munmap. */
+#define BFREE_GUEST_SHARED_MMAP_SLOTS 8
+typedef struct {
+    int used;
+    int vfile_idx;
+    uint64_t va;
+    size_t map_len;
+    size_t file_off;
+} bfree_guest_shared_mmap_t;
+static bfree_guest_shared_mmap_t g_guest_shared_mmaps[BFREE_GUEST_SHARED_MMAP_SLOTS];
+
+static void bfree_guest_shared_mmap_writeback_one(bfree_guest_shared_mmap_t *sm)
+{
+    bfree_guest_vfile_t *vf;
+    size_t i;
+    size_t n;
+    size_t cap;
+    const uint8_t *src;
+
+    if (!sm || !sm->used) {
+        return;
+    }
+    if (sm->vfile_idx < 0 || sm->vfile_idx >= BFREE_GUEST_VFILE_SLOTS) {
+        sm->used = 0;
+        return;
+    }
+    vf = &g_guest_vfiles[sm->vfile_idx];
+    if (!vf->used || vf->is_dir) {
+        sm->used = 0;
+        return;
+    }
+    cap = BFREE_GUEST_VFILE_SIZE;
+    if (sm->file_off >= cap) {
+        sm->used = 0;
+        return;
+    }
+    n = sm->map_len;
+    if (n > cap - sm->file_off) {
+        n = cap - sm->file_off;
+    }
+    src = (const uint8_t *)(uintptr_t)sm->va;
+    for (i = 0; i < n; ++i) {
+        vf->data[sm->file_off + i] = src[i];
+    }
+    if (sm->file_off + n > vf->len) {
+        vf->len = sm->file_off + n;
+    }
+}
+
+static void bfree_guest_shared_mmap_flush_range(uint64_t lo, uint64_t hi)
+{
+    int i;
+
+    for (i = 0; i < BFREE_GUEST_SHARED_MMAP_SLOTS; ++i) {
+        bfree_guest_shared_mmap_t *sm = &g_guest_shared_mmaps[i];
+        uint64_t smo;
+        uint64_t smhi;
+
+        if (!sm->used) {
+            continue;
+        }
+        smo = sm->va;
+        smhi = smo + (uint64_t)sm->map_len;
+        /* Any overlap with munmap range → writeback and drop tracking. */
+        if (smhi > lo && smo < hi) {
+            bfree_guest_shared_mmap_writeback_one(sm);
+            sm->used = 0;
+        }
+    }
+}
+
+/* Keep read() coherent with live MAP_SHARED mappings (no page-fault write-through). */
+static void bfree_guest_shared_mmap_sync_vfile(int vfile_idx)
+{
+    int i;
+
+    if (vfile_idx < 0 || vfile_idx >= BFREE_GUEST_VFILE_SLOTS) {
+        return;
+    }
+    for (i = 0; i < BFREE_GUEST_SHARED_MMAP_SLOTS; ++i) {
+        bfree_guest_shared_mmap_t *sm = &g_guest_shared_mmaps[i];
+
+        if (sm->used && sm->vfile_idx == vfile_idx) {
+            bfree_guest_shared_mmap_writeback_one(sm);
+        }
+    }
+}
+
+static int bfree_guest_shared_mmap_track(int vfile_idx, uint64_t va, size_t map_len,
+                                         size_t file_off)
+{
+    int i;
+
+    for (i = 0; i < BFREE_GUEST_SHARED_MMAP_SLOTS; ++i) {
+        if (!g_guest_shared_mmaps[i].used) {
+            g_guest_shared_mmaps[i].used = 1;
+            g_guest_shared_mmaps[i].vfile_idx = vfile_idx;
+            g_guest_shared_mmaps[i].va = va;
+            g_guest_shared_mmaps[i].map_len = map_len;
+            g_guest_shared_mmaps[i].file_off = file_off;
+            return 0;
+        }
+    }
+    return -1; /* table full — mapping still usable as PRIVATE-like copy */
+}
+
 #define BFREE_GUEST_ALIAS_SLOTS 32
 typedef struct {
     int used;
@@ -3091,9 +3203,10 @@ static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, 
     size_t i;
     size_t off;
     uint8_t *dst;
+    int shared;
+    int vidx;
 
     (void)ofd;
-    (void)flags;
     if (!vf || vf->is_dir) {
         return -19; /* ENODEV */
     }
@@ -3104,6 +3217,8 @@ static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, 
     if (off > vf->len) {
         return -22; /* EINVAL — past EOF */
     }
+    shared = ((flags & MAP_SHARED) != 0) && ((flags & MAP_PRIVATE) == 0);
+    /* Always materialize as anon pages; MAP_SHARED additionally tracks writeback. */
     mapped = sys_mmap_anonymous_heap(addr, length, flags | MAP_ANONYMOUS);
     if (mapped < 0) {
         return mapped;
@@ -3115,6 +3230,11 @@ static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, 
     dst = (uint8_t *)(uintptr_t)(uint64_t)mapped;
     for (i = 0; i < copy_n; ++i) {
         dst[i] = vf->data[off + i];
+    }
+    if (shared && length > 0) {
+        vidx = (int)(vf - g_guest_vfiles);
+        (void)bfree_guest_shared_mmap_track(vidx, (uint64_t)(uintptr_t)mapped,
+                                            (size_t)length, off);
     }
     return mapped;
 }
@@ -4984,6 +5104,8 @@ static long sys_linux_read(long fd, long buf, long count)
         if (vf->is_dir) {
             return -21; /* EISDIR */
         }
+        /* A5 MAP_SHARED: pull live mmap bytes into vf before serving read(). */
+        bfree_guest_shared_mmap_sync_vfile((int)(vf - g_guest_vfiles));
         posp = ofd ? &ofd->pos : &vf->pos;
         if (*posp >= vf->len) {
             return 0;

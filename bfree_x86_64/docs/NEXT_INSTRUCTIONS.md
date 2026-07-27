@@ -35,24 +35,23 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 **正本:** `C:\Users\h_kis\Desktop\B-Free-master`（詳細: `docs/CANONICAL.md`）。`J:\B-Free-master` は古いコピー・使わない。
 本線: `work/posix-holes-redo`。**desktop / QML ready** 優先。
-BusyBox 実用ゲート（`tools/linux_box_gate.sh`）は **全 PASS で凍結**（CLI 深掘りは後回し）。ABI 最小穴（A2/A1/A5）は 2026-07-27 スプリントで埋め済み。
+BusyBox 実用ゲート（`tools/linux_box_gate.sh`）は **全 PASS で凍結**（CLI 深掘りは後回し）。ABI トラック A（A1–A7）は 2026-07-28 までで埋め済み（真のページ共有 CoW は未）。
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-07-27
-- **正本固定:** Desktop（C:）を唯一の作業ツリーとした。Native Qt GUI は `userland/desktop_qt/guest_main.cpp`（**W3.4** まで）。
-- **BusyBox:** `linux_box_gate` ash/pipe/persist/fork PASS；ping/nc はホスト echo タイムアウトで FAIL（ABI 外）。`phase3_guest_auto` **RESULT: ALL PASS**。
-- **ABI sprint (2026-07-27):**
-  - **A2** non-VFORK/non-THREAD `clone` → AS-copy fork（ENOSYS 解消）
-  - **A1** zombie soft-reap で fork PT 解放（sticky EAGAIN 防止）；partial DONE
-  - **A5** vfile mmap が R9 offset/pgoff を尊重；partial DONE（MAP_SHARED 未）
+- **Updated:** 2026-07-28
+- **正本固定:** Desktop（C:）を唯一の作業ツリー。Native Qt GUI は `guest_main.cpp`（**W3.5** まで）。
+- **BusyBox / phase3:** `phase3_guest_auto` **RESULT: ALL PASS**（2026-07-28）。`linux_box_gate` ash/pipe/persist/fork PASS；ping/nc はホスト echo タイムアウト（ABI 外）。
+- **ABI トラック A（2026-07-28）:**
+  - **A5** vfile mmap：R9 offset + **MAP_SHARED writeback**（munmap / `read()` 前に vf->data へ反映）。PRIVATE はコピーのまま
+  - **A6/A7** `shm_open`/`shm_unlink` は vfile `shm/<name>` 配線済み（worklist を DONE に更新）。`memfd_create` も簡易 DONE（B3.3）
 - **Practical Native OS D→E→F GREEN** (post A→B→C)
   - **D** FAT12/16 **RW** `/persist`: `tools/_f1_persist_fat_rw_smoke.sh` PASS; BFP1 `_f1_persist_smoke.sh` PASS
   - **E** Explorer (desk note) + Viewer + Terminal (1 cmd → `/persist/term.txt`); keys 1/2/3
   - **F** QML Rectangle soft SG try → explicit `SG fail->FB` (lookalike authority)
   - Smoke: `tools/_tmp_stage_abcd_smoke.sh`
 - **Stabilize G0–G2 (pre–DesktopShell.qml):** dirty-only FB paint; no I/O in paint; Start launcher; QPA single input path; serial flood = FAIL. Host `DesktopShell.qml` / SG pixel authority **deferred**.
-- **W0–W3.3:** 従来どおり（FB mini-WM + Quick chrome probes）。Smoke KEY PASS。
-- **W3.4 sustained SG:** W3.2 soft UpdateRequest を権威に、attach 末で `W3.4 sustained SG ok`（追加 UpdateRequest / setVisible は PF のため見送り）。`g_w32_sg_taskbar=0` FB 画素権威。Smoke: `tools/_tmp_qemu_wm_smoke.sh` KEY 全 PASS（含 w34）。
+- **W0–W3.4:** 従来どおり。`g_w3_sg_pixels=0` FB 画素権威。
+- **W3.5 window setVisible:** attach 末で `guest_w3_sync_one(0)` 経由の **outer 1 枚だけ** `setVisible(true)`（直接 Qt 呼び出しの肥大は早期 PF のため回避）。シリアル `W3.5 window setVisible ok`。Smoke: `tools/_tmp_qemu_wm_smoke.sh` KEY 全 PASS（含 **w35_setvisible** / no_panic）。
 - **Also:** mmap session switches onto the 256MiB ctor stack (exec ~4MiB was overflowing QV4 after W1/W2 growth).
-- **Next:** window Quick `setVisible` 再試行（QQmlEngine PF 回避）、または sustained soft UpdateRequest を安全に再開。FAT32 / AHCI / 実機は後段。BusyBox CLI 深掘りは再凍結。
+- **Next:** SG 画素権威（`g_w3_sg_pixels=1`）を安全に上げる、または host `DesktopShell.qml` 本読み込み。FAT32 / AHCI / 実機・BusyBox CLI / B1–B2 は後段。
