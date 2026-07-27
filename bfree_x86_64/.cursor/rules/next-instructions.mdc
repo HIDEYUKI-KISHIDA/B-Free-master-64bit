@@ -5,6 +5,8 @@ alwaysApply: true
 
 # NEXT_INSTRUCTIONS (mobile)
 
+**Canonical tree:** `C:\Users\h_kis\Desktop\B-Free-master` only (`docs/CANONICAL.md`). Do not treat `J:\B-Free-master` as current.
+
 At the start of a coding session in this workspace (and whenever the user says「次へ」「NEXT」「指示を見て」or similar):
 
 1. Read `docs/NEXT_INSTRUCTIONS.md`.

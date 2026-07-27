@@ -19,7 +19,7 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 <!-- PHONE_START: この行と PHONE_END の間に書いて Commit -->
 
-次へ（W3.2 の次）
+次へ
 
 <!-- PHONE_END -->
 
@@ -33,12 +33,14 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 常設方針（エージェント用・スマホでは触らなくてよい）
 
+**正本:** `C:\Users\h_kis\Desktop\B-Free-master`（詳細: `docs/CANONICAL.md`）。`J:\B-Free-master` は古いコピー・使わない。
 本線: `work/posix-holes-redo`。**desktop / QML ready** 優先。
 BusyBox 実用ゲート（`tools/linux_box_gate.sh`）は **全 PASS で凍結**（CLI 深掘りは後回し）。
 
 ## 現在の状態（エージェントが更新）
 
 - **Updated:** 2026-07-27
+- **正本固定:** Desktop（C:）を唯一の作業ツリーとした。Native Qt GUI は `userland/desktop_qt/guest_main.cpp`（W3.3 まで）。
 - **BusyBox:** `linux_box_gate` ALL PASS。凍結。
 - **Practical Native OS D→E→F GREEN** (post A→B→C)
   - **D** FAT12/16 **RW** `/persist`: `tools/_f1_persist_fat_rw_smoke.sh` PASS; BFP1 `_f1_persist_smoke.sh` PASS
@@ -54,5 +56,6 @@ BusyBox 実用ゲート（`tools/linux_box_gate.sh`）は **全 PASS で凍結**
 - **W3 Quick window chrome:** C++ sparse `QQuickRectangle` tree (no `QQuickText`) matching host `desktopWindowLayer` slate, built once under `contentItem` at attach and kept invisible; soft SG breadcrumb without update/expose; no event-loop Quick mutates (those GPF'd input); FB remains pixel authority (`g_w3_sg_pixels=0`) with host-slate window paint; `W3 window layer ready`. Full DesktopShell.qml still not loaded. Smoke KEY all PASS.
 - **W3.1 Start/taskbar Quick slice:** attach-once invisible C++ `QQuickRectangle` taskbar + Start panel (host colors); FB Start menu enlarged toward host `launcherPanel` (`#111827`, search strip, rows, power footer); hit geometry shared; `W3.1 start/taskbar layer ready`. Still FB pixel authority.
 - **W3.2 Sparse SG taskbar probe:** attach-time show taskbar Quick **bar** + soft UpdateRequest (no force-expose drain — that PFs); `g_w32_sg_taskbar=0` so FB still paints strip; Start/windows FB; `W3.2 SG probe ok` / `W3.2 SG taskbar pixels`. No event-loop Quick mutates.
+- **W3.3 Window Quick soft probe:** attach-time marker after W3.2 (`W3.3 window Quick probe ok` / `pixels`); W3 slot chrome trees already built; extra `setVisible`/geometry in this build tipped QQmlEngine PF (CR2=`0x78001B0`) before attach — visibility deferred. `g_w3_sg_pixels=0` FB windows. Smoke KEY all PASS.
 - **Also:** mmap session switches onto the 256MiB ctor stack (exec ~4MiB was overflowing QV4 after W1/W2 growth).
-- **Next:** Sustained SG expose / window Quick pixels (still no full DesktopShell.qml). FAT32 / AHCI / 実機は後段。BusyBox CLI 深掘りは凍結のまま。
+- **Next:** Sustained SG expose when safe, or retry window Quick `setVisible` without tipping QQmlEngine. FAT32 / AHCI / 実機は後段。BusyBox CLI 深掘りは凍結のまま。
