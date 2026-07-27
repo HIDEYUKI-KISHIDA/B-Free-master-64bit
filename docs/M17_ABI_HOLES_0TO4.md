@@ -24,8 +24,8 @@ Fill the ABI gap inventory in `docs/LINUX_ABI_HOLES.ja.md`.
 
 | Metric | M16 | M17 |
 |--------|----:|----:|
-| Registered | 64 | 190 |
-| `ENOSYS` in `0..399` | 336 | 210 |
+| Registered | 64 | 198 |
+| `ENOSYS` in `0..399` | 336 | 202 |
 
 ## Gates
 

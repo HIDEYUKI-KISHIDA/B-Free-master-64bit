@@ -159,7 +159,7 @@
 ### M17 — Linux ABI holes 0–4 ✅ 完了
 
 - [x] Cat0: 誤 NR 配線修正（`chmod`/`fchmod`/`prctl`/`cap*`/`prlimit64`）
-- [x] Cat1: BusyBox/musl 高優先 `ENOSYS` 埋め（登録 64→190、`0..399` ENOSYS 336→210）
+- [x] Cat1: BusyBox/musl 高優先 `ENOSYS` 埋め（登録 64→198、`0..399` ENOSYS 336→202）
 - [x] Cat2: 薄いスタブ強化（signals/`ioctl`/`nanosleep`/listen·accept/`clone`/`futex`）
 - [x] Cat3: 中優先 POSIX（SysV sem/msg、epoll、cred groups、…）
 - [x] Cat4: プロセス別 FD、`bfree_sched_tick`、P17 ゲート

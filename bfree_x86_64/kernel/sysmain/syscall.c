@@ -1664,6 +1664,28 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_capget((void *)a0, (void *)a1);
 	case 126: /* capset */
 		return sys_capset((void *)a0, (const void *)a1);
+	case 127: /* rt_sigpending */
+		if (a0 == 0)
+			return -EFAULT;
+		*(unsigned long *)a0 = 0;
+		return 0;
+	case 128: /* rt_sigtimedwait */
+		bfree_sched_tick(&guest.proc);
+		return -EAGAIN;
+	case 129: /* rt_sigqueueinfo */
+		return sys_kill((int)a0, a1 ? (int)(*(const unsigned *)a1) : 0);
+	case 130: /* rt_sigsuspend */
+		bfree_sched_tick(&guest.proc);
+		return -EINTR;
+	case 131: /* sigaltstack */
+		if (a1 != 0) {
+			/* old_ss: report disabled */
+			*(unsigned long *)a1 = 0;
+			*((unsigned long *)a1 + 1) = 0;
+			*((unsigned long *)a1 + 2) = 2; /* SS_DISABLE */
+		}
+		(void)a0;
+		return 0;
 	case 132: /* utime */
 		return sys_utimensat(BFREE_AT_FDCWD, (const char *)a0, NULL, 0);
 	case 133: /* mknod */
@@ -1753,6 +1775,8 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 	case 260: /* fchownat */
 		return bfree_fchownat(&guest.fs, (int)a0, (const char *)a1,
 				      (unsigned)a2, (unsigned)a3, (int)a4);
+	case 261: /* futimesat */
+		return sys_utimensat((int)a0, (const char *)a1, NULL, 0);
 	case 262: /* newfstatat */
 		return sys_newfstatat((int)a0, (const char *)a1,
 				      (struct bfree_linux_stat *)a2, (int)a3);
@@ -1838,9 +1862,14 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sysret_long(sys_pwritev((int)a0,
 					       (const struct guest_iovec *)a1,
 					       (int)a2, (off_t)a3));
+	case 299: /* recvmmsg */
+		return sysret_long(bfree_recvmsg((int)a0, (void *)a1, (int)a4));
 	case 302: /* prlimit64 */
 		return sys_prlimit64((int)a0, (unsigned int)a1,
 				     (const void *)a2, (void *)a3);
+	case 307: /* sendmmsg */
+		return sysret_long(bfree_sendmsg((int)a0, (const void *)a1,
+						 (int)a3));
 	case 309: /* getcpu */
 		return sys_getcpu((unsigned *)a0, (unsigned *)a1, (void *)a2);
 	case 316: /* renameat2 */

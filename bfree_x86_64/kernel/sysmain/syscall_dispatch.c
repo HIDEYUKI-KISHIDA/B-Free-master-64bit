@@ -130,6 +130,11 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[124] = 1;  /* getsid */
     bfree_syscall_implemented[125] = 1;  /* capget */
     bfree_syscall_implemented[126] = 1;  /* capset */
+    bfree_syscall_implemented[127] = 1;  /* rt_sigpending */
+    bfree_syscall_implemented[128] = 1;  /* rt_sigtimedwait */
+    bfree_syscall_implemented[129] = 1;  /* rt_sigqueueinfo */
+    bfree_syscall_implemented[130] = 1;  /* rt_sigsuspend */
+    bfree_syscall_implemented[131] = 1;  /* sigaltstack */
     bfree_syscall_implemented[132] = 1;  /* utime */
     bfree_syscall_implemented[133] = 1;  /* mknod */
     bfree_syscall_implemented[137] = 1;  /* statfs */
@@ -166,6 +171,7 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[258] = 1;  /* mkdirat */
     bfree_syscall_implemented[259] = 1;  /* mknodat */
     bfree_syscall_implemented[260] = 1;  /* fchownat */
+    bfree_syscall_implemented[261] = 1;  /* futimesat */
     bfree_syscall_implemented[262] = 1;  /* newfstatat */
     bfree_syscall_implemented[263] = 1;  /* unlinkat */
     bfree_syscall_implemented[264] = 1;  /* renameat */
@@ -192,7 +198,9 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[294] = 1;  /* inotify_init1 */
     bfree_syscall_implemented[295] = 1;  /* preadv */
     bfree_syscall_implemented[296] = 1;  /* pwritev */
+    bfree_syscall_implemented[299] = 1;  /* recvmmsg */
     bfree_syscall_implemented[302] = 1;  /* prlimit64 */
+    bfree_syscall_implemented[307] = 1;  /* sendmmsg */
     bfree_syscall_implemented[309] = 1;  /* getcpu */
     bfree_syscall_implemented[316] = 1;  /* renameat2 */
     bfree_syscall_implemented[318] = 1;  /* getrandom */
