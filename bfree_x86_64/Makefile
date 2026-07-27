@@ -19,7 +19,8 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p14_stat_poll test_p14_guest_regress test_p15_poll_blocking \
 	test_p15_ash_regress_staged test_p16_pipe_dup2 test_p16_ash_full_staged \
 	test_p17_abi_holes test_p18_second_map_24 test_p19_linux_process_abi \
-	test_p20_user_va_brk_mmap test_p21_multi_mb_execve test_p22_proc_self_exe
+	test_p20_user_va_brk_mmap test_p21_multi_mb_execve test_p22_proc_self_exe \
+	test_p23_procfs_basic
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -571,6 +572,13 @@ $(BUILD_DIR)/test_p22_proc_self_exe.o: tools/test_p22_proc_self_exe.c \
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/test_p22_proc_self_exe: $(BUILD_DIR)/test_p22_proc_self_exe.o $(COMMON_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p23_procfs_basic.o: tools/test_p23_procfs_basic.c \
+		kernel/sysmain/procfs.h kernel/sysmain/fs_ofd.h kernel/sysmain/vmm.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p23_procfs_basic: $(BUILD_DIR)/test_p23_procfs_basic.o $(COMMON_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
