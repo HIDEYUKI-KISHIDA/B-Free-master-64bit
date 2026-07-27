@@ -18,7 +18,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p11_musl_guest test_p12_busybox_guest test_p13_guest_regress \
 	test_p14_stat_poll test_p14_guest_regress test_p15_poll_blocking \
 	test_p15_ash_regress_staged test_p16_pipe_dup2 test_p16_ash_full_staged \
-	test_p17_abi_holes test_p18_second_map_24
+	test_p17_abi_holes test_p18_second_map_24 test_p19_linux_process_abi
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -71,7 +71,8 @@ KERNEL_SYSMAIN_OBJS := $(addprefix $(KERNEL_DIR)/,fs_ofd.o blk_vol.o blk_persist
 	process.o vmm.o guest_io.o elf_load.o thread.o tty.o)
 KERNEL_FREESTANDING_OBJS := $(KERNEL_DIR)/libc_stubs.o $(KERNEL_DIR)/exec_stubs.o \
 	$(KERNEL_DIR)/guest_kernel.o $(KERNEL_DIR)/elf_user_load.o \
-	$(KERNEL_DIR)/elf_user_exec.o $(KERNEL_DIR)/guest_initramfs_seed.o \
+	$(KERNEL_DIR)/elf_user_exec.o $(KERNEL_DIR)/linux_user_stack.o \
+	$(KERNEL_DIR)/guest_initramfs_seed.o \
 	$(KERNEL_DIR)/ring3_sched.o \
 	$(KERNEL_DIR)/ash_guest_boot.o $(KERNEL_DIR)/ash_regress_guest_boot.o
 
@@ -392,6 +393,10 @@ $(KERNEL_DIR)/ash_regress_guest_boot.o: kernel/freestanding/ash_regress_guest_bo
 $(KERNEL_DIR)/elf_user_exec.o: kernel/freestanding/elf_user_exec.c | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
 
+$(KERNEL_DIR)/linux_user_stack.o: kernel/freestanding/linux_user_stack.c \
+		kernel/freestanding/linux_user_stack.h | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
+
 $(KERNEL_DIR)/guest_initramfs_seed.o: kernel/freestanding/guest_initramfs_seed.c | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) $(KERNEL_FREESTANDING_INC) -c $< -o $@
 
@@ -518,6 +523,18 @@ $(BUILD_DIR)/test_p18_second_map_24.o: tools/test_p18_second_map_24.c \
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/test_p18_second_map_24: $(BUILD_DIR)/test_p18_second_map_24.o $(P6_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/linux_user_stack.o: kernel/freestanding/linux_user_stack.c \
+		kernel/freestanding/linux_user_stack.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/freestanding -c $< -o $@
+
+$(BUILD_DIR)/test_p19_linux_process_abi.o: tools/test_p19_linux_process_abi.c \
+		kernel/freestanding/linux_user_stack.h kernel/sysmain/syscall.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -Ikernel/freestanding -c $< -o $@
+
+$(BUILD_DIR)/test_p19_linux_process_abi: $(BUILD_DIR)/test_p19_linux_process_abi.o \
+		$(BUILD_DIR)/linux_user_stack.o $(P6_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)

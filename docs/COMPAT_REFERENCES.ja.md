@@ -14,6 +14,9 @@
 
 互換率を上げたい対象が **Linux 静的バイナリ（BusyBox/musl）** なら、参考の本命は WSL1 / Linuxulator / LTP / musl であり、Wine AppDB でも T-Kernel 仕様書でもない。
 
+**平語の本命手順:** `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`  
+（stack/auxv → TLS → brk → execve → /proc。ENOSYS 埋めはその後）
+
 ---
 
 ## 1. 似ているもの・似ていないもの

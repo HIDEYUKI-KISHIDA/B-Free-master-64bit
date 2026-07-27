@@ -53,6 +53,8 @@ typedef struct {
 } Elf64_Phdr;
 
 #define BFREE_USER_MAP_LIMIT 0x800000UL
+/* First PT_LOAD for our BusyBox images is at 0x400000. */
+#define BFREE_USER_LOAD_BASE 0x400000UL
 
 static int in_ring0(void)
 {
@@ -63,6 +65,12 @@ static int in_ring0(void)
 }
 
 int bfree_user_elf_install(const void *blob, size_t len, uintptr_t *entry_out)
+{
+	return bfree_user_elf_install_ex(blob, len, entry_out, NULL);
+}
+
+int bfree_user_elf_install_ex(const void *blob, size_t len, uintptr_t *entry_out,
+			      struct bfree_linux_auxinfo *aux_out)
 {
 	const uint8_t *img = blob;
 	const Elf64_Ehdr *eh;
@@ -108,5 +116,12 @@ int bfree_user_elf_install(const void *blob, size_t len, uintptr_t *entry_out)
 	}
 
 	*entry_out = (uintptr_t)eh->e_entry;
+	if (aux_out != NULL) {
+		/* ET_EXEC: program headers live at load base + e_phoff. */
+		aux_out->phdr = BFREE_USER_LOAD_BASE + (uintptr_t)eh->e_phoff;
+		aux_out->phent = eh->e_phentsize;
+		aux_out->phnum = eh->e_phnum;
+		aux_out->entry = (uintptr_t)eh->e_entry;
+	}
 	return 0;
 }

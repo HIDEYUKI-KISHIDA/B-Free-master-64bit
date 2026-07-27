@@ -996,10 +996,10 @@ int sys_uname(struct guest_utsname *buf)
 	if (buf == NULL)
 		return -EFAULT;
 	memset(buf, 0, sizeof(*buf));
-	memcpy(buf->sysname, "B-Free", 6);
+	memcpy(buf->sysname, "Linux", 5);
 	memcpy(buf->nodename, "bfree", 5);
-	memcpy(buf->release, "0.1", 3);
-	memcpy(buf->version, "0.1", 3);
+	memcpy(buf->release, "6.1.0-bfree", 11);
+	memcpy(buf->version, "#1 SMP B-Free", 13);
 	memcpy(buf->machine, "x86_64", 6);
 	return 0;
 }
@@ -1086,6 +1086,18 @@ int sys_arch_prctl(int code, unsigned long addr)
 
 	if (code == 0x1002) { /* ARCH_SET_FS */
 		g_arch_fsbase = addr;
+#ifdef BFREE_KERNEL_GUEST
+		/* IA32_FS_BASE — required for glibc/musl TLS. */
+		{
+			unsigned lo = (unsigned)addr;
+			unsigned hi = (unsigned)(addr >> 32);
+
+			__asm__ volatile("wrmsr"
+					 :
+					 : "c"(0xC0000100u), "a"(lo), "d"(hi)
+					 : "memory");
+		}
+#endif
 		return 0;
 	}
 	if (code == 0x1003) { /* ARCH_GET_FS */

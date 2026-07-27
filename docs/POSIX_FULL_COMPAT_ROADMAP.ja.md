@@ -2,7 +2,8 @@
 
 > **目的:** BusyBox / musl ゲストが「通常の Linux CLI」として動く状態を経て、最終的に Linux ABI / POSIX ユーザーランド互換を目指す。  
 > **方針:** 一発実装ではなく、検証可能な小さな PR を積み上げる。未到達は `ENOSYS` で明示する。  
-> **参考切り分け:** Wine / WSL1 / Linuxulator / T-Kernel → `docs/COMPAT_REFERENCES.ja.md`
+> **参考切り分け:** Wine / WSL1 / Linuxulator / T-Kernel → `docs/COMPAT_REFERENCES.ja.md`  
+> **Linux-on-BTRON 本命:** `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`（プロセス誕生 L1→L5）
 
 ## 現状（2026-07）
 
@@ -189,9 +190,17 @@
 - [x] `docs/COMPAT_REFERENCES.ja.md`（WSL1 / Linuxulator / Wine / T-Kernel の切り分け）
 - [x] BusyBox `stat` + ash_regress 09 + QEMU マーカー
 - 方針: T-Kernel `tk_*` は別トラック。Linux 互換率は Linuxulator 級の証拠駆動で上げる
-- 次: guest で落ちた既存 REG の厚み直し、`/proc` 最小は証拠付きのみ
 
-手順: `docs/COMPAT_REFERENCES.ja.md` / `docs/LINUX_ABI_SECOND_MAP.ja.md`
+### M21 — Linux-on-BTRON プロセス ABI（プレイブック L1/L1b）
+
+- [x] `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`（本命ノウハウの固定）
+- [x] Linux stack + auxv ビルダ（`linux_user_stack.c`）
+- [x] ash / ash_regress / execve を **e_entry + Linux stack** へ（C 風 trampoline 撤去）
+- [x] `uname` → `Linux`、`ARCH_SET_FS` → FS MSR（guest）
+- [x] ゲート: `test_p19_linux_process_abi`
+- 次（L2）: user VA の `brk`/`mmap`
+
+手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 
 ## 非ゴール（このトラックでは約束しない）
 
