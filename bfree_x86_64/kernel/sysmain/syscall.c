@@ -12,6 +12,7 @@
 #include "net_unix.h"
 #include "process.h"
 #include "sched_abi.h"
+#include "signal_frame.h"
 #include "syscall_dispatch.h"
 #include "thread.h"
 #include "tty.h"
@@ -545,13 +546,9 @@ int sys_rt_sigprocmask(int how, const void *set, void *oset, size_t sigsetsize)
 	return bfree_rt_sigprocmask(&guest.proc, how, set, oset, sigsetsize);
 }
 
-int sys_rt_sigreturn(void)
+long sys_rt_sigreturn(void)
 {
-	/*
-	 * We do not build/restore Linux rt signal frames yet.
-	 * Return ENOSYS rather than pretending success.
-	 */
-	return -ENOSYS;
+	return bfree_rt_sigreturn(&guest.proc);
 }
 
 int sys_capget(void *hdrp, void *datap)

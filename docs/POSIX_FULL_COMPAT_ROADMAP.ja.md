@@ -227,7 +227,15 @@
 - [x] `rt_sigreturn` はフレーム未実装のため `-ENOSYS` を返す（偽成功を撤去）
 - [x] レジストリを実態へ整合（NR 15 は implemented 扱いから外す）
 - [x] ゲート: `test_p25_signal_abi_honesty`
-- 次（L8）: Linux rt signal frame 復元（`ucontext/sigcontext`）の実装検討
+
+### M26 — Linux-on-BTRON L8（rt_sigreturn 復元）
+
+- [x] 最小 Linux x86_64 `rt_sigframe` / `ucontext` / `sigcontext`
+- [x] `bfree_rt_sigframe_setup` でフレームをプロセスへ装着
+- [x] `rt_sigreturn` が `uc_sigmask` と RIP/RSP/RAX を復元
+- [x] フレーム未装着時は `-EFAULT`（偽成功禁止）
+- [x] ゲート: `test_p26_rt_sigreturn`
+- 次（L9）: ring-3 配送経路（handler へ飛び、restorer→sigreturn）
 
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 

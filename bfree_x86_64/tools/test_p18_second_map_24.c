@@ -90,7 +90,7 @@ int main(void)
 	CHECK(bfree_futex_on(guest_proc_mgr(), &futex_word, 1, 1, NULL) >= 0,
 	      "futex wake");
 
-	CHECK(bfree_syscall_enosys_count() == 187, "enosys after incomplete-pair hygiene");
+	CHECK(bfree_syscall_enosys_count() == 187, "enosys after rt_sigreturn restore");
 
 	printf("P18_SECOND_MAP_24: PASS\n");
 	return 0;

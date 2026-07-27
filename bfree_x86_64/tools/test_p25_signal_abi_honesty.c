@@ -47,7 +47,7 @@ int main(void)
 	CHECK(rc == -EINVAL, "rt_sigprocmask rejects bad sigsetsize");
 
 	rc = bfree_invoke_syscall(15, 0, 0, 0, 0, 0, 0);
-	CHECK(rc == -ENOSYS, "rt_sigreturn honest ENOSYS");
+	CHECK(rc == -EFAULT, "rt_sigreturn without frame is honest");
 
 	printf("P25_SIGNAL_ABI_HONESTY: PASS\n");
 	return 0;
