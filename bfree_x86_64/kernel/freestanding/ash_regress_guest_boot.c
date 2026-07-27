@@ -1,0 +1,78 @@
+/*
+ * Boot BusyBox ash regress via Linux process ABI (stack+auxv → e_entry).
+ */
+#include "ash_regress_guest_boot.h"
+#include "debugcon.h"
+#include "elf_user_load.h"
+#include "initramfs.h"
+#include "linux_user_stack.h"
+#include "procfs.h"
+#include "syscall.h"
+#include "user_boot.h"
+#include "vmm.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
+#define ASH_GUEST_BUSYBOX_PATH "bin/busybox"
+
+/* Keep in sync with markers expected by qemu_ash_regress_guest_smoke.sh */
+static char ash_regress_cmd[] =
+	"out=$(echo pipe-data | cat); [ \"$out\" = \"pipe-data\" ] || exit 1; "
+	"echo ASH_PIPE_GUEST_OK; "
+	"marker=parent; ( marker=subshell ); [ \"$marker\" = \"parent\" ] || exit 1; "
+	"echo ASH_SUBSHELL_GUEST_OK; "
+	"out=$(echo hello); [ \"$out\" = \"hello\" ] || exit 1; "
+	"echo ASH_CMDSUBST_GUEST_OK; "
+	"sleep 0 & wait; echo ASH_BG_GUEST_OK; "
+	"/bin/true || exit 1; /bin/false && exit 1; echo ASH_EXTERNAL_GUEST_OK; "
+	"date +%s >/dev/null || exit 1; echo ASH_DATE_GUEST_OK; "
+	"[ \"$(id -u)\" = 0 ] || exit 1; echo ASH_ID_GUEST_OK; "
+	"ln -s /bin/true /tmp/ash_rl && [ \"$(readlink /tmp/ash_rl)\" = /bin/true ] || exit 1; "
+	"echo ASH_LN_READLINK_GUEST_OK; "
+	"stat / >/dev/null || exit 1; echo ASH_STAT_GUEST_OK; "
+	"mkdir -p /tmp/ash_fs && echo hello > /tmp/ash_fs/a.txt && "
+	"[ \"$(cat /tmp/ash_fs/a.txt)\" = hello ] && "
+	"cp /tmp/ash_fs/a.txt /tmp/ash_fs/b.txt && "
+	"mv /tmp/ash_fs/b.txt /tmp/ash_fs/c.txt && "
+	"rm /tmp/ash_fs/a.txt /tmp/ash_fs/c.txt && rmdir /tmp/ash_fs && "
+	"echo ASH_FS_BASIC_GUEST_OK; "
+	"mkdir -p /tmp/ash_ls && echo x > /tmp/ash_ls/item && "
+	"ls /tmp/ash_ls | grep -q item && ls -a /tmp/ash_ls | grep -q '\\.' && "
+	"rm /tmp/ash_ls/item && rmdir /tmp/ash_ls && echo ASH_LS_GUEST_OK";
+
+int bfree_ash_regress_guest_boot(void)
+{
+	const void *payload;
+	size_t payload_len;
+	uintptr_t entry;
+	uintptr_t rsp;
+	struct bfree_linux_auxinfo aux;
+	char *argv[] = {
+		"/bin/busybox", "ash", "-c", ash_regress_cmd, NULL
+	};
+
+	if (bfree_initramfs_lookup(ASH_GUEST_BUSYBOX_PATH, &payload,
+				   &payload_len) != 0)
+		return 0;
+	if (bfree_user_elf_install_ex(payload, payload_len, &entry, &aux) != 0)
+		return 0;
+
+	rsp = bfree_linux_user_stack_build(BFREE_USER_STACK_TOP, 4, argv, NULL,
+					   &aux);
+	if (rsp == 0)
+		return 0;
+
+	{
+		struct bfree_fs *fs = guest_fs();
+
+		if (fs != NULL)
+			(void)bfree_procfs_on_exec(fs, "/bin/busybox",
+						   BFREE_USER_HEAP_BASE,
+						   BFREE_USER_STACK_TOP);
+	}
+
+	bfree_debug_puts("ASH_LINUX_STACK_BOOT\n");
+	bfree_user_boot_exec(entry, rsp);
+	return 1;
+}
