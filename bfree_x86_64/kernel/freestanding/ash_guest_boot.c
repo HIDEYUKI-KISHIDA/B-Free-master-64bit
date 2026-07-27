@@ -2,6 +2,7 @@
  * Boot BusyBox ash from initramfs via Linux process ABI (stack+auxv).
  */
 #include "ash_guest_boot.h"
+#include "debugcon.h"
 #include "elf_user_load.h"
 #include "initramfs.h"
 #include "linux_user_stack.h"
@@ -47,6 +48,7 @@ int bfree_ash_guest_boot(void)
 	}
 
 	/* Jump to real ELF e_entry with Linux stack — no C-ABI trampoline. */
+	bfree_debug_puts("ASH_LINUX_STACK_BOOT\n");
 	bfree_user_boot_exec(entry, rsp);
 	return 1;
 }

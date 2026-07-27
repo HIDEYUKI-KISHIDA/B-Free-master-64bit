@@ -1,6 +1,7 @@
 /*
  * Synthetic vnode FS: per-OFD dirent cursors, unlink-while-open, *at syscalls.
  */
+#include "cred.h"
 #include "devnode.h"
 #include "fs_ofd.h"
 #include "blk_persist.h"
@@ -15,6 +16,71 @@
 #define DT_REG     8
 
 #define AT_REMOVEDIR 0x200
+
+#ifndef O_CREAT
+#define O_CREAT 0100
+#endif
+#ifndef O_EXCL
+#define O_EXCL 0200
+#endif
+#ifndef R_OK
+#define R_OK 4
+#endif
+#ifndef W_OK
+#define W_OK 2
+#endif
+#ifndef X_OK
+#define X_OK 1
+#endif
+#ifndef F_OK
+#define F_OK 0
+#endif
+
+static unsigned apply_umask_mode(struct bfree_fs *fs, unsigned mode,
+				 unsigned typebits)
+{
+	unsigned mask = fs != NULL ? fs->umask : 0022u;
+
+	return typebits | ((mode & 0777u) & ~mask);
+}
+
+static int vnode_check_access(const struct bfree_vnode *vn, int mode)
+{
+	unsigned perms;
+	unsigned need = 0;
+
+	if (vn == NULL)
+		return -ENOENT;
+	if (mode == F_OK)
+		return 0;
+	if (mode & ~(R_OK | W_OK | X_OK))
+		return -EINVAL;
+
+	/* Owner triad when uid matches (incl. root-owned files as uid 0). */
+	if (vn->uid == bfree_getuid())
+		perms = (vn->mode >> 6) & 7u;
+	else if (vn->gid == bfree_getgid())
+		perms = (vn->mode >> 3) & 7u;
+	else
+		perms = vn->mode & 7u;
+
+	/* Root may read/write anything; execute still needs an x bit. */
+	if (bfree_getuid() == 0) {
+		if ((mode & X_OK) && ((vn->mode & 0111u) == 0))
+			return -EACCES;
+		return 0;
+	}
+
+	if (mode & R_OK)
+		need |= 4u;
+	if (mode & W_OK)
+		need |= 2u;
+	if (mode & X_OK)
+		need |= 1u;
+	if ((perms & need) != need)
+		return -EACCES;
+	return 0;
+}
 
 static int path_is_absolute(const char *path)
 {
@@ -475,11 +541,21 @@ static int ofd_open_vnode(struct bfree_fs *fs, struct bfree_vnode *vn,
 int bfree_open(struct bfree_fs *fs, const char *path, int flags, int mode)
 {
 	struct bfree_vnode *vn;
+	int rc;
 
-	(void)mode;
 	vn = bfree_lookup(fs, path);
-	if (vn == NULL)
-		return -ENOENT;
+	if (vn == NULL) {
+		if (!(flags & O_CREAT))
+			return -ENOENT;
+		rc = bfree_create(fs, path, mode);
+		if (rc < 0)
+			return rc;
+		vn = bfree_lookup(fs, path);
+		if (vn == NULL)
+			return -ENOENT;
+	} else if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
+		return -EEXIST;
+	}
 	return ofd_open_vnode(fs, vn, flags);
 }
 
@@ -487,13 +563,46 @@ int bfree_openat(struct bfree_fs *fs, int dirfd, const char *path,
 		 int flags, int mode)
 {
 	struct bfree_vnode *vn;
+	int rc;
 
-	(void)mode;
 	if (path == NULL)
 		return -EINVAL;
+	if (path_is_absolute(path))
+		return bfree_open(fs, path, flags, mode);
+
 	vn = lookup_at(fs, dirfd, path);
-	if (vn == NULL)
-		return -ENOENT;
+	if (vn == NULL) {
+		char leaf[BFREE_MAX_NAME];
+		struct bfree_vnode *parent;
+		struct bfree_vnode *child;
+
+		if (!(flags & O_CREAT))
+			return -ENOENT;
+		rc = resolve_parent_at(fs, dirfd, path, &parent, leaf,
+				       sizeof(leaf));
+		if (rc < 0)
+			return rc;
+		if (parent->type != BFREE_VNODE_DIR)
+			return -ENOTDIR;
+		if (vnode_find_child(parent, leaf) != NULL) {
+			if (flags & O_EXCL)
+				return -EEXIST;
+			vn = vnode_find_child(parent, leaf);
+			return ofd_open_vnode(fs, vn, flags);
+		}
+		child = vnode_alloc(leaf, BFREE_VNODE_FILE, parent);
+		if (child == NULL)
+			return -ENOMEM;
+		child->mode = apply_umask_mode(fs, (unsigned)mode, 0100000u);
+		child->uid = bfree_getuid();
+		child->gid = bfree_getgid();
+		rc = vnode_add_child(parent, child);
+		if (rc < 0)
+			return rc;
+		return ofd_open_vnode(fs, child, flags);
+	}
+	if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL))
+		return -EEXIST;
 	return ofd_open_vnode(fs, vn, flags);
 }
 
@@ -740,7 +849,6 @@ int bfree_create(struct bfree_fs *fs, const char *path, int mode)
 	struct bfree_vnode *parent;
 	struct bfree_vnode *child;
 
-	(void)mode;
 	parent = resolve_parent(fs, path, leaf, sizeof(leaf));
 	if (parent == NULL || parent->type != BFREE_VNODE_DIR)
 		return -ENOENT;
@@ -750,6 +858,9 @@ int bfree_create(struct bfree_fs *fs, const char *path, int mode)
 	child = vnode_alloc(leaf, BFREE_VNODE_FILE, parent);
 	if (child == NULL)
 		return -ENOMEM;
+	child->mode = apply_umask_mode(fs, (unsigned)mode, 0100000u);
+	child->uid = bfree_getuid();
+	child->gid = bfree_getgid();
 	return vnode_add_child(parent, child);
 }
 
@@ -759,7 +870,6 @@ int bfree_mkdir(struct bfree_fs *fs, const char *path, int mode)
 	struct bfree_vnode *parent;
 	struct bfree_vnode *child;
 
-	(void)mode;
 	parent = resolve_parent(fs, path, leaf, sizeof(leaf));
 	if (parent == NULL || parent->type != BFREE_VNODE_DIR)
 		return -ENOENT;
@@ -769,6 +879,9 @@ int bfree_mkdir(struct bfree_fs *fs, const char *path, int mode)
 	child = vnode_alloc(leaf, BFREE_VNODE_DIR, parent);
 	if (child == NULL)
 		return -ENOMEM;
+	child->mode = apply_umask_mode(fs, (unsigned)mode, 0040000u);
+	child->uid = bfree_getuid();
+	child->gid = bfree_getgid();
 	return vnode_add_child(parent, child);
 }
 
@@ -793,6 +906,9 @@ int bfree_mkdirat(struct bfree_fs *fs, int dirfd, const char *path, int mode)
 	child = vnode_alloc(leaf, BFREE_VNODE_DIR, parent);
 	if (child == NULL)
 		return -ENOMEM;
+	child->mode = apply_umask_mode(fs, (unsigned)mode, 0040000u);
+	child->uid = bfree_getuid();
+	child->gid = bfree_getgid();
 	return vnode_add_child(parent, child);
 }
 
@@ -1071,11 +1187,10 @@ int bfree_access(struct bfree_fs *fs, const char *path, int mode)
 {
 	struct bfree_vnode *vn;
 
-	(void)mode;
 	vn = bfree_lookup(fs, path);
 	if (vn == NULL)
 		return -ENOENT;
-	return 0;
+	return vnode_check_access(vn, mode);
 }
 
 int bfree_faccessat(struct bfree_fs *fs, int dirfd, const char *path, int mode,
@@ -1083,15 +1198,14 @@ int bfree_faccessat(struct bfree_fs *fs, int dirfd, const char *path, int mode,
 {
 	struct bfree_vnode *vn;
 
-	(void)mode;
-	(void)flags;
+	(void)flags; /* AT_EACCESS / AT_SYMLINK_NOFOLLOW: best-effort */
 	if (path_is_absolute(path))
 		vn = bfree_lookup(fs, path);
 	else
 		vn = lookup_at(fs, dirfd, path);
 	if (vn == NULL)
 		return -ENOENT;
-	return 0;
+	return vnode_check_access(vn, mode);
 }
 
 static int truncate_vnode(struct bfree_vnode *vn, off_t length)

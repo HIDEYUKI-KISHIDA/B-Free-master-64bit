@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P16_ASH_REGRESS_GUEST_QEMU — full BusyBox ash regress on booted guest.
+# P16_ASH_REGRESS_GUEST_QEMU — BusyBox ash regress on Linux stack+auxv boot.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,7 +10,7 @@ if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
 	exit 0
 fi
 
-echo "== qemu_ash_regress_guest_smoke: build kernel (ash regress boot preferred) =="
+echo "== qemu_ash_regress_guest_smoke: build kernel (ash regress Linux-stack boot) =="
 make -C "${ROOT}" -s kernel KERNEL_BOOT_CFLAGS=-DBFREE_PREFER_ASH_REGRESS_BOOT=1
 
 if [[ ! -f "${KERNEL}" ]]; then
@@ -20,7 +20,8 @@ fi
 
 out="$(timeout 20 qemu-system-x86_64 -kernel "${KERNEL}" -nographic \
 	-device isa-debugcon,chardev=dbg -chardev stdio,id=dbg 2>/dev/null || true)"
-if [[ "${out}" == *"ASH_PIPE_GUEST_OK"* &&
+if [[ "${out}" == *"ASH_LINUX_STACK_BOOT"* &&
+      "${out}" == *"ASH_PIPE_GUEST_OK"* &&
       "${out}" == *"ASH_SUBSHELL_GUEST_OK"* &&
       "${out}" == *"ASH_CMDSUBST_GUEST_OK"* &&
       "${out}" == *"ASH_BG_GUEST_OK"* &&

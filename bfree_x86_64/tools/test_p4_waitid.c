@@ -39,10 +39,23 @@ int main(void)
 	CHECK(status == 11, "first child status");
 
 	status = -1;
-	CHECK(bfree_waitid(&mgr, P_ALL, pid_b, &status, WNOHANG | WEXITED) == 0,
-	      "waitid WNOHANG succeeds");
+	CHECK(bfree_waitid(&mgr, P_ALL, pid_b, &status, WNOHANG | WEXITED) == pid_b,
+	      "waitid WNOHANG reaps second child");
 	CHECK(status == 22, "second child status");
 	CHECK(bfree_proc_zombie_count(&mgr) == 0, "all zombies reaped");
+
+	/* WNOWAIT leaves zombie intact. */
+	pid_a = bfree_fork(&mgr);
+	CHECK(pid_a > 0, "fork child C");
+	CHECK(bfree_switch_proc(&mgr, pid_a) == 0, "switch to child C");
+	bfree_exit(&mgr, 33);
+	status = -1;
+	CHECK(bfree_waitid(&mgr, P_PID, pid_a, &status, WNOWAIT | WEXITED) == pid_a,
+	      "waitid WNOWAIT reports child");
+	CHECK(status == 33, "WNOWAIT status");
+	CHECK(bfree_proc_zombie_count(&mgr) == 1, "zombie kept");
+	CHECK(bfree_waitid(&mgr, P_PID, pid_a, &status, WEXITED) == pid_a,
+	      "final reap");
 
 	printf("P4_WAITID: PASS\n");
 	return 0;

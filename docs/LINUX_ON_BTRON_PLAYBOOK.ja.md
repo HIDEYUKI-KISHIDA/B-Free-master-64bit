@@ -85,7 +85,7 @@ T-Kernel を動かす仕事（`tk2-*-virt`）とは地図を分ける。混ぜ�
 - QEMU guest で `ASH_*_GUEST_OK` が出ても、trampoline が BusyBox 内部を迂回しているなら証明が弱い
 - L1 以降の正本ゲート: **Linux stack 経由で `_start` に入り**、既知マーカーを出す
 
-ゲート: `test_p19_linux_process_abi`（stack）/ `test_p20_user_va_brk_mmap`（L2）/ `test_p21_multi_mb_execve`（L3）/ `test_p22_proc_self_exe`（L4）/ `test_p23_procfs_basic` + `test_p24_procfs_runtime`（L5/L6）/ `test_p25_signal_abi_honesty`（L7）/ `test_p26_rt_sigreturn`（L8）/ `test_p27_signal_deliver`（L9）/ `test_p28_signal_entry`（L10）+ QEMU ash（段階的に trampoline 撤去）
+ゲート: `test_p19_linux_process_abi`（stack）/ `test_p20_user_va_brk_mmap`（L2）/ `test_p21_multi_mb_execve`（L3）/ `test_p22_proc_self_exe`（L4）/ `test_p23_procfs_basic` + `test_p24_procfs_runtime`（L5/L6）/ `test_p25_signal_abi_honesty`（L7）/ `test_p26_rt_sigreturn`（L8）/ `test_p27_signal_deliver`（L9）/ `test_p28_signal_entry`（L10）/ `test_p29_abi_thicken`（siginfo+stub+Linux-stack）+ QEMU ash（`ASH_LINUX_STACK_BOOT`）
 
 ---
 

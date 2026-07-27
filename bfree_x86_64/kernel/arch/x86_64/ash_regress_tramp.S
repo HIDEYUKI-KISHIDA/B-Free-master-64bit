@@ -1,4 +1,7 @@
 /*
+ * LEGACY — not linked into kernel.elf (M30).
+ * Ash regress boots via Linux stack+auxv (ash_regress_guest_boot.c).
+ *
  * Ring-3 trampoline: BusyBox ash regress one-liner (M15).
  */
 	.section .note.GNU-stack,"",@progbits

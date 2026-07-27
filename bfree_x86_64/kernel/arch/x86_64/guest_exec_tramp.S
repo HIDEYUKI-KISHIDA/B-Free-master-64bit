@@ -1,4 +1,7 @@
 /*
+ * LEGACY — not linked into kernel.elf (M30).
+ * execve resumes via bfree_user_boot_exec + Linux stack (elf_user_exec.c).
+ *
  * Ring-3 exec trampoline with patchable argc/argv/envp/entry slots (M15).
  */
 	.section .note.GNU-stack,"",@progbits

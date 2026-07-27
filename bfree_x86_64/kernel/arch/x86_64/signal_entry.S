@@ -17,7 +17,7 @@
 	/* offsetof(struct bfree_rt_sigframe, ...) */
 	.set SF_UC, 8
 	.set SF_SIGNUM, 232
-	.set SF_HANDLER, 248
+	.set SF_HANDLER, 264
 
 bfree_signal_entry:
 	movl SF_SIGNUM(%rsp), %edi

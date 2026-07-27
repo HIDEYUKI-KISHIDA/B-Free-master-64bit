@@ -2,6 +2,7 @@
  * Boot BusyBox ash regress via Linux process ABI (stack+auxv → e_entry).
  */
 #include "ash_regress_guest_boot.h"
+#include "debugcon.h"
 #include "elf_user_load.h"
 #include "initramfs.h"
 #include "linux_user_stack.h"
@@ -62,6 +63,7 @@ int bfree_ash_regress_guest_boot(void)
 						   BFREE_USER_STACK_TOP);
 	}
 
+	bfree_debug_puts("ASH_LINUX_STACK_BOOT\n");
 	bfree_user_boot_exec(entry, rsp);
 	return 1;
 }

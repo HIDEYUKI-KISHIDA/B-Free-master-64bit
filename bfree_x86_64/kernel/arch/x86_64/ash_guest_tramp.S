@@ -1,4 +1,7 @@
 /*
+ * LEGACY — not linked into kernel.elf (M30).
+ * BusyBox ash boots via Linux stack+auxv (ash_guest_boot.c), not this C-ABI trampoline.
+ *
  * Ring-3 trampoline: set Linux argc/argv/envp then jump to BusyBox entry (M12).
  */
 	.section .note.GNU-stack,"",@progbits

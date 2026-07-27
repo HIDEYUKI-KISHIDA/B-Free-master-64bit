@@ -10,13 +10,18 @@ struct bfree_proc_mgr;
 #define BFREE_SA_SIGINFO  0x00000004UL
 #define BFREE_SIGBIT(sig) (1UL << ((unsigned)(sig) - 1U))
 
+/* Linux-ish si_code values used by delivery / waitid. */
+#define BFREE_SI_USER     0
+#define BFREE_SI_KERNEL   0x80
+#define BFREE_CLD_EXITED  1
+
 /* Keep in sync with kernel/arch/x86_64/signal_entry.S */
 #define BFREE_SF_OFF_UC      8U
 #define BFREE_SF_OFF_SIGNUM  232U
-#define BFREE_SF_OFF_HANDLER 248U
-#define BFREE_SF_SIZE        256U
+#define BFREE_SF_OFF_HANDLER 264U
+#define BFREE_SF_SIZE        272U
 
-/* Minimal Linux x86_64 rt_sigframe fields used by L8/L9. */
+/* Minimal Linux x86_64 rt_sigframe fields used by L8–L10. */
 struct bfree_sigcontext {
 	uint64_t r8;
 	uint64_t r9;
@@ -59,11 +64,15 @@ struct bfree_ucontext {
 struct bfree_rt_sigframe {
 	uint64_t pretcode;
 	struct bfree_ucontext uc;
+	/* Compact siginfo prefix (rsi points at si_signo). */
 	int32_t si_signo;
 	int32_t si_errno;
 	int32_t si_code;
+	int32_t si_pid;
+	int32_t si_uid;
+	int32_t si_status;
 	uint32_t pad;
-	uint64_t handler; /* L9: trampoline target (not a Linux field) */
+	uint64_t handler; /* entry trampoline target (not a Linux field) */
 };
 
 struct bfree_sigaction_abi {

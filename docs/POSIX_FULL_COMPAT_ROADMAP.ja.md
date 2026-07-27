@@ -250,7 +250,18 @@
 - [x] delivery は handler 直飛びではなく entry trampoline へ（sysret 制限の回避）
 - [x] `SA_SIGINFO` 引数: rdi=signo, rsi=&siginfo, rdx=&ucontext
 - [x] ゲート: `test_p28_signal_entry`
-- 次: 証拠落ち syscall の厚み / siginfo フィールド忠実度 / QEMU ash 検証
+
+### M30 — signal 忠実度 + stub 厚み + Linux-stack ash 証明
+
+- [x] siginfo: `si_code` / `si_pid` / `si_uid` / `si_status` を配送・kill/SIGCHLD/SIGPIPE で埋める
+- [x] `rt_sigpending` が実 pending ビットを返す
+- [x] `waitid` が Linux `siginfo_t` サブセットを埋め、成功時 0 を返す（`WNOWAIT` 対応）
+- [x] `poll` `nfds==0` / pipe `POLLHUP`・`POLLERR`、`ppoll` nsec+一時 mask
+- [x] `access`/`faccessat` が mode ビットを見る、`create`/`mkdir`/`open O_CREAT` が umask 適用
+- [x] `TCGETS` が最小 termios を返す
+- [x] ash C-ABI trampoline を kernel リンクから除去、`ASH_LINUX_STACK_BOOT` マーカー
+- [x] ゲート: `test_p29_abi_thicken`
+- 次: guest 落ちログで REG をさらに厚く / QEMU 実機で ash regress（環境依存）
 
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 

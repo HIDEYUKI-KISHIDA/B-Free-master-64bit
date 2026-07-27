@@ -92,6 +92,9 @@ int bfree_rt_sigframe_setup(struct bfree_proc_mgr *mgr,
 	frame->si_signo = sig;
 	frame->si_errno = 0;
 	frame->si_code = 0;
+	frame->si_pid = 0;
+	frame->si_uid = 0;
+	frame->si_status = 0;
 	frame->handler = 0;
 
 	self->sig_frame = frame;
@@ -189,6 +192,10 @@ static int deliver_one(struct bfree_proc_mgr *mgr, struct bfree_proc *self,
 				    old_rax, old_mask) != 0)
 		return -EFAULT;
 	frame->handler = self->sig_handler[sig];
+	frame->si_code = self->sig_si_code[sig];
+	frame->si_pid = self->sig_si_pid[sig];
+	frame->si_uid = self->sig_si_uid[sig];
+	frame->si_status = self->sig_si_status[sig];
 	frame->uc.uc_mcontext.rsi = frame_addr + BFREE_SF_OFF_SIGNUM;
 	frame->uc.uc_mcontext.rdx = frame_addr + BFREE_SF_OFF_UC;
 	frame->uc.uc_mcontext.rdi = (uint64_t)(unsigned)sig;

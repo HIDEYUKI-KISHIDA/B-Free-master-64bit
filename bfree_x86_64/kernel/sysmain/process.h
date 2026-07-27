@@ -40,6 +40,7 @@ struct bfree_ring3_frame {
 
 #define WNOHANG  1
 #define WEXITED  4
+#define WNOWAIT  0x01000000
 
 typedef int (*bfree_prog_fn)(int argc, char **argv, char **envp);
 typedef int (*bfree_thread_fn)(void *arg);
@@ -75,6 +76,11 @@ struct bfree_proc {
 	int               sigchld_pending;
 	int               sigint_pending;
 	int               sigpipe_pending;
+	/* Per-signal delivery metadata (compact Linux siginfo subset). */
+	int               sig_si_code[64];
+	int               sig_si_pid[64];
+	int               sig_si_uid[64];
+	int               sig_si_status[64];
 	unsigned long     sig_mask;
 	unsigned long     sig_handler[64];
 	unsigned long     sig_restorer[64];
@@ -143,6 +149,8 @@ int bfree_pipe_dup2(struct bfree_proc_mgr *mgr, int oldfd, int newfd);
 
 #define BFREE_POLLIN   0x0001
 #define BFREE_POLLOUT  0x0004
+#define BFREE_POLLHUP  0x0010
+#define BFREE_POLLERR  0x0008
 #define BFREE_POLLNVAL 0x0020
 
 struct bfree_pollfd {

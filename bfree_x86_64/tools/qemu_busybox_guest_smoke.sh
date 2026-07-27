@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P12_BUSYBOX_GUEST_QEMU — BusyBox ash on booted guest via trampoline + syscall path.
+# P12_BUSYBOX_GUEST_QEMU — BusyBox ash via Linux stack+auxv (no C-ABI trampoline).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,7 +10,7 @@ if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
 	exit 0
 fi
 
-echo "== qemu_busybox_guest_smoke: build kernel (busybox boot preferred) =="
+echo "== qemu_busybox_guest_smoke: build kernel (busybox Linux-stack boot) =="
 make -C "${ROOT}" -s kernel KERNEL_BOOT_CFLAGS=-DBFREE_PREFER_BUSYBOX_BOOT=1
 
 if [[ ! -f "${KERNEL}" ]]; then
@@ -20,7 +20,7 @@ fi
 
 out="$(timeout 8 qemu-system-x86_64 -kernel "${KERNEL}" -nographic \
 	-device isa-debugcon,chardev=dbg -chardev stdio,id=dbg 2>/dev/null || true)"
-if [[ "${out}" == *"ASH_GUEST_OK"* ]]; then
+if [[ "${out}" == *"ASH_LINUX_STACK_BOOT"* && "${out}" == *"ASH_GUEST_OK"* ]]; then
 	echo "P12_BUSYBOX_GUEST_QEMU: PASS"
 	exit 0
 fi

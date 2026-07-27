@@ -105,8 +105,13 @@ static void notify_sigchld(struct bfree_proc_mgr *mgr, struct bfree_proc *child)
 	struct bfree_proc *parent;
 
 	parent = find_pid(mgr, child->ppid);
-	if (parent != NULL)
-		parent->sigchld_pending = child->pid;
+	if (parent == NULL)
+		return;
+	parent->sigchld_pending = child->pid;
+	parent->sig_si_code[BFREE_SIGCHLD] = BFREE_CLD_EXITED;
+	parent->sig_si_pid[BFREE_SIGCHLD] = child->pid;
+	parent->sig_si_uid[BFREE_SIGCHLD] = 0;
+	parent->sig_si_status[BFREE_SIGCHLD] = child->exit_status;
 }
 
 void bfree_proc_attach_fs(struct bfree_fs *fs)
@@ -400,9 +405,10 @@ int bfree_waitid(struct bfree_proc_mgr *mgr, int idtype, int id,
 		if (idtype == P_PID && p->pid != id)
 			continue;
 		found = 1;
-		if (options & WNOHANG) {
-			reap_one(mgr, p, status);
-			return 0;
+		if (options & WNOWAIT) {
+			if (status != NULL)
+				*status = p->exit_status;
+			return p->pid;
 		}
 		return reap_one(mgr, p, status);
 	}
@@ -634,8 +640,13 @@ ssize_t bfree_pipe_write(struct bfree_proc_mgr *mgr, int fd, const void *buf,
 		return -EBADF;
 	if (p->read_ref == 0) {
 		self = current_proc(mgr);
-		if (self != NULL)
+		if (self != NULL) {
 			self->sigpipe_pending = 1;
+			self->sig_si_code[BFREE_SIGPIPE] = BFREE_SI_KERNEL;
+			self->sig_si_pid[BFREE_SIGPIPE] = self->pid;
+			self->sig_si_uid[BFREE_SIGPIPE] = 0;
+			self->sig_si_status[BFREE_SIGPIPE] = 0;
+		}
 		return -EPIPE;
 	}
 	while (done < count) {
@@ -713,6 +724,8 @@ static short pipe_poll_events(struct bfree_proc_mgr *mgr, int fd, short events)
 
 	p = pipe_for_fd(mgr, fd, 0);
 	if (p != NULL) {
+		if (p->write_ref == 0)
+			revents |= BFREE_POLLHUP;
 		if ((events & BFREE_POLLIN) &&
 		    (p->count > 0 || p->write_ref == 0))
 			revents |= BFREE_POLLIN;
@@ -721,8 +734,10 @@ static short pipe_poll_events(struct bfree_proc_mgr *mgr, int fd, short events)
 
 	p = pipe_for_fd(mgr, fd, 1);
 	if (p != NULL) {
-		if ((events & BFREE_POLLOUT) && p->read_ref > 0 &&
-		    p->count < BFREE_MAX_PIPE_BUF)
+		if (p->read_ref == 0)
+			revents |= BFREE_POLLERR;
+		else if ((events & BFREE_POLLOUT) &&
+			 p->count < BFREE_MAX_PIPE_BUF)
 			revents |= BFREE_POLLOUT;
 		return revents;
 	}
@@ -802,10 +817,29 @@ int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 {
 	int ready;
 
-	if (fds == NULL)
+	if (nfds != 0 && fds == NULL)
 		return -EFAULT;
-	if (nfds == 0)
-		return -EINVAL;
+	if (nfds == 0) {
+		if (timeout == 0)
+			return 0;
+#ifdef BFREE_KERNEL_GUEST
+		if (timeout > 0)
+			bfree_poll_delay_ms(timeout);
+		else
+			bfree_ring3_block(mgr, BFREE_PROC_BLOCKED_IO);
+#else
+		(void)mgr;
+		(void)fs;
+		while (timeout > 0) {
+			unsigned int spin;
+
+			for (spin = 0; spin < BFREE_POLL_SPIN_ITERS; spin++)
+				__asm__ volatile("pause");
+			timeout--;
+		}
+#endif
+		return 0;
+	}
 
 	for (;;) {
 		ready = poll_scan(mgr, fs, fds, nfds);
@@ -836,26 +870,32 @@ int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 void bfree_kill(struct bfree_proc_mgr *mgr, int pid, int sig)
 {
 	struct bfree_proc *p;
+	struct bfree_proc *self;
+	int sender_pid = 0;
+	int sender_uid = 0;
 
 	p = find_pid(mgr, pid);
 	if (p == NULL)
 		return;
+	self = current_proc(mgr);
+	if (self != NULL)
+		sender_pid = self->pid;
+	if (sig <= 0 || sig >= 64)
+		return;
+
 	if (sig == BFREE_SIGINT)
 		p->sigint_pending = 1;
 	else if (sig == BFREE_SIGCHLD)
-		p->sigchld_pending = 1;
+		p->sigchld_pending = sender_pid > 0 ? sender_pid : 1;
 	else if (sig == BFREE_SIGPIPE)
 		p->sigpipe_pending = 1;
-	/* Handler installed: treat as delivered for pending query. */
-	if (sig > 0 && sig < 64 && p->sig_handler[sig] != 0 &&
-	    p->sig_handler[sig] != 1 /* SIG_IGN */) {
-		if (sig == BFREE_SIGINT)
-			p->sigint_pending = 1;
-		else if (sig == BFREE_SIGPIPE)
-			p->sigpipe_pending = 1;
-		else if (sig == BFREE_SIGCHLD)
-			p->sigchld_pending = pid > 0 ? pid : 1;
-	}
+	else
+		return; /* unsupported signal numbers stay undelivered */
+
+	p->sig_si_code[sig] = BFREE_SI_USER;
+	p->sig_si_pid[sig] = sender_pid;
+	p->sig_si_uid[sig] = sender_uid;
+	p->sig_si_status[sig] = 0;
 }
 
 int bfree_sig_pending(struct bfree_proc_mgr *mgr, int sig)

@@ -21,7 +21,8 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p17_abi_holes test_p18_second_map_24 test_p19_linux_process_abi \
 	test_p20_user_va_brk_mmap test_p21_multi_mb_execve test_p22_proc_self_exe \
 	test_p23_procfs_basic test_p24_procfs_runtime test_p25_signal_abi_honesty \
-	test_p26_rt_sigreturn test_p27_signal_deliver test_p28_signal_entry
+	test_p26_rt_sigreturn test_p27_signal_deliver test_p28_signal_entry \
+	test_p29_abi_thicken
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -86,8 +87,7 @@ KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/trap_hw.o $(KERNEL_DIR)/debugcon.o $(KERNEL_DIR)/initramfs.o \
 	$(KERNEL_DIR)/string.o $(KERNEL_SYSMAIN_OBJS) $(KERNEL_FREESTANDING_OBJS) \
 	$(KERNEL_DIR)/syscall_entry.o $(KERNEL_DIR)/gdt.o $(KERNEL_DIR)/user_boot.o \
-	$(KERNEL_DIR)/user_boot_ring3.o $(KERNEL_DIR)/ash_guest_tramp.o \
-	$(KERNEL_DIR)/ash_regress_tramp.o $(KERNEL_DIR)/guest_exec_tramp.o \
+	$(KERNEL_DIR)/user_boot_ring3.o \
 	$(KERNEL_DIR)/ring3_userret.o $(KERNEL_DIR)/signal_restorer.o \
 	$(KERNEL_DIR)/signal_entry.o \
 	$(KERNEL_DIR)/syscall_insn_entry.o
@@ -630,6 +630,15 @@ $(BUILD_DIR)/test_p28_signal_entry.o: tools/test_p28_signal_entry.c \
 
 $(BUILD_DIR)/test_p28_signal_entry: $(BUILD_DIR)/test_p28_signal_entry.o $(P6_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p29_abi_thicken.o: tools/test_p29_abi_thicken.c \
+		kernel/sysmain/signal_frame.h kernel/sysmain/fs_ofd.h \
+		kernel/sysmain/syscall.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p29_abi_thicken: $(BUILD_DIR)/test_p29_abi_thicken.o $(P6_OBJS) \
+		$(KERNEL_ELF)
+	$(CC) $(CFLAGS) $(BUILD_DIR)/test_p29_abi_thicken.o $(P6_OBJS) -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@

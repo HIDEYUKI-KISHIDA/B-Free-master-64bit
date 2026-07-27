@@ -422,12 +422,23 @@ int sys_waitid(int idtype, int id, void *siginfo, int options)
 {
 	int status = 0;
 	int rc;
+	unsigned char *si;
 
-	(void)siginfo;
 	rc = bfree_waitid(&guest.proc, idtype, id, &status, options);
-	if (rc >= 0 && siginfo != NULL)
-		*(int *)siginfo = status;
-	return rc;
+	if (rc < 0)
+		return rc;
+	if (siginfo != NULL && rc > 0) {
+		/* Linux x86_64 siginfo_t subset used by waitid. */
+		si = (unsigned char *)siginfo;
+		memset(si, 0, 128);
+		*(int *)(si + 0) = BFREE_SIGCHLD;          /* si_signo */
+		*(int *)(si + 4) = 0;                      /* si_errno */
+		*(int *)(si + 8) = BFREE_CLD_EXITED;       /* si_code */
+		*(int *)(si + 16) = rc;                    /* si_pid */
+		*(int *)(si + 20) = 0;                     /* si_uid */
+		*(int *)(si + 24) = status;                /* si_status */
+	}
+	return 0;
 }
 
 int sys_fork(void)
@@ -625,6 +636,26 @@ int sys_ioctl(int fd, unsigned long req, void *arg)
 	(void)fd;
 	switch (req) {
 	case 0x5401: /* TCGETS */
+		if (arg != NULL) {
+			/* Minimal Linux struct termios (36 bytes on x86_64). */
+			unsigned int *t = (unsigned int *)arg;
+			unsigned char *cc;
+
+			memset(arg, 0, 36);
+			t[0] = 0x00000100; /* c_iflag: ICRNL-ish */
+			t[1] = 0x00000005; /* c_oflag: OPOST|ONLCR */
+			t[2] = 0x00000bf;  /* c_cflag: CS8|CREAD|B38400-ish */
+			t[3] = 0x00008a3b; /* c_lflag: ICANON|ECHO|ISIG… */
+			cc = (unsigned char *)arg + 17;
+			cc[0] = 3;  /* VINTR  ^C */
+			cc[1] = 28; /* VQUIT  ^\ */
+			cc[2] = 127; /* VERASE DEL */
+			cc[3] = 21; /* VKILL  ^U */
+			cc[4] = 4;  /* VEOF   ^D */
+			cc[5] = 0;  /* VTIME */
+			cc[6] = 1;  /* VMIN */
+		}
+		return 0;
 	case 0x5402: /* TCSETS */
 	case 0x5403: /* TCSETSW */
 	case 0x5404: /* TCSETSF */
@@ -1721,10 +1752,23 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 	case 126: /* capset */
 		return sys_capset((void *)a0, (const void *)a1);
 	case 127: /* rt_sigpending */
+	{
+		struct bfree_proc *self = bfree_proc_current(&guest.proc);
+		unsigned long pending = 0;
+
 		if (a0 == 0)
 			return -EFAULT;
-		*(unsigned long *)a0 = 0;
+		if (self != NULL) {
+			if (self->sigint_pending)
+				pending |= BFREE_SIGBIT(BFREE_SIGINT);
+			if (self->sigpipe_pending)
+				pending |= BFREE_SIGBIT(BFREE_SIGPIPE);
+			if (self->sigchld_pending)
+				pending |= BFREE_SIGBIT(BFREE_SIGCHLD);
+		}
+		*(unsigned long *)a0 = pending;
 		return 0;
+	}
 	case 128: /* rt_sigtimedwait */
 		bfree_sched_tick(&guest.proc);
 		return -EAGAIN;
@@ -1889,11 +1933,39 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 				  (unsigned long *)a2, (unsigned long *)a3,
 				  NULL);
 	case 271: /* ppoll */
-		return sys_poll((struct bfree_pollfd *)a0, (unsigned int)a1,
-				a2 ? (int)(((const struct guest_timespec *)a2)
-						   ->tv_sec *
-					   1000)
-				   : -1);
+	{
+		const struct guest_timespec *ts =
+			(const struct guest_timespec *)a2;
+		int timeout = -1;
+		unsigned long old_mask = 0;
+		unsigned long new_mask = 0;
+		struct bfree_proc *self;
+		long rc;
+
+		if (ts != NULL) {
+			long ms = ts->tv_sec * 1000L;
+			long nsec_ms = (ts->tv_nsec + 999999L) / 1000000L;
+
+			if (ms < 0)
+				ms = 0x7fffffff;
+			else if (nsec_ms > 0)
+				ms += nsec_ms;
+			if (ms > 0x7fffffff)
+				ms = 0x7fffffff;
+			timeout = (int)ms;
+		}
+		self = bfree_proc_current(&guest.proc);
+		if (a3 != 0 && self != NULL) {
+			old_mask = self->sig_mask;
+			new_mask = *(const unsigned long *)a3;
+			self->sig_mask = new_mask;
+		}
+		rc = sys_poll((struct bfree_pollfd *)a0, (unsigned int)a1,
+			      timeout);
+		if (a3 != 0 && self != NULL)
+			self->sig_mask = old_mask;
+		return rc;
+	}
 	case 272: /* unshare */
 		(void)a0;
 		return 0;
