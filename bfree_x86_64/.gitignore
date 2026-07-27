@@ -1,0 +1,7 @@
+build/
+third_party/busybox/
+third_party/busybox-*.tar.bz2
+third_party/musl-*/
+third_party/musl-*.tar.gz
+third_party/musl-toolchain/
+guest/rootfs/
