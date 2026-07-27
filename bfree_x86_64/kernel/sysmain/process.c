@@ -902,10 +902,11 @@ int bfree_rt_sigaction(struct bfree_proc_mgr *mgr, int sig, const void *act,
 	struct bfree_proc *self;
 	unsigned long handler = 0;
 
-	(void)sigsetsize;
 	self = current_proc(mgr);
 	if (self == NULL)
 		return -ESRCH;
+	if (sigsetsize != sizeof(unsigned long))
+		return -EINVAL;
 	if (sig <= 0 || sig >= 64)
 		return -EINVAL;
 	if (oact != NULL)
@@ -923,10 +924,11 @@ int bfree_rt_sigprocmask(struct bfree_proc_mgr *mgr, int how, const void *set,
 	struct bfree_proc *self;
 	unsigned long newsig = 0;
 
-	(void)sigsetsize;
 	self = current_proc(mgr);
 	if (self == NULL)
 		return -ESRCH;
+	if (sigsetsize != sizeof(unsigned long))
+		return -EINVAL;
 	if (oset != NULL)
 		*(unsigned long *)oset = self->sig_mask;
 	if (set == NULL)

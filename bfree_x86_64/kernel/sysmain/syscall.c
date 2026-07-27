@@ -545,8 +545,13 @@ int sys_rt_sigprocmask(int how, const void *set, void *oset, size_t sigsetsize)
 	return bfree_rt_sigprocmask(&guest.proc, how, set, oset, sigsetsize);
 }
 
-void sys_rt_sigreturn(void)
+int sys_rt_sigreturn(void)
 {
+	/*
+	 * We do not build/restore Linux rt signal frames yet.
+	 * Return ENOSYS rather than pretending success.
+	 */
+	return -ENOSYS;
 }
 
 int sys_capget(void *hdrp, void *datap)
@@ -1439,8 +1444,7 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_rt_sigprocmask((int)a0, (const void *)a1, (void *)a2,
 					  (size_t)a3);
 	case 15: /* rt_sigreturn */
-		sys_rt_sigreturn();
-		return 0;
+		return sys_rt_sigreturn();
 	case 16: /* ioctl */
 		return sys_ioctl((int)a0, a1, (void *)a2);
 	case 17: /* pread64 */

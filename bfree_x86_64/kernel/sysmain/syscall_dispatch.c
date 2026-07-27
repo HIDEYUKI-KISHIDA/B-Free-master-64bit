@@ -24,7 +24,7 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[12] = 1;  /* brk */
     bfree_syscall_implemented[13] = 1;  /* rt_sigaction */
     bfree_syscall_implemented[14] = 1;  /* rt_sigprocmask */
-    bfree_syscall_implemented[15] = 1;  /* rt_sigreturn */
+    bfree_syscall_implemented[15] = 0;  /* rt_sigreturn: signal frame restore not wired */
     bfree_syscall_implemented[16] = 1;  /* ioctl */
     bfree_syscall_implemented[17] = 1;  /* pread64 */
     bfree_syscall_implemented[18] = 1;  /* pwrite64 */

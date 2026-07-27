@@ -221,6 +221,14 @@
 - [x] ゲート: `test_p23_procfs_basic` / `test_p24_procfs_runtime`
 - 次（L7）: 証拠落ち syscall / signal frame を優先して厚くする
 
+### M25 — Linux-on-BTRON L7（signal ABI の正直化）
+
+- [x] `rt_sigaction` / `rt_sigprocmask` で `sigsetsize==8` を検証（不正は `-EINVAL`）
+- [x] `rt_sigreturn` はフレーム未実装のため `-ENOSYS` を返す（偽成功を撤去）
+- [x] レジストリを実態へ整合（NR 15 は implemented 扱いから外す）
+- [x] ゲート: `test_p25_signal_abi_honesty`
+- 次（L8）: Linux rt signal frame 復元（`ucontext/sigcontext`）の実装検討
+
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 
 ## 非ゴール（このトラックでは約束しない）

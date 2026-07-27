@@ -112,6 +112,7 @@ run_test test_p21_multi_mb_execve
 run_test test_p22_proc_self_exe
 run_test test_p23_procfs_basic
 run_test test_p24_procfs_runtime
+run_test test_p25_signal_abi_honesty
 
 echo "== phase3_guest_auto: ABI second map (BusyBox evidence) =="
 if ! python3 "${ROOT}/tools/gen_abi_second_map.py"; then
