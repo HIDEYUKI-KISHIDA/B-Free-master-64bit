@@ -113,7 +113,8 @@ static void seed_cb(const char *name, const void *data, size_t size, void *arg)
 static void seed_busybox_applets(struct bfree_fs *fs)
 {
 	static const char *const applets[] = {
-		"cat", "echo", "sh", "ash", "true", "false", "sleep", NULL
+		"cat", "echo", "sh", "ash", "true", "false", "sleep",
+		"date", "id", "ln", "readlink", NULL
 	};
 	const void *blob;
 	size_t len;

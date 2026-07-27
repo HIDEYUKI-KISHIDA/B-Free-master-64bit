@@ -18,6 +18,7 @@ int bfree_sched_setscheduler(int pid, int policy,
 int bfree_sched_getscheduler(int pid);
 int bfree_sched_get_priority_max(int policy);
 int bfree_sched_get_priority_min(int policy);
+int bfree_sched_rr_get_interval(int pid, void *tp);
 int bfree_sched_getaffinity(int pid, unsigned long cpusetsize, unsigned long *mask);
 int bfree_sched_setaffinity(int pid, unsigned long cpusetsize,
 			    const unsigned long *mask);

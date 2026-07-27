@@ -27,68 +27,74 @@ python3 tools/gen_abi_second_map.py
 python3 tools/gen_abi_second_map.py --json /tmp/abi-second-map.json
 ```
 
-## 現状スナップショット（M18 第二地図バッチ後）
-
-M18 で第二地図の「次の24」を埋めた後:
+## 現状スナップショット（M19 後）
 
 | 区分 | 本数 | 意味 |
 |------|-----:|------|
-| BusyBox が使う NR | **91** | 実バイナリ証拠 |
-| 登録済み・薄くない | **91** | A+B 完了（THIN クリア） |
-| 登録済みだが **THIN** | **0** | M18 で厚くした |
-| `ENOSYS` かつ非ゴール外 | **0** | BusyBox 経路の穴なし |
-| musl-core `ENOSYS` | **0** | 番号は揃っている |
-| musl-core THIN | **0** | M18 でクリア |
+| BusyBox が使う NR | **97** | `date`/`id`/`ln`/`readlink` applet 追加後 |
+| 登録済み・薄くない | **97** | 第二地図 actionable クリア（含 `faccessat2` 439） |
+| 登録済みだが **THIN** | **0** | — |
+| `ENOSYS` かつ非ゴール外（BusyBox） | **0** | — |
+| musl-core `ENOSYS` / THIN | **0** / **0** | — |
+| レジストリ `0..399` ENOSYS | **187** | long-tail + 非ゴール残 |
 
-### M18 で埋めた ENOSYS 9本
+### M18 で埋めた ENOSYS 9本 + THIN 15本
 
-| NR | 名前 |
-|---:|------|
-| 143 | `sched_getparam` |
-| 144 | `sched_setscheduler` |
-| 145 | `sched_getscheduler` |
-| 146 | `sched_get_priority_max` |
-| 147 | `sched_get_priority_min` |
-| 164 | `settimeofday` |
-| 204 | `sched_getaffinity`（+203 `sched_setaffinity`） |
-| 227 | `clock_settime` |
-| 334 | `rseq` |
+（sched/clock/rseq、signals/`ioctl`/AF_UNIX/`clone`/`futex`）→ `test_p18_second_map_24`
 
-### M18 で厚くした旧 THIN 15本
+### M19 で固定した ash 経路
 
-`rt_sigaction`/`rt_sigprocmask`/`ioctl`(termios+winsize)/AF_UNIX accept·recv 再試行/`clone`(FD継承·tid)/`futex`(協調 wait+tick)
+| 追加 | ゲート |
+|------|--------|
+| BusyBox applet: `date`/`id`/`ln`/`readlink` | rootfs + initramfs seed |
+| `ash_regress` 06–08 | host `phase3_guest_ash.sh` |
+| QEMU trampoline マーカー | `ASH_DATE/ID/LN_READLINK_GUEST_OK` |
 
-検証: `test_p18_second_map_24`
+### M19 衛生バッチ（不完全ペア）
 
-## 非ゴールの切り分け（第二地図の外）
+BusyBox 証拠ではないが、登録済みの片割れを埋めた薄い実装:
 
-第一地図の非ゴールを、残 `ENOSYS` 202 本から分離する。
+| NR | 名前 | 理由 |
+|---:|------|------|
+| 142 | `sched_setparam` | M18 sched の対 |
+| 148 | `sched_rr_get_interval` | 同上 |
+| 274 | `get_robust_list` | `set_robust_list` の対 |
+| 286/287 | `timerfd_{settime,gettime}` | `timerfd_create` の対 |
+| 439 | `faccessat2` | BusyBox 新 applet が発行（証拠） |
 
-| 非ゴール | 第二地図での扱い | 目安本数（0..399） |
-|----------|------------------|-------------------:|
-| io_uring 全機能 | 埋めない。バッチ対象外 | ~9 |
-| 名前空間完全互換 | 埋めない（`setns`/landlock/新 mount API） | ~12 |
-| INET フルスタック | NR追加ではなく `AF_INET` 意味論。今は拒否のまま | （domain） |
-| ホストとビット単位同一 | 性能/FSレイアウト。syscall表の外 | — |
-| 周辺（bpf/seccomp/ptrace…） | 原則外。明示要求が来るまで触らない | ~6 |
+## 残 ENOSYS / long-tail の方針（埋めない・選ぶ）
 
-**重要:** 残202の約87%は非ゴールではなく long-tail。ただし第二地図では **BusyBox/musl 証拠がない限り後回し**。
+**原則: 証拠が無い NR は埋めない。** 残 ~187 は「宿題リスト」ではなく、意図的な後回し＋非ゴール。
 
-## 既存 regress とのギャップ（優先 C）
+| 区分 | 目安 | 扱い |
+|------|-----:|------|
+| 未使用ギャップ 335–399 | ~65 | 触らない（実名 NR は 424+） |
+| 非ゴール（aio/io_uring/ns/bpf/seccomp/ptrace…） | ~14+ | **永久 ENOSYS**（明示要求まで） |
+| BusyBox 無関係 long-tail（modules/mq/keys/NUMA…） | ~40 | 証拠が来るまで放置 |
+| musl 動的/TLS/タイマー拡張 | ~35 | 動的リンク guest を始めるとき再評価 |
+| FS extras（xattr/splice/fanotify…） | ~30 | `tar`/`cp --xattrs` 等の証拠が出たら薄く |
+| ネット **NR** | 0 | 足りないのは `AF_INET` **意味論**（非ゴール維持可） |
 
-今のゲートは「デモが通る」止まりで、第二地図の穴を直接は測っていない。
+### 役に立つ次の作業（ENOSYS 埋め以外）
 
-| スイート | 今あるもの | 第二地図が欲しい次 |
-|----------|------------|-------------------|
-| `ash_regress/` | pipe/subshell/cmdsubst/bg/external | `date`/`id`/`ln`/`readlink`/`stat` を guest で |
-| `posix_regress/` | host の P4/P5 ラッパ | BusyBox 優先 A の専用マーカー |
-| `ltp_regress/` | open/trap/paging/user_boot | sched/clock/rseq の最小 probe |
-| P17 | Cat0–4 の穴埋め完了確認 | `gen_abi_second_map.py` を CI 相当で定期実行 |
+1. **regress 固定を増やす**（本 M19）— CLI が実 syscall 経路を踏む
+2. **不完全ペア衛生**（本 M19 一部）— 片割れ ENOSYS を消す
+3. **`AF_INET` 最小経路**（別マイルストーン）— NR 追加ではなく domain 実装
+4. **既存 REG の意味を厚くする** — guest 負荷で落ちる stub を直す（地図より効く）
+5. **第二地図を CI 相当で回し続ける** — `gen_abi_second_map.py`（phase3 済）
 
-## 次バッチの推奨順（M19 候補）
+## 既存 regress
 
-1. ash_regress に `date`/`id`/`ln -s`/`readlink` を追加し第二地図を回帰固定
-2. 残 long-tail のうち BusyBox 外・musl 動的/ネット拡張が要るものだけを新証拠で拾う
+| スイート | 今あるもの |
+|----------|------------|
+| `ash_regress/` | pipe/subshell/cmdsubst/bg/external + **date/id/ln/readlink** |
+| `posix_regress/` / `ltp_regress/` | 既存 raw/host ゲート |
+| P17 / P18 | Cat0–4 + 第二地図バッチ |
+
+## 次（M20 候補）
+
+1. `stat` applet + ash_regress（任意。raw `stat_guest` は既にある）
+2. 新 BusyBox applet を足すときは必ず `gen_abi_second_map.py` で NR 差分を取る
 3. INET・io_uring・namespaces は引き続き非ゴール
 
 ## 第一地図との関係
@@ -97,6 +103,8 @@ M18 で第二地図の「次の24」を埋めた後:
 第一地図: 全 NR の穴・誤配線・Cat0–4・非ゴール宣言
     ↓ 完了後
 第二地図: BusyBox/musl/regress 証拠で「次の1本」を決める
+    ↓ actionable 0 の後
+regress 固定 + 不完全ペア衛生 +（必要なら）domain 仕事
 ```
 
 Wine（Windows 互換）の AppDB / syscall 地図は、このトラックの第二地図には使わない。
@@ -106,6 +114,8 @@ Wine（Windows 互換）の AppDB / syscall 地図は、このトラックの第
 ```bash
 cd bfree_x86_64
 python3 tools/gen_abi_second_map.py
-# 期待: BusyBox ENOSYS actionable が「次バッチ」一覧と一致すること
+# 期待: BusyBox ENOSYS actionable = 0
+./tools/phase3_guest_ash.sh
 ./build/host-tests/test_p17_abi_holes
+./build/host-tests/test_p18_second_map_24
 ```

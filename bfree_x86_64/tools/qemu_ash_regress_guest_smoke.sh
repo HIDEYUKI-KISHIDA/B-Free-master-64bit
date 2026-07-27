@@ -24,7 +24,10 @@ if [[ "${out}" == *"ASH_PIPE_GUEST_OK"* &&
       "${out}" == *"ASH_SUBSHELL_GUEST_OK"* &&
       "${out}" == *"ASH_CMDSUBST_GUEST_OK"* &&
       "${out}" == *"ASH_BG_GUEST_OK"* &&
-      "${out}" == *"ASH_EXTERNAL_GUEST_OK"* ]]; then
+      "${out}" == *"ASH_EXTERNAL_GUEST_OK"* &&
+      "${out}" == *"ASH_DATE_GUEST_OK"* &&
+      "${out}" == *"ASH_ID_GUEST_OK"* &&
+      "${out}" == *"ASH_LN_READLINK_GUEST_OK"* ]]; then
 	echo "P16_ASH_REGRESS_GUEST_QEMU: PASS"
 	exit 0
 fi

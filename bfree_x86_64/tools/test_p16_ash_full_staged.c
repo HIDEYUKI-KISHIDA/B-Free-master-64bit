@@ -1,5 +1,5 @@
 /*
- * P16_ASH_FULL_STAGED — all five ash regress scripts staged in initramfs.
+ * P16_ASH_FULL_STAGED — all ash regress scripts staged in initramfs.
  */
 #include <stdio.h>
 
@@ -32,6 +32,12 @@ int main(void)
 	      "04_bg.sh staged");
 	CHECK(file_exists("guest/initramfs/ash_regress/05_external.sh"),
 	      "05_external.sh staged");
+	CHECK(file_exists("guest/initramfs/ash_regress/06_date.sh"),
+	      "06_date.sh staged");
+	CHECK(file_exists("guest/initramfs/ash_regress/07_id.sh"),
+	      "07_id.sh staged");
+	CHECK(file_exists("guest/initramfs/ash_regress/08_ln_readlink.sh"),
+	      "08_ln_readlink.sh staged");
 
 	printf("P16_ASH_FULL_STAGED: PASS\n");
 	return 0;

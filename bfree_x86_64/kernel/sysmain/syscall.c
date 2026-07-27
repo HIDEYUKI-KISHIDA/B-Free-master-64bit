@@ -1742,6 +1742,9 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_getpriority((int)a0, (int)a1);
 	case 141: /* setpriority */
 		return sys_setpriority((int)a0, (int)a1, (int)a2);
+	case 142: /* sched_setparam */
+		return bfree_sched_setparam((int)a0,
+					    (const struct bfree_sched_param *)a1);
 	case 143: /* sched_getparam */
 		return bfree_sched_getparam((int)a0,
 					    (struct bfree_sched_param *)a1);
@@ -1754,6 +1757,8 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return bfree_sched_get_priority_max((int)a0);
 	case 147: /* sched_get_priority_min */
 		return bfree_sched_get_priority_min((int)a0);
+	case 148: /* sched_rr_get_interval */
+		return bfree_sched_rr_get_interval((int)a0, (void *)a1);
 	case 157: /* prctl */
 		return sys_prctl((int)a0, a1, a2, a3, a4);
 	case 158: /* arch_prctl */
@@ -1882,6 +1887,13 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		(void)a0;
 		(void)a1;
 		return 0;
+	case 274: /* get_robust_list */
+		if (a1 == 0 || a2 == 0)
+			return -EFAULT;
+		*(unsigned long *)a1 = 0;
+		*(size_t *)a2 = 0;
+		(void)a0;
+		return 0;
 	case 280: /* utimensat */
 		return sys_utimensat((int)a0, (const char *)a1,
 				     (const struct guest_timespec *)a2,
@@ -1898,6 +1910,18 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return eventfd_alloc((unsigned)a0);
 	case 285: /* fallocate */
 		return sys_fallocate((int)a0, (int)a1, (off_t)a2, (off_t)a3);
+	case 286: /* timerfd_settime */
+		(void)a0;
+		(void)a1;
+		(void)a2;
+		(void)a3;
+		return 0;
+	case 287: /* timerfd_gettime */
+		if (a1 == 0)
+			return -EFAULT;
+		memset((void *)a1, 0, 32);
+		(void)a0;
+		return 0;
 	case 288: /* accept4 */
 		return bfree_accept((int)a0, (struct bfree_sockaddr_un *)a1,
 				    (unsigned int *)a2);
@@ -1953,6 +1977,9 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 	case 334: /* rseq */
 		return bfree_rseq((void *)a0, (unsigned int)a1, (int)a2,
 				  (unsigned int)a3);
+	case 439: /* faccessat2 */
+		return bfree_faccessat(&guest.fs, (int)a0, (const char *)a1,
+				       (int)a2, (int)a3);
 	default:
 		return -ENOSYS;
 	}

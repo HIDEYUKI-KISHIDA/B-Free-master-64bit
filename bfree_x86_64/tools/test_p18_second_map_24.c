@@ -5,6 +5,7 @@
 #include "syscall.h"
 #include "syscall_dispatch.h"
 #include "thread.h"
+#include "fs_ofd.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -64,6 +65,12 @@ int main(void)
 	CHECK(bfree_invoke_syscall(334, (unsigned long)rseq_buf, 32, 0, 0, 0, 0) ==
 		      0,
 	      "rseq");
+	CHECK(bfree_invoke_syscall(439, BFREE_AT_FDCWD,
+				   (unsigned long)"/tmp", 0, 0, 0, 0) == 0,
+	      "faccessat2");
+	CHECK(bfree_syscall_is_implemented(142), "sched_setparam pair");
+	CHECK(bfree_syscall_is_implemented(274), "get_robust_list pair");
+	CHECK(bfree_syscall_is_implemented(286), "timerfd_settime pair");
 
 	/* B: THIN thickened */
 	CHECK(bfree_invoke_syscall(13, 2, 0, 0, 8, 0, 0) == 0, "rt_sigaction");
@@ -83,7 +90,7 @@ int main(void)
 	CHECK(bfree_futex_on(guest_proc_mgr(), &futex_word, 1, 1, NULL) >= 0,
 	      "futex wake");
 
-	CHECK(bfree_syscall_enosys_count() == 192, "enosys after +10 regs");
+	CHECK(bfree_syscall_enosys_count() == 187, "enosys after incomplete-pair hygiene");
 
 	printf("P18_SECOND_MAP_24: PASS\n");
 	return 0;

@@ -172,9 +172,18 @@
 - [x] 生成: `bfree_x86_64/tools/gen_abi_second_map.py`
 - [x] BusyBox 残 `ENOSYS` 9本（sched_*/settimeofday/clock_settime/rseq + setaffinity）
 - [x] 旧 THIN 15本を厚く（signals/`ioctl` termios/AF_UNIX retry/`clone` FD·tid/`futex`）
-- [x] ゲート: `test_p18_second_map_24`（BusyBox 91/91、actionable ENOSYS 0、enosys=192）
+- [x] ゲート: `test_p18_second_map_24`（BusyBox 当時 91/91、actionable ENOSYS 0）
 
-次（M19 候補）: ash_regress に `date`/`id`/`ln`/`readlink` を追加し第二地図を回帰固定
+### M19 — ash_regress 固定 + long-tail 方針 + 不完全ペア衛生
+
+- [x] BusyBox applet: `date`/`id`/`ln`/`readlink`（`configs/busybox_m3.config`）
+- [x] `ash_regress` 06–08 + QEMU trampoline マーカー + initramfs seed
+- [x] 証拠で出た `faccessat2`(439) を登録
+- [x] 不完全ペア薄実装: `sched_setparam`/`sched_rr_get_interval`/`get_robust_list`/`timerfd_*`
+- [x] 残 ENOSYS〜187 は **証拠無しでは埋めない**（第二地図に方針記載）
+- 次（M20）: `stat` applet 任意、`AF_INET` は別トラック、long-tail 一括埋めはしない
+
+手順: `docs/LINUX_ABI_SECOND_MAP.ja.md`
 
 ## 非ゴール（このトラックでは約束しない）
 

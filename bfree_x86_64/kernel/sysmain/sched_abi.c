@@ -95,6 +95,19 @@ int bfree_sched_get_priority_min(int policy)
 	return -EINVAL;
 }
 
+int bfree_sched_rr_get_interval(int pid, void *tp)
+{
+	long *t = tp;
+
+	(void)pid;
+	if (tp == NULL)
+		return -EFAULT;
+	/* Cooperative guest: report a fixed 10ms quantum. */
+	t[0] = 0;
+	t[1] = 10000000L;
+	return 0;
+}
+
 int bfree_sched_getaffinity(int pid, unsigned long cpusetsize, unsigned long *mask)
 {
 	(void)pid;

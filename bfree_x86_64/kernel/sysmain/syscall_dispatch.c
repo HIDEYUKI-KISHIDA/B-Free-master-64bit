@@ -141,11 +141,13 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[138] = 1;  /* fstatfs */
     bfree_syscall_implemented[140] = 1;  /* getpriority */
     bfree_syscall_implemented[141] = 1;  /* setpriority */
+    bfree_syscall_implemented[142] = 1;  /* sched_setparam */
     bfree_syscall_implemented[143] = 1;  /* sched_getparam */
     bfree_syscall_implemented[144] = 1;  /* sched_setscheduler */
     bfree_syscall_implemented[145] = 1;  /* sched_getscheduler */
     bfree_syscall_implemented[146] = 1;  /* sched_get_priority_max */
     bfree_syscall_implemented[147] = 1;  /* sched_get_priority_min */
+    bfree_syscall_implemented[148] = 1;  /* sched_rr_get_interval */
     bfree_syscall_implemented[157] = 1;  /* prctl */
     bfree_syscall_implemented[158] = 1;  /* arch_prctl */
     bfree_syscall_implemented[160] = 1;  /* setrlimit */
@@ -193,11 +195,14 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[271] = 1;  /* ppoll */
     bfree_syscall_implemented[272] = 1;  /* unshare */
     bfree_syscall_implemented[273] = 1;  /* set_robust_list */
+    bfree_syscall_implemented[274] = 1;  /* get_robust_list */
     bfree_syscall_implemented[280] = 1;  /* utimensat */
     bfree_syscall_implemented[281] = 1;  /* epoll_pwait */
     bfree_syscall_implemented[283] = 1;  /* timerfd_create */
     bfree_syscall_implemented[284] = 1;  /* eventfd */
     bfree_syscall_implemented[285] = 1;  /* fallocate */
+    bfree_syscall_implemented[286] = 1;  /* timerfd_settime */
+    bfree_syscall_implemented[287] = 1;  /* timerfd_gettime */
     bfree_syscall_implemented[288] = 1;  /* accept4 */
     bfree_syscall_implemented[289] = 1;  /* signalfd4 */
     bfree_syscall_implemented[290] = 1;  /* eventfd2 */
@@ -217,6 +222,7 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[322] = 1;  /* execveat */
     bfree_syscall_implemented[332] = 1;  /* statx */
     bfree_syscall_implemented[334] = 1;  /* rseq */
+    bfree_syscall_implemented[439] = 1;  /* faccessat2 */
 }
 
 int bfree_syscall_is_implemented(unsigned long nr)
