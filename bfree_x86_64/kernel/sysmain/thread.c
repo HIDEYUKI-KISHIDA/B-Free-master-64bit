@@ -64,6 +64,8 @@ int bfree_clone(struct bfree_proc_mgr *mgr, unsigned long flags,
 	child->sid = parent->sid;
 	child->sig_mask = parent->sig_mask;
 	memcpy(child->sig_handler, parent->sig_handler, sizeof(child->sig_handler));
+	memcpy(child->sig_restorer, parent->sig_restorer, sizeof(child->sig_restorer));
+	memcpy(child->sig_sa_mask, parent->sig_sa_mask, sizeof(child->sig_sa_mask));
 	bfree_fs_init_proc_fds(child->fd_ofd, child->fd_flags);
 	/* Inherit parent's open files (same path as bfree_fork). */
 	{

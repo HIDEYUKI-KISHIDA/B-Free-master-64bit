@@ -3,6 +3,7 @@
  */
 #include "ring3_sched.h"
 
+#include "signal_frame.h"
 #include "syscall.h"
 
 #include <stddef.h>
@@ -146,9 +147,11 @@ uint64_t bfree_ring3_post_syscall(struct bfree_proc_mgr *mgr, uint64_t rax)
 		return rax;
 	if (self->ring3.valid) {
 		self->ring3.rax = rax;
+		(void)bfree_rt_signal_poll_deliver(mgr);
 		ring3_sysret_rcx = self->ring3.rcx;
 		ring3_sysret_r11 = self->ring3.r11;
 		ring3_sysret_rsp = self->ring3.rsp;
+		rax = self->ring3.rax;
 	}
 	if (self->state == BFREE_PROC_ZOMBIE)
 		bfree_ring3_dispatch_user(mgr);

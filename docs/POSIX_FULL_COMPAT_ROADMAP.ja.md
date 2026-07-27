@@ -235,7 +235,15 @@
 - [x] `rt_sigreturn` が `uc_sigmask` と RIP/RSP/RAX を復元
 - [x] フレーム未装着時は `-EFAULT`（偽成功禁止）
 - [x] ゲート: `test_p26_rt_sigreturn`
-- 次（L9）: ring-3 配送経路（handler へ飛び、restorer→sigreturn）
+
+### M27 — Linux-on-BTRON L9（ring-3 signal delivery）
+
+- [x] `bfree_rt_signal_poll_deliver` — pending → handler frame on user stack
+- [x] `kill` / ring3 post-syscall から配送
+- [x] default restorer stub（`bfree_signal_restorer` → NR15）
+- [x] sa_mask + 自シグナルを handler 中ブロック、sigreturn で復元
+- [x] ゲート: `test_p27_signal_deliver`
+- 次（L10）: entry trampoline で rdi/rsi/rdx を正式にセット（SA_SIGINFO）
 
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 

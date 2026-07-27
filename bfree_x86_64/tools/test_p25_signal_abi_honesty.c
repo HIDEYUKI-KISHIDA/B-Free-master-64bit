@@ -1,11 +1,13 @@
 /*
  * P25_SIGNAL_ABI_HONESTY — L7 signal ABI tightening.
  */
+#include "signal_frame.h"
 #include "syscall.h"
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
 
 #define CHECK(cond, msg) do { \
 	if (!(cond)) { \
@@ -16,17 +18,21 @@
 
 int main(void)
 {
-	unsigned long act = 0x12345678UL;
-	unsigned long oact = 0;
+	struct bfree_sigaction_abi act;
+	struct bfree_sigaction_abi oact;
 	unsigned long mask = 0xA5A5UL;
 	unsigned long old = 0;
 	long rc;
 
 	guest_init();
+	memset(&act, 0, sizeof(act));
+	memset(&oact, 0, sizeof(oact));
+	act.handler = 0x12345678UL;
 
 	rc = bfree_invoke_syscall(13, 2, (unsigned long)&act,
 				  (unsigned long)&oact, sizeof(unsigned long), 0, 0);
 	CHECK(rc == 0, "rt_sigaction basic");
+	CHECK(oact.handler == 0, "old handler default");
 
 	rc = bfree_invoke_syscall(13, 2, (unsigned long)&act,
 				  (unsigned long)&oact, 4, 0, 0);
@@ -52,4 +58,3 @@ int main(void)
 	printf("P25_SIGNAL_ABI_HONESTY: PASS\n");
 	return 0;
 }
-

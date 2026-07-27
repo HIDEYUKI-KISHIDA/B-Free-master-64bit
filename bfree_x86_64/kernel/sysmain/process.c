@@ -2,6 +2,7 @@
  * Cooperative scheduler: vfork, execve, fork, waitid, pipes, signals (M2).
  */
 #include "process.h"
+#include "signal_frame.h"
 #include "vmm.h"
 #include "elf_load.h"
 #include "elf_host_run.h"
@@ -900,7 +901,8 @@ int bfree_rt_sigaction(struct bfree_proc_mgr *mgr, int sig, const void *act,
 		       void *oact, size_t sigsetsize)
 {
 	struct bfree_proc *self;
-	unsigned long handler = 0;
+	struct bfree_sigaction_abi sa;
+	struct bfree_sigaction_abi old;
 
 	self = current_proc(mgr);
 	if (self == NULL)
@@ -909,11 +911,25 @@ int bfree_rt_sigaction(struct bfree_proc_mgr *mgr, int sig, const void *act,
 		return -EINVAL;
 	if (sig <= 0 || sig >= 64)
 		return -EINVAL;
+
+	memset(&old, 0, sizeof(old));
+	old.handler = self->sig_handler[sig];
+	old.restorer = self->sig_restorer[sig];
+	old.mask = self->sig_sa_mask[sig];
+	if (self->sig_restorer[sig] != 0)
+		old.flags |= BFREE_SA_RESTORER;
 	if (oact != NULL)
-		*(unsigned long *)oact = self->sig_handler[sig];
+		memcpy(oact, &old, sizeof(old));
+
 	if (act != NULL) {
-		handler = *(const unsigned long *)act;
-		self->sig_handler[sig] = handler;
+		memset(&sa, 0, sizeof(sa));
+		memcpy(&sa, act, sizeof(sa));
+		self->sig_handler[sig] = sa.handler;
+		self->sig_sa_mask[sig] = sa.mask;
+		if (sa.flags & BFREE_SA_RESTORER)
+			self->sig_restorer[sig] = sa.restorer;
+		else
+			self->sig_restorer[sig] = bfree_signal_restorer_addr();
 	}
 	return 0;
 }

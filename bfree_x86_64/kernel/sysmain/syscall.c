@@ -457,6 +457,7 @@ int sys_pipe2(int pipefd[2], int flags)
 int sys_kill(int pid, int sig)
 {
 	bfree_kill(&guest.proc, pid, sig);
+	(void)bfree_rt_signal_poll_deliver(&guest.proc);
 	return 0;
 }
 

@@ -1,12 +1,15 @@
 #ifndef BFREE_SIGNAL_FRAME_H
 #define BFREE_SIGNAL_FRAME_H
 
-#include "process.h"
-
 #include <stddef.h>
 #include <stdint.h>
 
-/* Minimal Linux x86_64 rt_sigframe fields used by L8 restore. */
+struct bfree_proc_mgr;
+
+#define BFREE_SA_RESTORER 0x04000000UL
+#define BFREE_SIGBIT(sig) (1UL << ((unsigned)(sig) - 1U))
+
+/* Minimal Linux x86_64 rt_sigframe fields used by L8/L9. */
 struct bfree_sigcontext {
 	uint64_t r8;
 	uint64_t r9;
@@ -53,6 +56,14 @@ struct bfree_rt_sigframe {
 	int32_t si_errno;
 	int32_t si_code;
 	uint32_t pad;
+	uint64_t handler; /* L9: trampoline target (not a Linux field) */
+};
+
+struct bfree_sigaction_abi {
+	unsigned long handler;
+	unsigned long flags;
+	unsigned long restorer;
+	unsigned long mask;
 };
 
 /*
@@ -66,5 +77,15 @@ int bfree_rt_sigframe_setup(struct bfree_proc_mgr *mgr,
 
 /* Restore uc_sigmask (+ ring3 RIP/RSP/RAX when present). */
 long bfree_rt_sigreturn(struct bfree_proc_mgr *mgr);
+
+/*
+ * Deliver one pending signal to the current process:
+ * build rt_sigframe on the ring-3 stack (or storage fallback),
+ * point RIP at handler and pretcode at restorer.
+ * Returns delivered signo, 0 if none, or -errno.
+ */
+int bfree_rt_signal_poll_deliver(struct bfree_proc_mgr *mgr);
+
+uint64_t bfree_signal_restorer_addr(void);
 
 #endif

@@ -1,6 +1,7 @@
 /*
  * P26_RT_SIGRETURN — L8 Linux rt_sigframe restore.
  */
+#include "process.h"
 #include "signal_frame.h"
 #include "syscall.h"
 #include "syscall_dispatch.h"

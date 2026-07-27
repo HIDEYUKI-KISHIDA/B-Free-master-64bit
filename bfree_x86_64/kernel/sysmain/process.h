@@ -57,6 +57,8 @@ typedef enum {
 struct bfree_ring3_frame;
 struct bfree_rt_sigframe;
 
+#define BFREE_RT_SIGFRAME_SPACE 640
+
 struct bfree_proc {
 	int               pid;
 	int               ppid;
@@ -75,7 +77,10 @@ struct bfree_proc {
 	int               sigpipe_pending;
 	unsigned long     sig_mask;
 	unsigned long     sig_handler[64];
+	unsigned long     sig_restorer[64];
+	unsigned long     sig_sa_mask[64];
 	struct bfree_rt_sigframe *sig_frame; /* active rt frame for sigreturn */
+	unsigned char     sig_frame_storage[BFREE_RT_SIGFRAME_SPACE];
 	int               clear_tid_addr_set;
 	int              *clear_child_tid;
 	int               fd_ofd[BFREE_MAX_FD];
