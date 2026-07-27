@@ -3,13 +3,50 @@
 
 #include <errno.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
 extern void bfree_signal_restorer(void);
+extern void bfree_signal_entry(void);
+
+_Static_assert(offsetof(struct bfree_rt_sigframe, uc) == BFREE_SF_OFF_UC,
+	       "SF uc offset");
+_Static_assert(offsetof(struct bfree_rt_sigframe, si_signo) ==
+		       BFREE_SF_OFF_SIGNUM,
+	       "SF signo offset");
+_Static_assert(offsetof(struct bfree_rt_sigframe, handler) ==
+		       BFREE_SF_OFF_HANDLER,
+	       "SF handler offset");
+_Static_assert(sizeof(struct bfree_rt_sigframe) == BFREE_SF_SIZE,
+	       "SF size");
 
 uint64_t bfree_signal_restorer_addr(void)
 {
 	return (uint64_t)(uintptr_t)bfree_signal_restorer;
+}
+
+uint64_t bfree_signal_entry_addr(void)
+{
+	return (uint64_t)(uintptr_t)bfree_signal_entry;
+}
+
+void bfree_signal_entry_regs(const struct bfree_rt_sigframe *frame,
+			     uint64_t *rdi_out, uint64_t *rsi_out,
+			     uint64_t *rdx_out, uint64_t *target_out)
+{
+	uintptr_t base;
+
+	if (frame == NULL)
+		return;
+	base = (uintptr_t)frame;
+	if (rdi_out != NULL)
+		*rdi_out = (uint64_t)(unsigned)frame->si_signo;
+	if (rsi_out != NULL)
+		*rsi_out = base + BFREE_SF_OFF_SIGNUM;
+	if (rdx_out != NULL)
+		*rdx_out = base + BFREE_SF_OFF_UC;
+	if (target_out != NULL)
+		*target_out = frame->handler;
 }
 
 static int frame_space_ok(void)
@@ -152,15 +189,18 @@ static int deliver_one(struct bfree_proc_mgr *mgr, struct bfree_proc *self,
 				    old_rax, old_mask) != 0)
 		return -EFAULT;
 	frame->handler = self->sig_handler[sig];
-	frame->uc.uc_mcontext.rsi = frame_addr +
-				    offsetof(struct bfree_rt_sigframe, si_signo);
-	frame->uc.uc_mcontext.rdx = frame_addr +
-				    offsetof(struct bfree_rt_sigframe, uc);
+	frame->uc.uc_mcontext.rsi = frame_addr + BFREE_SF_OFF_SIGNUM;
+	frame->uc.uc_mcontext.rdx = frame_addr + BFREE_SF_OFF_UC;
+	frame->uc.uc_mcontext.rdi = (uint64_t)(unsigned)sig;
 
 	/* Block this signal + sa_mask while handler runs. */
 	self->sig_mask |= BFREE_SIGBIT(sig) | self->sig_sa_mask[sig];
 
-	self->ring3.rcx = self->sig_handler[sig];
+	/*
+	 * sysret cannot restore rdi/rsi/rdx. Enter via trampoline that loads
+	 * SA_SIGINFO argument registers then jumps to the real handler.
+	 */
+	self->ring3.rcx = bfree_signal_entry_addr();
 	self->ring3.rsp = frame_addr;
 	self->ring3.r11 = 0x202;
 	self->ring3.rax = 0;

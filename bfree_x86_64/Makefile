@@ -21,7 +21,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p17_abi_holes test_p18_second_map_24 test_p19_linux_process_abi \
 	test_p20_user_va_brk_mmap test_p21_multi_mb_execve test_p22_proc_self_exe \
 	test_p23_procfs_basic test_p24_procfs_runtime test_p25_signal_abi_honesty \
-	test_p26_rt_sigreturn test_p27_signal_deliver
+	test_p26_rt_sigreturn test_p27_signal_deliver test_p28_signal_entry
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -56,7 +56,8 @@ FS_OBJS := $(BUILD_DIR)/fs_ofd.o $(BUILD_DIR)/blk_vol.o $(BUILD_DIR)/blk_persist
 PROC_OBJS := $(BUILD_DIR)/process.o $(BUILD_DIR)/vmm.o $(BUILD_DIR)/shell_cli.o \
 	$(BUILD_DIR)/guest_io.o $(BUILD_DIR)/elf_load.o $(BUILD_DIR)/elf_host_run.o \
 	$(BUILD_DIR)/elf_trap_exec.o $(BUILD_DIR)/thread.o $(BUILD_DIR)/tty.o \
-	$(BUILD_DIR)/signal_frame.o $(BUILD_DIR)/signal_restorer.o
+	$(BUILD_DIR)/signal_frame.o $(BUILD_DIR)/signal_restorer.o \
+	$(BUILD_DIR)/signal_entry.o
 M5_OBJS := $(BUILD_DIR)/cred.o $(BUILD_DIR)/net_unix.o $(BUILD_DIR)/ipc_shm.o \
 	$(BUILD_DIR)/ipc_sysv.o $(BUILD_DIR)/epoll.o $(BUILD_DIR)/sched_abi.o \
 	$(BUILD_DIR)/syscall_dispatch.o
@@ -88,6 +89,7 @@ KERNEL_OBJS := $(KERNEL_DIR)/boot_kernel.o $(KERNEL_DIR)/initramfs_embed.o \
 	$(KERNEL_DIR)/user_boot_ring3.o $(KERNEL_DIR)/ash_guest_tramp.o \
 	$(KERNEL_DIR)/ash_regress_tramp.o $(KERNEL_DIR)/guest_exec_tramp.o \
 	$(KERNEL_DIR)/ring3_userret.o $(KERNEL_DIR)/signal_restorer.o \
+	$(KERNEL_DIR)/signal_entry.o \
 	$(KERNEL_DIR)/syscall_insn_entry.o
 
 .PHONY: all host-tests clean musl-static busybox-guest guest-regress boot-smoke kernel boot-trap-payload initramfs
@@ -253,6 +255,9 @@ $(BUILD_DIR)/signal_frame.o: kernel/sysmain/signal_frame.c \
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/signal_restorer.o: kernel/arch/x86_64/signal_restorer.S | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/signal_entry.o: kernel/arch/x86_64/signal_entry.S | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/%.o: tools/%.c kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
@@ -619,6 +624,13 @@ $(BUILD_DIR)/test_p27_signal_deliver.o: tools/test_p27_signal_deliver.c \
 $(BUILD_DIR)/test_p27_signal_deliver: $(BUILD_DIR)/test_p27_signal_deliver.o $(P6_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+$(BUILD_DIR)/test_p28_signal_entry.o: tools/test_p28_signal_entry.c \
+		kernel/sysmain/signal_frame.h kernel/sysmain/syscall.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p28_signal_entry: $(BUILD_DIR)/test_p28_signal_entry.o $(P6_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@
 
@@ -662,6 +674,9 @@ $(KERNEL_DIR)/ring3_userret.o: kernel/arch/x86_64/ring3_userret.S | $(KERNEL_DIR
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
 $(KERNEL_DIR)/signal_restorer.o: kernel/arch/x86_64/signal_restorer.S | $(KERNEL_DIR)
+	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
+
+$(KERNEL_DIR)/signal_entry.o: kernel/arch/x86_64/signal_entry.S | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) -c $< -o $@
 
 $(KERNEL_DIR)/syscall_insn_entry.o: kernel/arch/x86_64/syscall_insn_entry.S | $(KERNEL_DIR)

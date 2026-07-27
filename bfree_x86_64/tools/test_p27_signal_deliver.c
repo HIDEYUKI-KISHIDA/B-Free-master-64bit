@@ -59,7 +59,8 @@ int main(void)
 	CHECK(frame->handler == act.handler, "frame handler");
 	CHECK(frame->uc.uc_mcontext.rip == 0x400100UL, "saved rip");
 	CHECK(frame->uc.uc_mcontext.rax == 0x99UL, "saved rax");
-	CHECK(self->ring3.rcx == act.handler, "RIP redirected to handler");
+	CHECK(self->ring3.rcx == bfree_signal_entry_addr(),
+	      "RIP redirected to entry trampoline");
 	CHECK(self->ring3.rsp == (uint64_t)(uintptr_t)frame, "RSP at frame");
 	CHECK((self->sig_mask & BFREE_SIGBIT(BFREE_SIGINT)) != 0,
 	      "SIGINT blocked in handler");

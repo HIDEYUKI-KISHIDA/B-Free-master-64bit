@@ -7,7 +7,14 @@
 struct bfree_proc_mgr;
 
 #define BFREE_SA_RESTORER 0x04000000UL
+#define BFREE_SA_SIGINFO  0x00000004UL
 #define BFREE_SIGBIT(sig) (1UL << ((unsigned)(sig) - 1U))
+
+/* Keep in sync with kernel/arch/x86_64/signal_entry.S */
+#define BFREE_SF_OFF_UC      8U
+#define BFREE_SF_OFF_SIGNUM  232U
+#define BFREE_SF_OFF_HANDLER 248U
+#define BFREE_SF_SIZE        256U
 
 /* Minimal Linux x86_64 rt_sigframe fields used by L8/L9. */
 struct bfree_sigcontext {
@@ -81,11 +88,21 @@ long bfree_rt_sigreturn(struct bfree_proc_mgr *mgr);
 /*
  * Deliver one pending signal to the current process:
  * build rt_sigframe on the ring-3 stack (or storage fallback),
- * point RIP at handler and pretcode at restorer.
+ * point RIP at the entry trampoline (loads rdi/rsi/rdx, jmp handler)
+ * and pretcode at restorer.
  * Returns delivered signo, 0 if none, or -errno.
  */
 int bfree_rt_signal_poll_deliver(struct bfree_proc_mgr *mgr);
 
 uint64_t bfree_signal_restorer_addr(void);
+uint64_t bfree_signal_entry_addr(void);
+
+/*
+ * Host-visible mirror of the entry trampoline register loads.
+ * Writes the values trampoline would place in rdi/rsi/rdx/target.
+ */
+void bfree_signal_entry_regs(const struct bfree_rt_sigframe *frame,
+			     uint64_t *rdi_out, uint64_t *rsi_out,
+			     uint64_t *rdx_out, uint64_t *target_out);
 
 #endif

@@ -236,14 +236,21 @@
 - [x] フレーム未装着時は `-EFAULT`（偽成功禁止）
 - [x] ゲート: `test_p26_rt_sigreturn`
 
-### M27 — Linux-on-BTRON L9（ring-3 signal delivery）
+### M28 — Linux-on-BTRON L9（ring-3 signal delivery）
 
 - [x] `bfree_rt_signal_poll_deliver` — pending → handler frame on user stack
 - [x] `kill` / ring3 post-syscall から配送
 - [x] default restorer stub（`bfree_signal_restorer` → NR15）
 - [x] sa_mask + 自シグナルを handler 中ブロック、sigreturn で復元
 - [x] ゲート: `test_p27_signal_deliver`
-- 次（L10）: entry trampoline で rdi/rsi/rdx を正式にセット（SA_SIGINFO）
+
+### M29 — Linux-on-BTRON L10（signal entry trampoline）
+
+- [x] `bfree_signal_entry` — RSP=frame から rdi/rsi/rdx をロードし handler へ jmp
+- [x] delivery は handler 直飛びではなく entry trampoline へ（sysret 制限の回避）
+- [x] `SA_SIGINFO` 引数: rdi=signo, rsi=&siginfo, rdx=&ucontext
+- [x] ゲート: `test_p28_signal_entry`
+- 次: 証拠落ち syscall の厚み / siginfo フィールド忠実度 / QEMU ash 検証
 
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 
