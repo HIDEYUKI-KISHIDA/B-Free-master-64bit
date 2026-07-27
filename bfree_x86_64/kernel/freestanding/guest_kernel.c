@@ -6,19 +6,30 @@
 #include "debugcon.h"
 #include "fs_ofd.h"
 #include "guest_io.h"
+#include "process.h"
 #include "syscall.h"
+#include "vmm.h"
 
 #include <fcntl.h>
 
 void bfree_kernel_guest_init(void)
 {
 	struct bfree_fs *fs;
+	struct bfree_proc_mgr *mgr;
 	int fd;
 
 	guest_init();
 	fs = guest_fs();
 	if (fs == NULL)
 		return;
+
+	/* Switch pid1 address space to identity-mapped user VAs (L2). */
+	mgr = guest_proc_mgr();
+	if (mgr != NULL)
+		(void)bfree_as_init_user_va(&mgr->procs[0].as,
+					    BFREE_USER_HEAP_BASE,
+					    BFREE_USER_MMAP_TOP,
+					    BFREE_USER_HEAP_BASE);
 
 	fd = bfree_open(fs, "/dev/console", O_RDWR, 0);
 	if (fd < 0)

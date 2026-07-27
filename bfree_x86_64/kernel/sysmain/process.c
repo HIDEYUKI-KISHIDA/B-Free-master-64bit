@@ -181,8 +181,13 @@ int bfree_vfork(struct bfree_proc_mgr *mgr)
 	child->pid = mgr->next_pid++;
 	child->ppid = parent->pid;
 	child->state = BFREE_PROC_RUNNING;
-	bfree_as_init(&child->as, parent->as.size);
-	memcpy(child->as.mem, parent->as.mem, parent->as.size);
+	if (parent->as.va_abs) {
+		if (bfree_as_fork_copy(&child->as, &parent->as) < 0)
+			return -ENOMEM;
+	} else {
+		bfree_as_init(&child->as, parent->as.size);
+		memcpy(child->as.mem, parent->as.mem, parent->as.size);
+	}
 #ifdef BFREE_KERNEL_GUEST
 	bfree_ring3_proc_init(child);
 #endif
@@ -216,8 +221,13 @@ int bfree_spawn_vfork_child(struct bfree_proc_mgr *mgr, const char *path,
 	child_pid = child->pid;
 	child->ppid = parent->pid;
 	child->state = BFREE_PROC_RUNNING;
-	bfree_as_init(&child->as, parent->as.size);
-	memcpy(child->as.mem, parent->as.mem, parent->as.size);
+	if (parent->as.va_abs) {
+		if (bfree_as_fork_copy(&child->as, &parent->as) < 0)
+			return -ENOMEM;
+	} else {
+		bfree_as_init(&child->as, parent->as.size);
+		memcpy(child->as.mem, parent->as.mem, parent->as.size);
+	}
 
 	parent->state = BFREE_PROC_BLOCKED_VFORK;
 	parent->vfork_done = 0;

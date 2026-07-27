@@ -5,7 +5,8 @@
 #include <stdint.h>
 
 #define BFREE_USER_LOAD_ADDR  0x400000UL
-#define BFREE_USER_STACK_TOP  0x600000UL
+/* Raised for L2 heap/mmap between ELF BSS and stack (see vmm.h). */
+#define BFREE_USER_STACK_TOP  0x02000000UL
 
 int bfree_user_boot_exec(uintptr_t entry, uintptr_t user_stack);
 int bfree_user_payload_install(const void *blob, size_t len);

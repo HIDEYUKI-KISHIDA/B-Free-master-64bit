@@ -198,7 +198,14 @@
 - [x] ash / ash_regress / execve を **e_entry + Linux stack** へ（C 風 trampoline 撤去）
 - [x] `uname` → `Linux`、`ARCH_SET_FS` → FS MSR（guest）
 - [x] ゲート: `test_p19_linux_process_abi`
-- 次（L2）: user VA の `brk`/`mmap`
+
+### M22 — Linux-on-BTRON L2（user VA brk/mmap）
+
+- [x] `bfree_as_init_user_va` — identity map 上の絶対 VA heap
+- [x] guest pid1 を user VA モードへ（`guest_kernel.c`）
+- [x] stack top `0x2000000`、heap `0x540000`、mmap は下向き
+- [x] ゲート: `test_p20_user_va_brk_mmap`
+- 次（L3/L4）: exec 経路の仕上げ、`/proc/self/exe`
 
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 

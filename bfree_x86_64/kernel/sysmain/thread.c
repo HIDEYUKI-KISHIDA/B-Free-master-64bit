@@ -74,10 +74,7 @@ int bfree_clone(struct bfree_proc_mgr *mgr, unsigned long flags,
 					  parent->fd_ofd, parent->fd_flags);
 	}
 
-	child->as.mem = parent->as.mem;
-	child->as.size = parent->as.size;
-	child->as.brk_end = parent->as.brk_end;
-	child->as.mmap_next = parent->as.mmap_next;
+	child->as = parent->as;
 	child->as_shared = 1;
 
 	if ((flags & BFREE_CLONE_PARENT_SETTID) && parent_tid != NULL)

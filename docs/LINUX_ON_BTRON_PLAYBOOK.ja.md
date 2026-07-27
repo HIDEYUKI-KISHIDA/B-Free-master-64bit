@@ -68,10 +68,10 @@ T-Kernel を動かす仕事（`tk2-*-virt`）とは地図を分ける。混ぜ�
 | 段 | 内容 | 完了条件 | 状態 |
 |----|------|----------|------|
 | **L0** | 本プレイブック固定 | 文書 + ゲート方針 | 本 PR |
-| **L1** | Linux stack + auxv で `e_entry` へ | BusyBox `_start` が argc を読める | 本 PR |
-| **L1b** | `uname` → `Linux`、`ARCH_SET_FS` → FS MSR | libc が自分を Linux と認識 / TLS 設定可 | 本 PR |
-| **L2** | user VA の `brk`/`mmap` | `malloc` が生きる | 次 |
-| **L3** | 大きい `execve` | ash が `/bin/busybox` を載せる | 次 |
+| **L1** | Linux stack + auxv で `e_entry` へ | BusyBox `_start` が argc を読める | 済 |
+| **L1b** | `uname` → `Linux`、`ARCH_SET_FS` → FS MSR | libc が自分を Linux と認識 / TLS 設定可 | 済 |
+| **L2** | user VA の `brk`/`mmap` | `malloc` が生きる | 本 PR |
+| **L3** | 大きい `execve` | ash が `/bin/busybox` を載せる | 次（blob 2MiB は L1 で一部） |
 | **L4** | `/proc/self/exe`（+ maps） | BusyBox `CONFIG_BUSYBOX_EXEC_PATH` | その次 |
 | **L5** | 証拠付きで stub を厚く | 第二地図 + guest 落ちログ | 継続 |
 

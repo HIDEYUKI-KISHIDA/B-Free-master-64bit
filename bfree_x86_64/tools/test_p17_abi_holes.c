@@ -66,7 +66,7 @@ int main(void)
 	memset(uname_buf, 0, sizeof(uname_buf));
 	rc = bfree_invoke_syscall(63, (unsigned long)uname_buf, 0, 0, 0, 0, 0);
 	CHECK(rc == 0, "uname");
-	CHECK(memcmp(uname_buf, "B-Free", 6) == 0, "uname sysname");
+	CHECK(memcmp(uname_buf, "Linux", 5) == 0, "uname sysname");
 	rc = bfree_invoke_syscall(228, 0, (unsigned long)tbuf, 0, 0, 0, 0);
 	CHECK(rc == 0, "clock_gettime");
 

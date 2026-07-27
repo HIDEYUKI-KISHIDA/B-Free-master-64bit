@@ -13,7 +13,7 @@
 void *memcpy(void *dst, const void *src, unsigned long n);
 void *memset(void *s, int c, unsigned long n);
 
-#define USER_EXEC_BLOB_ADDR   0x800000UL
+#define USER_EXEC_BLOB_ADDR   0x03000000UL
 #define USER_EXEC_BLOB_MAX    0x200000UL /* 2 MiB — BusyBox ~1.2MiB */
 #define USER_EXEC_MAX_ARGC    32
 
