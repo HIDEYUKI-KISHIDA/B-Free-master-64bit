@@ -78,3 +78,35 @@ void *bfree_mmap(struct bfree_as *as, void *addr, size_t len, int prot,
 	(void)flags;
 	return base;
 }
+
+int bfree_munmap(struct bfree_as *as, void *addr, size_t len)
+{
+	uintptr_t off;
+
+	if (as == NULL || as->mem == NULL || addr == NULL || len == 0)
+		return -EINVAL;
+	off = (uintptr_t)((uint8_t *)addr - as->mem);
+	if (off >= as->size)
+		return -EINVAL;
+	/* Bump allocator: reclaim only if unmapping the trailing region. */
+	if (off + len >= as->mmap_next)
+		as->mmap_next = off;
+	return 0;
+}
+
+int bfree_mprotect(struct bfree_as *as, void *addr, size_t len, int prot)
+{
+	(void)prot;
+	if (as == NULL || as->mem == NULL || addr == NULL || len == 0)
+		return -EINVAL;
+	if ((uint8_t *)addr < as->mem ||
+	    (uint8_t *)addr + len > as->mem + as->size)
+		return -ENOMEM;
+	return 0;
+}
+
+int bfree_madvise(struct bfree_as *as, void *addr, size_t len, int advice)
+{
+	(void)advice;
+	return bfree_mprotect(as, addr, len, 0);
+}

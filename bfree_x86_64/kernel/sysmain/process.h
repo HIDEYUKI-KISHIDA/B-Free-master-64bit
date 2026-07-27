@@ -72,6 +72,13 @@ struct bfree_proc {
 	int               sigchld_pending;
 	int               sigint_pending;
 	int               sigpipe_pending;
+	unsigned long     sig_mask;
+	unsigned long     sig_handler[64];
+	int               clear_tid_addr_set;
+	int              *clear_child_tid;
+	int               fd_ofd[BFREE_MAX_FD];
+	int               fd_flags[BFREE_MAX_FD];
+	unsigned long     ticks;
 	struct bfree_ring3_frame ring3;
 };
 
@@ -94,6 +101,8 @@ struct bfree_proc_mgr {
 	int               next_pid;
 	int               fd_pipe_map[BFREE_MAX_FD];
 	int               fd_pipe_end[BFREE_MAX_FD];
+	unsigned long     global_ticks;
+	int               preempt_quantum;
 };
 
 void bfree_proc_init(struct bfree_proc_mgr *mgr);
@@ -139,8 +148,16 @@ int bfree_poll(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 
 void bfree_kill(struct bfree_proc_mgr *mgr, int pid, int sig);
 int  bfree_sig_pending(struct bfree_proc_mgr *mgr, int sig);
+int  bfree_rt_sigaction(struct bfree_proc_mgr *mgr, int sig,
+			const void *act, void *oact, size_t sigsetsize);
+int  bfree_rt_sigprocmask(struct bfree_proc_mgr *mgr, int how,
+			  const void *set, void *oset, size_t sigsetsize);
 
 struct bfree_proc *bfree_proc_current(struct bfree_proc_mgr *mgr);
 int bfree_proc_zombie_count(struct bfree_proc_mgr *mgr);
+void bfree_proc_bind_fs(struct bfree_proc_mgr *mgr, struct bfree_fs *fs);
+void bfree_sched_tick(struct bfree_proc_mgr *mgr);
+int  bfree_sched_yield(struct bfree_proc_mgr *mgr);
+unsigned long bfree_sched_ticks(struct bfree_proc_mgr *mgr);
 
 #endif /* BFREE_PROCESS_H */

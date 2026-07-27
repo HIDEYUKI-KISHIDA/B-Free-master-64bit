@@ -1,4 +1,5 @@
 #include "thread.h"
+#include "fs_ofd.h"
 
 #include <errno.h>
 #include <string.h>
@@ -34,9 +35,14 @@ int bfree_clone(struct bfree_proc_mgr *mgr, unsigned long flags,
 
 	(void)stack;
 	(void)tls;
-	if (mgr == NULL || fn == NULL)
+	if (mgr == NULL)
 		return -EINVAL;
-	if (!(flags & BFREE_CLONE_VM) || !(flags & BFREE_CLONE_THREAD))
+
+	/* Cat2: non-thread clone maps to fork (Linux ABI). */
+	if (!(flags & BFREE_CLONE_THREAD))
+		return bfree_fork(mgr);
+
+	if (!(flags & BFREE_CLONE_VM))
 		return -ENOSYS;
 
 	parent = bfree_proc_current(mgr);
@@ -55,22 +61,13 @@ int bfree_clone(struct bfree_proc_mgr *mgr, unsigned long flags,
 	child->is_thread = 1;
 	child->pgid = parent->pgid;
 	child->sid = parent->sid;
+	bfree_fs_init_proc_fds(child->fd_ofd, child->fd_flags);
 
-	if (flags & BFREE_CLONE_VM) {
-		child->as.mem = parent->as.mem;
-		child->as.size = parent->as.size;
-		child->as.brk_end = parent->as.brk_end;
-		child->as.mmap_next = parent->as.mmap_next;
-		child->as_shared = 1;
-	} else {
-		int rc;
-
-		rc = bfree_as_fork_copy(&child->as, &parent->as);
-		if (rc < 0) {
-			child->state = BFREE_PROC_FREE;
-			return rc;
-		}
-	}
+	child->as.mem = parent->as.mem;
+	child->as.size = parent->as.size;
+	child->as.brk_end = parent->as.brk_end;
+	child->as.mmap_next = parent->as.mmap_next;
+	child->as_shared = 1;
 
 	if (parent_tid != NULL)
 		*parent_tid = parent->pid;
@@ -119,6 +116,8 @@ int bfree_futex(int *uaddr, int op, int val, const void *timeout)
 	op &= ~BFREE_FUTEX_PRIVATE_FLAG;
 
 	if (op == BFREE_FUTEX_WAIT) {
+		if (*uaddr != val)
+			return -EAGAIN;
 		for (i = 0; i < BFREE_MAX_FUTEX; i++) {
 			if (!futex_waiters[i].in_use) {
 				futex_waiters[i].in_use = 1;

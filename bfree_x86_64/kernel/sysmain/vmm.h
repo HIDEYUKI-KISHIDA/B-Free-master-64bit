@@ -26,5 +26,8 @@ uint8_t *bfree_as_ptr(struct bfree_as *as);
 uintptr_t bfree_brk(struct bfree_as *as, uintptr_t new_brk);
 void *bfree_mmap(struct bfree_as *as, void *addr, size_t len, int prot,
 		 int flags);
+int bfree_munmap(struct bfree_as *as, void *addr, size_t len);
+int bfree_mprotect(struct bfree_as *as, void *addr, size_t len, int prot);
+int bfree_madvise(struct bfree_as *as, void *addr, size_t len, int advice);
 
 #endif /* BFREE_VMM_H */

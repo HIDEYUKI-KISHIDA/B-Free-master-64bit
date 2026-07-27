@@ -29,6 +29,7 @@ typedef enum {
 	BFREE_VNODE_FILE = 0,
 	BFREE_VNODE_DIR  = 1,
 	BFREE_VNODE_DEV  = 2,
+	BFREE_VNODE_LNK  = 3,
 } bfree_vtype_t;
 
 #define BFREE_DEV_NULL     1
@@ -42,13 +43,19 @@ struct bfree_vnode {
 	struct bfree_vnode *children[BFREE_MAX_CHILD];
 	size_t          child_count;
 	unsigned        nref;
+	unsigned        nlink;
 	int             unlinked;
 	uint32_t        ino;
 	uint32_t        dev_id;
+	uint32_t        mode;
+	uint32_t        uid;
+	uint32_t        gid;
 	uint32_t        data_blks[BFREE_BLK_MAX_FILE_BLKS];
 	uint32_t        data_blk_count;
-	char           *data;   /* ephemeral mode only */
+	char           *data;   /* ephemeral / symlink target */
 	size_t          size;
+	uint64_t        mtime_sec;
+	uint64_t        mtime_nsec;
 };
 
 struct bfree_ofd {
@@ -63,9 +70,13 @@ struct bfree_fs {
 	struct bfree_vnode root;
 	struct bfree_vnode *cwd;
 	struct bfree_ofd ofd_table[BFREE_MAX_OFD];
-	int            fd_ofd[BFREE_MAX_FD];
-	int            fd_flags[BFREE_MAX_FD];
+	int            fd_ofd_store[BFREE_MAX_FD];
+	int            fd_flags_store[BFREE_MAX_FD];
+	/* Active FD table (Cat4: points at per-process tables when bound). */
+	int           *fd_ofd;
+	int           *fd_flags;
 	int            next_ofd;
+	unsigned       umask;
 	struct bfree_blk_vol *vol;
 	bfree_blk_super_t super;
 	int            mounted;
@@ -100,6 +111,45 @@ int bfree_mkdirat(struct bfree_fs *fs, int dirfd, const char *path, int mode);
 int bfree_unlink(struct bfree_fs *fs, const char *path);
 int bfree_unlinkat(struct bfree_fs *fs, int dirfd, const char *path, int flags);
 int bfree_rmdir(struct bfree_fs *fs, const char *path);
+int bfree_rename(struct bfree_fs *fs, const char *oldpath, const char *newpath);
+int bfree_renameat(struct bfree_fs *fs, int olddirfd, const char *oldpath,
+		   int newdirfd, const char *newpath);
+int bfree_link(struct bfree_fs *fs, const char *oldpath, const char *newpath);
+int bfree_linkat(struct bfree_fs *fs, int olddirfd, const char *oldpath,
+		 int newdirfd, const char *newpath, int flags);
+int bfree_symlink(struct bfree_fs *fs, const char *target, const char *linkpath);
+int bfree_symlinkat(struct bfree_fs *fs, const char *target, int newdirfd,
+		    const char *linkpath);
+ssize_t bfree_readlink(struct bfree_fs *fs, const char *path, char *buf,
+		       size_t bufsiz);
+ssize_t bfree_readlinkat(struct bfree_fs *fs, int dirfd, const char *path,
+			 char *buf, size_t bufsiz);
+int bfree_access(struct bfree_fs *fs, const char *path, int mode);
+int bfree_faccessat(struct bfree_fs *fs, int dirfd, const char *path, int mode,
+		    int flags);
+int bfree_truncate(struct bfree_fs *fs, const char *path, off_t length);
+int bfree_ftruncate(struct bfree_fs *fs, int fd, off_t length);
+int bfree_fchdir(struct bfree_fs *fs, int fd);
+int bfree_chmod(struct bfree_fs *fs, const char *path, unsigned mode);
+int bfree_fchmod(struct bfree_fs *fs, int fd, unsigned mode);
+int bfree_fchmodat(struct bfree_fs *fs, int dirfd, const char *path,
+		   unsigned mode, int flags);
+int bfree_chown(struct bfree_fs *fs, const char *path, unsigned uid,
+		unsigned gid);
+int bfree_fchown(struct bfree_fs *fs, int fd, unsigned uid, unsigned gid);
+int bfree_fchownat(struct bfree_fs *fs, int dirfd, const char *path,
+		   unsigned uid, unsigned gid, int flags);
+int bfree_mknodat(struct bfree_fs *fs, int dirfd, const char *path, unsigned mode,
+		  unsigned dev);
+int bfree_utimensat(struct bfree_fs *fs, int dirfd, const char *path,
+		    const uint64_t times[4], int flags);
+unsigned bfree_umask(struct bfree_fs *fs, unsigned mask);
+int bfree_fsync_path(struct bfree_fs *fs, int fd);
+int bfree_flock(struct bfree_fs *fs, int fd, int op);
+void bfree_fs_bind_fd_table(struct bfree_fs *fs, int *fd_ofd, int *fd_flags);
+void bfree_fs_init_proc_fds(int *fd_ofd, int *fd_flags);
+int bfree_fs_fork_fds(struct bfree_fs *fs, int *dst_ofd, int *dst_flags,
+		      const int *src_ofd, const int *src_flags);
 
 struct bfree_linux_dirent64 {
 	uint64_t d_ino;

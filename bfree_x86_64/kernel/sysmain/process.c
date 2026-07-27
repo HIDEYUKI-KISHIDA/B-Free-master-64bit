@@ -120,17 +120,31 @@ void bfree_proc_init(struct bfree_proc_mgr *mgr)
 	memset(mgr, 0, sizeof(*mgr));
 	mgr->next_pid = 2;
 	mgr->current = 0;
+	mgr->preempt_quantum = 4;
 	mgr->procs[0].pid = 1;
 	mgr->procs[0].ppid = 0;
 	mgr->procs[0].pgid = 1;
 	mgr->procs[0].sid = 0;
 	mgr->procs[0].state = BFREE_PROC_RUNNING;
 	bfree_as_init(&mgr->procs[0].as, 65536);
+	bfree_fs_init_proc_fds(mgr->procs[0].fd_ofd, mgr->procs[0].fd_flags);
 	for (i = 0; i < BFREE_MAX_FD; i++)
 		mgr->fd_pipe_map[i] = BFREE_FD_UNMAPPED;
 #ifdef BFREE_KERNEL_GUEST
 	bfree_ring3_proc_init(&mgr->procs[0]);
 #endif
+}
+
+void bfree_proc_bind_fs(struct bfree_proc_mgr *mgr, struct bfree_fs *fs)
+{
+	struct bfree_proc *self;
+
+	if (mgr == NULL || fs == NULL)
+		return;
+	self = current_proc(mgr);
+	if (self == NULL)
+		return;
+	bfree_fs_bind_fd_table(fs, self->fd_ofd, self->fd_flags);
 }
 
 int bfree_proc_register(const char *path, bfree_prog_fn fn)
@@ -403,6 +417,10 @@ int bfree_fork(struct bfree_proc_mgr *mgr)
 	child->pgid = parent->pgid;
 	child->sid = parent->sid;
 	child->state = BFREE_PROC_RUNNABLE;
+	bfree_fs_init_proc_fds(child->fd_ofd, child->fd_flags);
+	if (g_exec_fs != NULL)
+		bfree_fs_fork_fds(g_exec_fs, child->fd_ofd, child->fd_flags,
+				  parent->fd_ofd, parent->fd_flags);
 #ifdef BFREE_KERNEL_GUEST
 	bfree_ring3_proc_init(child);
 #endif
@@ -425,6 +443,8 @@ int bfree_switch_proc(struct bfree_proc_mgr *mgr, int pid)
 		if (mgr->procs[i].state != BFREE_PROC_FREE &&
 		    mgr->procs[i].pid == pid) {
 			mgr->current = i;
+			if (g_exec_fs != NULL)
+				bfree_proc_bind_fs(mgr, g_exec_fs);
 			return 0;
 		}
 	}
@@ -845,4 +865,102 @@ int bfree_proc_zombie_count(struct bfree_proc_mgr *mgr)
 			n++;
 	}
 	return n;
+}
+
+int bfree_rt_sigaction(struct bfree_proc_mgr *mgr, int sig, const void *act,
+		       void *oact, size_t sigsetsize)
+{
+	struct bfree_proc *self;
+	unsigned long handler = 0;
+
+	(void)sigsetsize;
+	self = current_proc(mgr);
+	if (self == NULL)
+		return -ESRCH;
+	if (sig <= 0 || sig >= 64)
+		return -EINVAL;
+	if (oact != NULL)
+		*(unsigned long *)oact = self->sig_handler[sig];
+	if (act != NULL) {
+		handler = *(const unsigned long *)act;
+		self->sig_handler[sig] = handler;
+	}
+	return 0;
+}
+
+int bfree_rt_sigprocmask(struct bfree_proc_mgr *mgr, int how, const void *set,
+			 void *oset, size_t sigsetsize)
+{
+	struct bfree_proc *self;
+	unsigned long newsig = 0;
+
+	(void)sigsetsize;
+	self = current_proc(mgr);
+	if (self == NULL)
+		return -ESRCH;
+	if (oset != NULL)
+		*(unsigned long *)oset = self->sig_mask;
+	if (set == NULL)
+		return 0;
+	newsig = *(const unsigned long *)set;
+	switch (how) {
+	case 0: /* SIG_BLOCK */
+		self->sig_mask |= newsig;
+		break;
+	case 1: /* SIG_UNBLOCK */
+		self->sig_mask &= ~newsig;
+		break;
+	case 2: /* SIG_SETMASK */
+		self->sig_mask = newsig;
+		break;
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+void bfree_sched_tick(struct bfree_proc_mgr *mgr)
+{
+	struct bfree_proc *self;
+	int i;
+	int next = -1;
+
+	if (mgr == NULL)
+		return;
+	mgr->global_ticks++;
+	self = current_proc(mgr);
+	if (self != NULL)
+		self->ticks++;
+	if (self == NULL || mgr->preempt_quantum <= 0)
+		return;
+	if ((self->ticks % (unsigned long)mgr->preempt_quantum) != 0)
+		return;
+	for (i = 1; i <= BFREE_MAX_PROC; i++) {
+		int idx = (mgr->current + i) % BFREE_MAX_PROC;
+		if (mgr->procs[idx].state == BFREE_PROC_RUNNABLE) {
+			next = idx;
+			break;
+		}
+	}
+	if (next < 0)
+		return;
+	if (self->state == BFREE_PROC_RUNNING)
+		self->state = BFREE_PROC_RUNNABLE;
+	mgr->current = next;
+	mgr->procs[next].state = BFREE_PROC_RUNNING;
+	if (g_exec_fs != NULL)
+		bfree_proc_bind_fs(mgr, g_exec_fs);
+}
+
+int bfree_sched_yield(struct bfree_proc_mgr *mgr)
+{
+	if (mgr == NULL)
+		return -EINVAL;
+	bfree_sched_tick(mgr);
+	return 0;
+}
+
+unsigned long bfree_sched_ticks(struct bfree_proc_mgr *mgr)
+{
+	return mgr != NULL ? mgr->global_ticks : 0;
 }

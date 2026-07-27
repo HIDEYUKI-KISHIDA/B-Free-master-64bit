@@ -24,6 +24,8 @@ struct bfree_unix_sock {
     enum bfree_sock_state state;
     char path[64];
     int peer;
+    int backlog;
+    int pending;
     unsigned char buf[BFREE_SOCK_BUF];
     int buf_len;
 };
@@ -53,7 +55,9 @@ static struct bfree_unix_sock *bfree_sock_get(int fd)
 static int bfree_sock_find_bound(const char *path)
 {
     for (int i = 0; i < BFREE_SOCK_MAX; i++) {
-        if (bfree_socks[i].in_use && bfree_socks[i].state == BFREE_SOCK_BOUND &&
+        if (bfree_socks[i].in_use &&
+            (bfree_socks[i].state == BFREE_SOCK_BOUND ||
+             bfree_socks[i].state == BFREE_SOCK_LISTEN) &&
             strcmp(bfree_socks[i].path, path) == 0)
             return i;
     }
@@ -107,6 +111,15 @@ int bfree_connect(int sockfd, const struct bfree_sockaddr_un *addr, unsigned int
     if (peer == sockfd)
         return -EINVAL;
     struct bfree_unix_sock *p = &bfree_socks[peer];
+    if (p->state == BFREE_SOCK_LISTEN) {
+        if (p->pending >= 0)
+            return -EAGAIN;
+        p->pending = sockfd;
+        s->peer = peer;
+        s->state = BFREE_SOCK_CONNECTED;
+        strncpy(s->path, addr->sun_path, sizeof(s->path) - 1);
+        return 0;
+    }
     if (s->type == BFREE_SOCK_STREAM) {
         if (p->peer >= 0)
             return -EISCONN;
@@ -119,6 +132,141 @@ int bfree_connect(int sockfd, const struct bfree_sockaddr_un *addr, unsigned int
         s->state = BFREE_SOCK_CONNECTED;
     }
     return 0;
+}
+
+int bfree_listen(int sockfd, int backlog)
+{
+    struct bfree_unix_sock *s = bfree_sock_get(sockfd);
+    if (!s)
+        return -EBADF;
+    if (s->state != BFREE_SOCK_BOUND && s->state != BFREE_SOCK_LISTEN)
+        return -EINVAL;
+    s->backlog = backlog > 0 ? backlog : 1;
+    s->state = BFREE_SOCK_LISTEN;
+    s->pending = -1;
+    return 0;
+}
+
+int bfree_accept(int sockfd, struct bfree_sockaddr_un *addr, unsigned int *addrlen)
+{
+    struct bfree_unix_sock *s = bfree_sock_get(sockfd);
+    int neu;
+    struct bfree_unix_sock *ns;
+
+    if (!s)
+        return -EBADF;
+    if (s->state != BFREE_SOCK_LISTEN)
+        return -EINVAL;
+    if (s->pending < 0)
+        return -EAGAIN;
+    neu = bfree_sock_alloc();
+    if (neu < 0)
+        return neu;
+    ns = &bfree_socks[neu];
+    ns->type = s->type;
+    ns->state = BFREE_SOCK_CONNECTED;
+    ns->peer = s->pending;
+    bfree_socks[s->pending].peer = neu;
+    bfree_socks[s->pending].state = BFREE_SOCK_CONNECTED;
+    if (addr && addrlen) {
+        memset(addr, 0, sizeof(*addr));
+        addr->sun_family = BFREE_AF_UNIX;
+        strncpy(addr->sun_path, bfree_socks[s->pending].path,
+                sizeof(addr->sun_path) - 1);
+        *addrlen = (unsigned int)(2 + strlen(addr->sun_path) + 1);
+    }
+    s->pending = -1;
+    return neu;
+}
+
+int bfree_shutdown(int sockfd, int how)
+{
+    struct bfree_unix_sock *s = bfree_sock_get(sockfd);
+    (void)how;
+    if (!s)
+        return -EBADF;
+    s->state = BFREE_SOCK_CREATED;
+    s->peer = -1;
+    s->buf_len = 0;
+    return 0;
+}
+
+int bfree_getsockname(int sockfd, struct bfree_sockaddr_un *addr,
+                      unsigned int *addrlen)
+{
+    struct bfree_unix_sock *s = bfree_sock_get(sockfd);
+    if (!s)
+        return -EBADF;
+    if (!addr || !addrlen)
+        return -EINVAL;
+    memset(addr, 0, sizeof(*addr));
+    addr->sun_family = BFREE_AF_UNIX;
+    strncpy(addr->sun_path, s->path, sizeof(addr->sun_path) - 1);
+    *addrlen = (unsigned int)(2 + strlen(addr->sun_path) + 1);
+    return 0;
+}
+
+int bfree_getpeername(int sockfd, struct bfree_sockaddr_un *addr,
+                      unsigned int *addrlen)
+{
+    struct bfree_unix_sock *s = bfree_sock_get(sockfd);
+    if (!s)
+        return -EBADF;
+    if (s->peer < 0)
+        return -ENOTCONN;
+    return bfree_getsockname(s->peer, addr, addrlen);
+}
+
+int bfree_setsockopt(int sockfd, int level, int optname, const void *optval,
+                     unsigned int optlen)
+{
+    (void)level;
+    (void)optname;
+    (void)optval;
+    (void)optlen;
+    if (!bfree_sock_get(sockfd))
+        return -EBADF;
+    return 0;
+}
+
+int bfree_getsockopt(int sockfd, int level, int optname, void *optval,
+                     unsigned int *optlen)
+{
+    (void)level;
+    (void)optname;
+    if (!bfree_sock_get(sockfd))
+        return -EBADF;
+    if (optval && optlen && *optlen >= sizeof(int)) {
+        *(int *)optval = 0;
+        *optlen = sizeof(int);
+    }
+    return 0;
+}
+
+int bfree_sendmsg(int sockfd, const void *msg, int flags)
+{
+    const struct {
+        void *iov_base;
+        unsigned long iov_len;
+    } *iov = msg;
+
+    if (!iov)
+        return -EINVAL;
+    return bfree_sendto(sockfd, iov->iov_base, (unsigned int)iov->iov_len,
+                        flags, NULL, 0);
+}
+
+int bfree_recvmsg(int sockfd, void *msg, int flags)
+{
+    struct {
+        void *iov_base;
+        unsigned long iov_len;
+    } *iov = msg;
+
+    if (!iov)
+        return -EINVAL;
+    return bfree_recvfrom(sockfd, iov->iov_base, (unsigned int)iov->iov_len,
+                          flags, NULL, NULL);
 }
 
 int bfree_sendto(int sockfd, const void *buf, unsigned int len, int flags,

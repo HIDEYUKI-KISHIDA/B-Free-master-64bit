@@ -53,7 +53,7 @@ PROC_OBJS := $(BUILD_DIR)/process.o $(BUILD_DIR)/vmm.o $(BUILD_DIR)/shell_cli.o 
 	$(BUILD_DIR)/guest_io.o $(BUILD_DIR)/elf_load.o $(BUILD_DIR)/elf_host_run.o \
 	$(BUILD_DIR)/elf_trap_exec.o $(BUILD_DIR)/thread.o $(BUILD_DIR)/tty.o
 M5_OBJS := $(BUILD_DIR)/cred.o $(BUILD_DIR)/net_unix.o $(BUILD_DIR)/ipc_shm.o \
-	$(BUILD_DIR)/syscall_dispatch.o
+	$(BUILD_DIR)/ipc_sysv.o $(BUILD_DIR)/epoll.o $(BUILD_DIR)/syscall_dispatch.o
 M6_OBJS := $(BUILD_DIR)/syscall.o $(BUILD_DIR)/syscall_entry.o
 M7_OBJS := $(BUILD_DIR)/trap_setup.o $(BUILD_DIR)/kernel_main.o
 M8_OBJS := $(BUILD_DIR)/paging.o $(BUILD_DIR)/initramfs.o $(BUILD_DIR)/trap_hw.o
@@ -65,8 +65,8 @@ TRAP_PAYLOAD_OBJS := $(P6_OBJS) $(BUILD_DIR)/trap_setup.o
 
 KERNEL_FREESTANDING_INC := -nostdinc -Ikernel/freestanding/include -DBFREE_KERNEL_GUEST
 KERNEL_SYSMAIN_OBJS := $(addprefix $(KERNEL_DIR)/,fs_ofd.o blk_vol.o blk_persist.o devnode.o \
-	mount.o cred.o net_unix.o ipc_shm.o syscall_dispatch.o syscall.o process.o vmm.o \
-	guest_io.o elf_load.o thread.o tty.o)
+	mount.o cred.o net_unix.o ipc_shm.o ipc_sysv.o epoll.o syscall_dispatch.o syscall.o \
+	process.o vmm.o guest_io.o elf_load.o thread.o tty.o)
 KERNEL_FREESTANDING_OBJS := $(KERNEL_DIR)/libc_stubs.o $(KERNEL_DIR)/exec_stubs.o \
 	$(KERNEL_DIR)/guest_kernel.o $(KERNEL_DIR)/elf_user_load.o \
 	$(KERNEL_DIR)/elf_user_exec.o $(KERNEL_DIR)/guest_initramfs_seed.o \
@@ -192,6 +192,12 @@ $(BUILD_DIR)/net_unix.o: kernel/sysmain/net_unix.c kernel/sysmain/net_unix.h | $
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/ipc_shm.o: kernel/sysmain/ipc_shm.c kernel/sysmain/ipc_shm.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/ipc_sysv.o: kernel/sysmain/ipc_sysv.c kernel/sysmain/ipc_sysv.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/epoll.o: kernel/sysmain/epoll.c kernel/sysmain/epoll.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/syscall_dispatch.o: kernel/sysmain/syscall_dispatch.c kernel/sysmain/syscall_dispatch.h | $(BUILD_DIR)
