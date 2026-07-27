@@ -166,6 +166,12 @@
 
 手順: `docs/M17_ABI_HOLES_0TO4.md` / `docs/LINUX_ABI_HOLES.ja.md`
 
+### M18 — 第二地図（BusyBox/musl 証拠）予定
+
+- 証拠ベース優先: `docs/LINUX_ABI_SECOND_MAP.ja.md`
+- 生成: `bfree_x86_64/tools/gen_abi_second_map.py`
+- 次バッチ: BusyBox 残 `ENOSYS`（sched_*/clock_settime/rseq 等）と THIN 強化
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」

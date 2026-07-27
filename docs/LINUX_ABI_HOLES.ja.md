@@ -14,6 +14,8 @@
 
 検証: `test_p17_abi_holes` / `docs/M17_ABI_HOLES_0TO4.md`
 
+次の優先付けは第二地図: `docs/LINUX_ABI_SECOND_MAP.ja.md`（BusyBox/musl 証拠ベース）。
+
 ## カテゴリ 0 — ABI 配線ミス（必須修正）
 
 | Linux NR | 正しい名前 | M16 の誤り | 修正 |
