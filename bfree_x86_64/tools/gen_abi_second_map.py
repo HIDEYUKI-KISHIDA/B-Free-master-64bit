@@ -13,11 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BUSYBOX = ROOT / "guest/rootfs/bin/busybox"
 DEFAULT_DISPATCH = ROOT / "kernel/sysmain/syscall_dispatch.c"
 
-# Registered but known-thin (Cat2 / M17 notes).
-THIN = {
-    13, 14, 15, 16, 35, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
-    56, 165, 166, 202,
-}
+# After M18 batch: former BusyBox THIN surface was thickened (signals/ioctl/
+# AF_UNIX retry/clone/futex). Keep empty unless a new thin set is identified.
+THIN: set[int] = set()
 
 # Explicit non-goal NRs (io_uring/aio, namespaces/landlock/new mount, bpf/seccomp…).
 NONGOAL = set(range(206, 211)) | {

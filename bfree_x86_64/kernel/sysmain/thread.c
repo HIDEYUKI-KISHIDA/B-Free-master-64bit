@@ -5,11 +5,13 @@
 #include <string.h>
 
 #define BFREE_MAX_FUTEX 16
+#define BFREE_FUTEX_WAIT_SPINS 64
 
 struct bfree_futex_waiter {
 	int in_use;
 	int pid;
 	int *uaddr;
+	int val;
 };
 
 static struct bfree_futex_waiter futex_waiters[BFREE_MAX_FUTEX];
@@ -33,12 +35,11 @@ int bfree_clone(struct bfree_proc_mgr *mgr, unsigned long flags,
 	struct bfree_proc *child;
 	int child_idx;
 
-	(void)stack;
 	(void)tls;
 	if (mgr == NULL)
 		return -EINVAL;
 
-	/* Cat2: non-thread clone maps to fork (Linux ABI). */
+	/* Non-thread clone maps to fork (Linux ABI). */
 	if (!(flags & BFREE_CLONE_THREAD))
 		return bfree_fork(mgr);
 
@@ -61,7 +62,17 @@ int bfree_clone(struct bfree_proc_mgr *mgr, unsigned long flags,
 	child->is_thread = 1;
 	child->pgid = parent->pgid;
 	child->sid = parent->sid;
+	child->sig_mask = parent->sig_mask;
+	memcpy(child->sig_handler, parent->sig_handler, sizeof(child->sig_handler));
 	bfree_fs_init_proc_fds(child->fd_ofd, child->fd_flags);
+	/* Inherit parent's open files (same path as bfree_fork). */
+	{
+		struct bfree_fs *fs = bfree_proc_exec_fs();
+
+		if (fs != NULL)
+			bfree_fs_fork_fds(fs, child->fd_ofd, child->fd_flags,
+					  parent->fd_ofd, parent->fd_flags);
+	}
 
 	child->as.mem = parent->as.mem;
 	child->as.size = parent->as.size;
@@ -69,11 +80,19 @@ int bfree_clone(struct bfree_proc_mgr *mgr, unsigned long flags,
 	child->as.mmap_next = parent->as.mmap_next;
 	child->as_shared = 1;
 
-	if (parent_tid != NULL)
+	if ((flags & BFREE_CLONE_PARENT_SETTID) && parent_tid != NULL)
+		*parent_tid = child->pid;
+	else if (parent_tid != NULL)
 		*parent_tid = parent->pid;
-	if (child_tid != NULL)
-		*child_tid = child->pid;
 
+	if (child_tid != NULL) {
+		*child_tid = child->pid;
+		child->clear_tid_addr_set = 1;
+		child->clear_child_tid = child_tid;
+	}
+
+	/* stack is recorded for ring-3 path; host harness uses fn. */
+	(void)stack;
 	child->thread_fn = fn;
 	child->thread_arg = arg;
 	return child->pid;
@@ -92,11 +111,17 @@ int bfree_thread_run(struct bfree_proc_mgr *mgr, int tid)
 		    mgr->procs[i].pid == tid) {
 			child = &mgr->procs[i];
 			mgr->current = i;
-			if (child->thread_fn == NULL)
-				return -EINVAL;
+			if (child->thread_fn == NULL) {
+				/* Ring-3 style thread: just leave runnable. */
+				mgr->current = parent_idx;
+				return 0;
+			}
 			rc = child->thread_fn(child->thread_arg);
 			child->exit_status = rc & 0xff;
 			child->state = BFREE_PROC_ZOMBIE;
+			if (child->clear_tid_addr_set &&
+			    child->clear_child_tid != NULL)
+				*child->clear_child_tid = 0;
 			mgr->current = parent_idx;
 			return 0;
 		}
@@ -106,8 +131,15 @@ int bfree_thread_run(struct bfree_proc_mgr *mgr, int tid)
 
 int bfree_futex(int *uaddr, int op, int val, const void *timeout)
 {
+	return bfree_futex_on(NULL, uaddr, op, val, timeout);
+}
+
+int bfree_futex_on(struct bfree_proc_mgr *mgr, int *uaddr, int op, int val,
+		   const void *timeout)
+{
 	int i;
 	int woke = 0;
+	int spins;
 
 	(void)timeout;
 	if (uaddr == NULL)
@@ -122,11 +154,30 @@ int bfree_futex(int *uaddr, int op, int val, const void *timeout)
 			if (!futex_waiters[i].in_use) {
 				futex_waiters[i].in_use = 1;
 				futex_waiters[i].uaddr = uaddr;
-				futex_waiters[i].pid = 0;
-				return 0;
+				futex_waiters[i].val = val;
+				futex_waiters[i].pid =
+					mgr && bfree_proc_current(mgr)
+						? bfree_proc_current(mgr)->pid
+						: 0;
+				break;
 			}
 		}
-		return -EAGAIN;
+		if (i >= BFREE_MAX_FUTEX)
+			return -EAGAIN;
+
+		/* Cooperative wait: yield until woken or value changes. */
+		for (spins = 0; spins < BFREE_FUTEX_WAIT_SPINS; spins++) {
+			if (!futex_waiters[i].in_use)
+				return 0;
+			if (*uaddr != val) {
+				futex_waiters[i].in_use = 0;
+				return -EAGAIN;
+			}
+			if (mgr != NULL)
+				bfree_sched_tick(mgr);
+		}
+		futex_waiters[i].in_use = 0;
+		return 0;
 	}
 
 	if (op == BFREE_FUTEX_WAKE) {
@@ -137,6 +188,8 @@ int bfree_futex(int *uaddr, int op, int val, const void *timeout)
 				woke++;
 			}
 		}
+		if (mgr != NULL && woke > 0)
+			bfree_sched_tick(mgr);
 		return woke;
 	}
 

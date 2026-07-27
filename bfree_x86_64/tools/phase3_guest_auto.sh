@@ -104,6 +104,9 @@ run_test test_p16_ash_full_staged
 # M17 Linux ABI holes categories 0-4
 run_test test_p17_abi_holes
 
+# M18 second-map batch (BusyBox 9 ENOSYS + 15 THIN)
+run_test test_p18_second_map_24
+
 echo "== phase3_guest_auto: ABI second map (BusyBox evidence) =="
 if ! python3 "${ROOT}/tools/gen_abi_second_map.py"; then
   FAIL=1

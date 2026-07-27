@@ -11,11 +11,11 @@
 #include "mount.h"
 #include "net_unix.h"
 #include "process.h"
+#include "sched_abi.h"
 #include "syscall_dispatch.h"
 #include "thread.h"
 #include "tty.h"
 #include "vmm.h"
-
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -121,6 +121,7 @@ void guest_init(void)
 	bfree_epoll_reset();
 	bfree_ipc_sysv_reset();
 	bfree_net_reset();
+	bfree_sched_abi_reset();
 
 	for (i = 0; i < BFREE_RLIMIT_NLIMITS; i++) {
 		g_rlimits[i].rlim_cur = (uint64_t)-1;
@@ -195,9 +196,15 @@ static int eventfd_alloc(unsigned initval)
 static void fill_clock(struct guest_timespec *ts)
 {
 	unsigned long ticks = bfree_sched_ticks(&guest.proc);
+	long sec, nsec;
 
 	if (ts == NULL)
 		return;
+	if (bfree_sched_abi_time(&sec, &nsec)) {
+		ts->tv_sec = sec;
+		ts->tv_nsec = nsec;
+		return;
+	}
 	ts->tv_sec = (long)(ticks / 100);
 	ts->tv_nsec = (long)((ticks % 100) * 10000000UL);
 }
@@ -461,7 +468,7 @@ int sys_clone(unsigned long flags, void *stack, int *parent_tid, void *tls,
 
 int sys_futex(int *uaddr, int op, int val, const void *timeout)
 {
-	return bfree_futex(uaddr, op, val, timeout);
+	return bfree_futex_on(&guest.proc, uaddr, op, val, timeout);
 }
 
 int sys_setsid(void)
@@ -616,6 +623,22 @@ int sys_ioctl(int fd, unsigned long req, void *arg)
 	switch (req) {
 	case 0x5401: /* TCGETS */
 	case 0x5402: /* TCSETS */
+	case 0x5403: /* TCSETSW */
+	case 0x5404: /* TCSETSF */
+	case 0x540B: /* TCFLSH */
+	case 0x540A: /* TCSBRK */
+		(void)arg;
+		return 0;
+	case 0x5413: /* TIOCGWINSZ */
+		if (arg != NULL) {
+			unsigned short *ws = arg;
+			ws[0] = 24; /* row */
+			ws[1] = 80; /* col */
+			ws[2] = 0;
+			ws[3] = 0;
+		}
+		return 0;
+	case 0x5414: /* TIOCSWINSZ */
 		(void)arg;
 		return 0;
 	case 0x540F: /* TIOCGPGRP */
@@ -1474,17 +1497,36 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 				   (const struct bfree_sockaddr_un *)a1,
 				   (unsigned int)a2);
 	case 43: /* accept */
-		return bfree_accept((int)a0, (struct bfree_sockaddr_un *)a1,
-				    (unsigned int *)a2);
+	{
+		int rc = bfree_accept((int)a0, (struct bfree_sockaddr_un *)a1,
+				      (unsigned int *)a2);
+		if (rc == -EAGAIN) {
+			bfree_sched_tick(&guest.proc);
+			rc = bfree_accept((int)a0,
+					  (struct bfree_sockaddr_un *)a1,
+					  (unsigned int *)a2);
+		}
+		return rc;
+	}
 	case 44: /* sendto */
 		return sysret_long(sys_sendto(
 			(int)a0, (const void *)a1, (unsigned int)a2, (int)a3,
 			(const struct bfree_sockaddr_un *)a4,
 			(unsigned int)a5));
 	case 45: /* recvfrom */
-		return sysret_long(sys_recvfrom(
+	{
+		long rc = sysret_long(sys_recvfrom(
 			(int)a0, (void *)a1, (unsigned int)a2, (int)a3,
 			(struct bfree_sockaddr_un *)a4, (unsigned int *)a5));
+		if (rc == -EAGAIN) {
+			bfree_sched_tick(&guest.proc);
+			rc = sysret_long(sys_recvfrom(
+				(int)a0, (void *)a1, (unsigned int)a2, (int)a3,
+				(struct bfree_sockaddr_un *)a4,
+				(unsigned int *)a5));
+		}
+		return rc;
+	}
 	case 46: /* sendmsg */
 		return sysret_long(bfree_sendmsg((int)a0, (const void *)a1,
 						 (int)a2));
@@ -1700,6 +1742,18 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_getpriority((int)a0, (int)a1);
 	case 141: /* setpriority */
 		return sys_setpriority((int)a0, (int)a1, (int)a2);
+	case 143: /* sched_getparam */
+		return bfree_sched_getparam((int)a0,
+					    (struct bfree_sched_param *)a1);
+	case 144: /* sched_setscheduler */
+		return bfree_sched_setscheduler(
+			(int)a0, (int)a1, (const struct bfree_sched_param *)a2);
+	case 145: /* sched_getscheduler */
+		return bfree_sched_getscheduler((int)a0);
+	case 146: /* sched_get_priority_max */
+		return bfree_sched_get_priority_max((int)a0);
+	case 147: /* sched_get_priority_min */
+		return bfree_sched_get_priority_min((int)a0);
 	case 157: /* prctl */
 		return sys_prctl((int)a0, a1, a2, a3, a4);
 	case 158: /* arch_prctl */
@@ -1710,6 +1764,8 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_chroot((const char *)a0);
 	case 162: /* sync */
 		return sys_sync();
+	case 164: /* settimeofday */
+		return bfree_settimeofday((const void *)a0, (const void *)a1);
 	case 165: /* mount */
 		return sys_mount((const char *)a0, (const char *)a1,
 				 (const char *)a2, a3, (const void *)a4);
@@ -1724,6 +1780,12 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 	case 202: /* futex */
 		return sys_futex((int *)a0, (int)a1, (int)a2,
 				 (const void *)a3);
+	case 203: /* sched_setaffinity */
+		return bfree_sched_setaffinity((int)a0, a1,
+					       (const unsigned long *)a2);
+	case 204: /* sched_getaffinity */
+		return bfree_sched_getaffinity((int)a0, a1,
+					       (unsigned long *)a2);
 	case 213: /* epoll_create */
 		return bfree_epoll_create1(0);
 	case 217: /* getdents64 */
@@ -1738,6 +1800,8 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		return sys_clock_nanosleep((int)a0, (int)a1,
 					   (const struct guest_timespec *)a2,
 					   (struct guest_timespec *)a3);
+	case 227: /* clock_settime */
+		return bfree_clock_settime((int)a0, (const void *)a1);
 	case 231: /* exit_group */
 		sys_exit((int)a0);
 		return 0;
@@ -1886,6 +1950,9 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 	case 332: /* statx */
 		return sys_statx((int)a0, (const char *)a1, (int)a2,
 				 (unsigned int)a3, (void *)a4);
+	case 334: /* rseq */
+		return bfree_rseq((void *)a0, (unsigned int)a1, (int)a2,
+				  (unsigned int)a3);
 	default:
 		return -ENOSYS;
 	}

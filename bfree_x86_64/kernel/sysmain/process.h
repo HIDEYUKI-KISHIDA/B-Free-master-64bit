@@ -107,6 +107,7 @@ struct bfree_proc_mgr {
 
 void bfree_proc_init(struct bfree_proc_mgr *mgr);
 void bfree_proc_attach_fs(struct bfree_fs *fs);
+struct bfree_fs *bfree_proc_exec_fs(void);
 
 int  bfree_proc_register(const char *path, bfree_prog_fn fn);
 

@@ -18,7 +18,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p11_musl_guest test_p12_busybox_guest test_p13_guest_regress \
 	test_p14_stat_poll test_p14_guest_regress test_p15_poll_blocking \
 	test_p15_ash_regress_staged test_p16_pipe_dup2 test_p16_ash_full_staged \
-	test_p17_abi_holes
+	test_p17_abi_holes test_p18_second_map_24
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -54,7 +54,8 @@ PROC_OBJS := $(BUILD_DIR)/process.o $(BUILD_DIR)/vmm.o $(BUILD_DIR)/shell_cli.o 
 	$(BUILD_DIR)/guest_io.o $(BUILD_DIR)/elf_load.o $(BUILD_DIR)/elf_host_run.o \
 	$(BUILD_DIR)/elf_trap_exec.o $(BUILD_DIR)/thread.o $(BUILD_DIR)/tty.o
 M5_OBJS := $(BUILD_DIR)/cred.o $(BUILD_DIR)/net_unix.o $(BUILD_DIR)/ipc_shm.o \
-	$(BUILD_DIR)/ipc_sysv.o $(BUILD_DIR)/epoll.o $(BUILD_DIR)/syscall_dispatch.o
+	$(BUILD_DIR)/ipc_sysv.o $(BUILD_DIR)/epoll.o $(BUILD_DIR)/sched_abi.o \
+	$(BUILD_DIR)/syscall_dispatch.o
 M6_OBJS := $(BUILD_DIR)/syscall.o $(BUILD_DIR)/syscall_entry.o
 M7_OBJS := $(BUILD_DIR)/trap_setup.o $(BUILD_DIR)/kernel_main.o
 M8_OBJS := $(BUILD_DIR)/paging.o $(BUILD_DIR)/initramfs.o $(BUILD_DIR)/trap_hw.o
@@ -66,7 +67,7 @@ TRAP_PAYLOAD_OBJS := $(P6_OBJS) $(BUILD_DIR)/trap_setup.o
 
 KERNEL_FREESTANDING_INC := -nostdinc -Ikernel/freestanding/include -DBFREE_KERNEL_GUEST
 KERNEL_SYSMAIN_OBJS := $(addprefix $(KERNEL_DIR)/,fs_ofd.o blk_vol.o blk_persist.o devnode.o \
-	mount.o cred.o net_unix.o ipc_shm.o ipc_sysv.o epoll.o syscall_dispatch.o syscall.o \
+	mount.o cred.o net_unix.o ipc_shm.o ipc_sysv.o epoll.o sched_abi.o syscall_dispatch.o syscall.o \
 	process.o vmm.o guest_io.o elf_load.o thread.o tty.o)
 KERNEL_FREESTANDING_OBJS := $(KERNEL_DIR)/libc_stubs.o $(KERNEL_DIR)/exec_stubs.o \
 	$(KERNEL_DIR)/guest_kernel.o $(KERNEL_DIR)/elf_user_load.o \
@@ -199,6 +200,9 @@ $(BUILD_DIR)/ipc_sysv.o: kernel/sysmain/ipc_sysv.c kernel/sysmain/ipc_sysv.h | $
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/epoll.o: kernel/sysmain/epoll.c kernel/sysmain/epoll.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/sched_abi.o: kernel/sysmain/sched_abi.c kernel/sysmain/sched_abi.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/syscall_dispatch.o: kernel/sysmain/syscall_dispatch.c kernel/sysmain/syscall_dispatch.h | $(BUILD_DIR)
@@ -507,6 +511,13 @@ $(BUILD_DIR)/test_p17_abi_holes.o: tools/test_p17_abi_holes.c kernel/sysmain/sys
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/test_p17_abi_holes: $(BUILD_DIR)/test_p17_abi_holes.o $(P6_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p18_second_map_24.o: tools/test_p18_second_map_24.c \
+		kernel/sysmain/syscall.h kernel/sysmain/sched_abi.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p18_second_map_24: $(BUILD_DIR)/test_p18_second_map_24.o $(P6_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)

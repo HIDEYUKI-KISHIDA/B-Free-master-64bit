@@ -141,20 +141,29 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[138] = 1;  /* fstatfs */
     bfree_syscall_implemented[140] = 1;  /* getpriority */
     bfree_syscall_implemented[141] = 1;  /* setpriority */
+    bfree_syscall_implemented[143] = 1;  /* sched_getparam */
+    bfree_syscall_implemented[144] = 1;  /* sched_setscheduler */
+    bfree_syscall_implemented[145] = 1;  /* sched_getscheduler */
+    bfree_syscall_implemented[146] = 1;  /* sched_get_priority_max */
+    bfree_syscall_implemented[147] = 1;  /* sched_get_priority_min */
     bfree_syscall_implemented[157] = 1;  /* prctl */
     bfree_syscall_implemented[158] = 1;  /* arch_prctl */
     bfree_syscall_implemented[160] = 1;  /* setrlimit */
     bfree_syscall_implemented[161] = 1;  /* chroot */
     bfree_syscall_implemented[162] = 1;  /* sync */
+    bfree_syscall_implemented[164] = 1;  /* settimeofday */
     bfree_syscall_implemented[165] = 1;  /* mount */
     bfree_syscall_implemented[166] = 1;  /* umount2 */
     bfree_syscall_implemented[186] = 1;  /* gettid */
     bfree_syscall_implemented[200] = 1;  /* tkill */
     bfree_syscall_implemented[201] = 1;  /* time */
     bfree_syscall_implemented[202] = 1;  /* futex */
+    bfree_syscall_implemented[203] = 1;  /* sched_setaffinity */
+    bfree_syscall_implemented[204] = 1;  /* sched_getaffinity */
     bfree_syscall_implemented[213] = 1;  /* epoll_create */
     bfree_syscall_implemented[217] = 1;  /* getdents64 */
     bfree_syscall_implemented[218] = 1;  /* set_tid_address */
+    bfree_syscall_implemented[227] = 1;  /* clock_settime */
     bfree_syscall_implemented[228] = 1;  /* clock_gettime */
     bfree_syscall_implemented[229] = 1;  /* clock_getres */
     bfree_syscall_implemented[230] = 1;  /* clock_nanosleep */
@@ -207,6 +216,7 @@ void bfree_syscall_registry_init(void)
     bfree_syscall_implemented[319] = 1;  /* memfd_create */
     bfree_syscall_implemented[322] = 1;  /* execveat */
     bfree_syscall_implemented[332] = 1;  /* statx */
+    bfree_syscall_implemented[334] = 1;  /* rseq */
 }
 
 int bfree_syscall_is_implemented(unsigned long nr)

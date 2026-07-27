@@ -129,7 +129,7 @@ int main(void)
 
 	enosys = bfree_syscall_enosys_count();
 	CHECK(enosys > 0 && enosys < 336, "enosys reduced below M16");
-	CHECK(enosys == 202, "enosys exactly 202 in 0..399");
+	CHECK(enosys <= 202, "enosys not worse than M17");
 
 	printf("P17_ABI_HOLES: PASS (enosys=%d)\n", enosys);
 	return 0;

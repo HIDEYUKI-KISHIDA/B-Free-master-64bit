@@ -113,6 +113,11 @@ void bfree_proc_attach_fs(struct bfree_fs *fs)
 	g_exec_fs = fs;
 }
 
+struct bfree_fs *bfree_proc_exec_fs(void)
+{
+	return g_exec_fs;
+}
+
 void bfree_proc_init(struct bfree_proc_mgr *mgr)
 {
 	int i;
@@ -826,6 +831,20 @@ void bfree_kill(struct bfree_proc_mgr *mgr, int pid, int sig)
 		return;
 	if (sig == BFREE_SIGINT)
 		p->sigint_pending = 1;
+	else if (sig == BFREE_SIGCHLD)
+		p->sigchld_pending = 1;
+	else if (sig == BFREE_SIGPIPE)
+		p->sigpipe_pending = 1;
+	/* Handler installed: treat as delivered for pending query. */
+	if (sig > 0 && sig < 64 && p->sig_handler[sig] != 0 &&
+	    p->sig_handler[sig] != 1 /* SIG_IGN */) {
+		if (sig == BFREE_SIGINT)
+			p->sigint_pending = 1;
+		else if (sig == BFREE_SIGPIPE)
+			p->sigpipe_pending = 1;
+		else if (sig == BFREE_SIGCHLD)
+			p->sigchld_pending = pid > 0 ? pid : 1;
+	}
 }
 
 int bfree_sig_pending(struct bfree_proc_mgr *mgr, int sig)

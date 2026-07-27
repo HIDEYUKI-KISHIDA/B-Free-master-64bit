@@ -22,5 +22,7 @@ int bfree_clone(struct bfree_proc_mgr *mgr, unsigned long flags,
 		bfree_thread_fn fn, void *arg);
 int bfree_thread_run(struct bfree_proc_mgr *mgr, int tid);
 int bfree_futex(int *uaddr, int op, int val, const void *timeout);
+int bfree_futex_on(struct bfree_proc_mgr *mgr, int *uaddr, int op, int val,
+		   const void *timeout);
 
 #endif /* BFREE_THREAD_H */

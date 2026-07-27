@@ -166,11 +166,15 @@
 
 手順: `docs/M17_ABI_HOLES_0TO4.md` / `docs/LINUX_ABI_HOLES.ja.md`
 
-### M18 — 第二地図（BusyBox/musl 証拠）予定
+### M18 — 第二地図バッチ（BusyBox 9 ENOSYS + 15 THIN）
 
-- 証拠ベース優先: `docs/LINUX_ABI_SECOND_MAP.ja.md`
-- 生成: `bfree_x86_64/tools/gen_abi_second_map.py`
-- 次バッチ: BusyBox 残 `ENOSYS`（sched_*/clock_settime/rseq 等）と THIN 強化
+- [x] 証拠ベース優先: `docs/LINUX_ABI_SECOND_MAP.ja.md`
+- [x] 生成: `bfree_x86_64/tools/gen_abi_second_map.py`
+- [x] BusyBox 残 `ENOSYS` 9本（sched_*/settimeofday/clock_settime/rseq + setaffinity）
+- [x] 旧 THIN 15本を厚く（signals/`ioctl` termios/AF_UNIX retry/`clone` FD·tid/`futex`）
+- [x] ゲート: `test_p18_second_map_24`（BusyBox 91/91、actionable ENOSYS 0、enosys=192）
+
+次（M19 候補）: ash_regress に `date`/`id`/`ln`/`readlink` を追加し第二地図を回帰固定
 
 ## 非ゴール（このトラックでは約束しない）
 

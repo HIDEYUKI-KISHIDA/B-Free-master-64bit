@@ -27,41 +27,38 @@ python3 tools/gen_abi_second_map.py
 python3 tools/gen_abi_second_map.py --json /tmp/abi-second-map.json
 ```
 
-## 現状スナップショット（M17 直後・本リポ BusyBox）
+## 現状スナップショット（M18 第二地図バッチ後）
 
-`guest/rootfs/bin/busybox` を objdump し、`syscall_dispatch.c` と突合した結果:
+M18 で第二地図の「次の24」を埋めた後:
 
 | 区分 | 本数 | 意味 |
 |------|-----:|------|
 | BusyBox が使う NR | **91** | 実バイナリ証拠 |
-| 登録済み・薄くない | **67** | 第一地図で一応到達 |
-| 登録済みだが **THIN** | **15** | 次に厚くする対象 |
-| `ENOSYS` かつ非ゴール外 | **9** | 次に番号を足す対象 |
-| `ENOSYS` かつ非ゴール | **0** | BusyBox 経路では非ゴール未使用 |
+| 登録済み・薄くない | **91** | A+B 完了（THIN クリア） |
+| 登録済みだが **THIN** | **0** | M18 で厚くした |
+| `ENOSYS` かつ非ゴール外 | **0** | BusyBox 経路の穴なし |
 | musl-core `ENOSYS` | **0** | 番号は揃っている |
-| musl-core THIN | **6** | 意味論が次の山 |
+| musl-core THIN | **0** | M18 でクリア |
 
-### BusyBox がまだ `ENOSYS` の NR（行動可能・優先 A）
+### M18 で埋めた ENOSYS 9本
 
-| NR | 名前 | なぜ優先か |
-|---:|------|-----------|
-| 143 | `sched_getparam` | BusyBox 実参照 |
-| 144 | `sched_setscheduler` | 同上 |
-| 145 | `sched_getscheduler` | 同上 |
-| 146 | `sched_get_priority_max` | 同上 |
-| 147 | `sched_get_priority_min` | 同上 |
-| 164 | `settimeofday` | 同上（`date -s` 系） |
-| 204 | `sched_getaffinity` | 同上 |
-| 227 | `clock_settime` | 同上 |
-| 334 | `rseq` | 同上（新しいが BusyBox が参照） |
+| NR | 名前 |
+|---:|------|
+| 143 | `sched_getparam` |
+| 144 | `sched_setscheduler` |
+| 145 | `sched_getscheduler` |
+| 146 | `sched_get_priority_max` |
+| 147 | `sched_get_priority_min` |
+| 164 | `settimeofday` |
+| 204 | `sched_getaffinity`（+203 `sched_setaffinity`） |
+| 227 | `clock_settime` |
+| 334 | `rseq` |
 
-### BusyBox / musl が触る THIN（優先 B・番号はあるが薄い）
+### M18 で厚くした旧 THIN 15本
 
-BusyBox 経路: `rt_sigaction`(13), `rt_sigprocmask`(14), `ioctl`(16), AF_UNIX 一式(41–54), `clone`(56), `futex`(202)
+`rt_sigaction`/`rt_sigprocmask`/`ioctl`(termios+winsize)/AF_UNIX accept·recv 再試行/`clone`(FD継承·tid)/`futex`(協調 wait+tick)
 
-musl-core 追加: `rt_sigreturn`(15)
-
-ここは「登録を増やす」より **意味論を BusyBox ash / musl スレッドが通るまで厚くする**。
+検証: `test_p18_second_map_24`
 
 ## 非ゴールの切り分け（第二地図の外）
 
@@ -88,15 +85,11 @@ musl-core 追加: `rt_sigreturn`(15)
 | `ltp_regress/` | open/trap/paging/user_boot | sched/clock/rseq の最小 probe |
 | P17 | Cat0–4 の穴埋め完了確認 | `gen_abi_second_map.py` を CI 相当で定期実行 |
 
-## 次バッチの推奨順（M18 候補）
+## 次バッチの推奨順（M19 候補）
 
-1. **A1:** BusyBox `ENOSYS` 9本（sched_* / settimeofday / clock_settime / rseq）
-2. **B1:** `futex` WAIT 実ブロック + `clone` スレッド経路を musl 視点で厚くする
-3. **B2:** `ioctl` termios / `rt_sig*` 配送を ash ジョブ制御が困らない水準へ
-4. **C1:** ash_regress に `date`/`id`/`ln -s`/`readlink` を追加し、第二地図を自動回帰に載せる
-5. **C2:** `gen_abi_second_map.py` を `phase3_guest_auto.sh` か専用ゲートから呼ぶ
-
-INET・io_uring・namespaces は引き続き非ゴール。
+1. ash_regress に `date`/`id`/`ln -s`/`readlink` を追加し第二地図を回帰固定
+2. 残 long-tail のうち BusyBox 外・musl 動的/ネット拡張が要るものだけを新証拠で拾う
+3. INET・io_uring・namespaces は引き続き非ゴール
 
 ## 第一地図との関係
 
