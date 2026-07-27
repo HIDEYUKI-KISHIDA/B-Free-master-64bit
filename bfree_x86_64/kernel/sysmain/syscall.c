@@ -120,6 +120,8 @@ uint64_t g_bfree_user_sysret_r14;
 uint64_t g_bfree_user_sysret_r15;
 /* musl vfork: pop retaddr into %rdx before syscall; parent must restore it. */
 uint64_t g_bfree_user_sysret_rdx;
+/* Linux syscall arg6 (R9) — mmap offset / pgoff; entry asm stores before C ABI shuffle. */
+uint64_t g_bfree_user_syscall_r9;
 uint64_t g_bfree_fork_parent_ret;
 
 /* Parent SYSRET context captured at fork/vfork — must not use g_bfree_user_sysret_*
@@ -163,6 +165,18 @@ extern int tcp_min_pump(int pcb);
 extern int tcp_min_send(int pcb, const uint8_t *data, size_t len);
 extern int tcp_min_recv(int pcb, uint8_t *buf, size_t len);
 extern void tcp_min_close(int pcb);
+extern int ipv4_send(uint32_t dst_ip, uint8_t protocol, const uint8_t *payload, size_t len);
+extern int icmp_recv(uint32_t *src_ip, void *buf, size_t max_len);
+#ifndef NET_SEND_OK
+#define NET_SEND_OK 0
+#define NET_SEND_PENDING 1
+#define NET_SEND_TIMEOUT 2
+#define NET_SEND_NO_ROUTE 3
+#endif
+#ifndef BFREE_SOCK_RAW
+#define BFREE_SOCK_RAW 3
+#define BFREE_IPPROTO_ICMP 1
+#endif
 
 /* Weak stubs when ENABLE_RUNTIME_NET=0 (no e1000 / udp objects linked). */
 __attribute__((weak)) int udp_send(uint32_t dst_ip, uint16_t dst_port, uint16_t src_port,
@@ -207,6 +221,16 @@ __attribute__((weak)) void tcp_min_close(int pcb)
 {
     (void)pcb;
 }
+__attribute__((weak)) int ipv4_send(uint32_t dst_ip, uint8_t protocol, const uint8_t *payload, size_t len)
+{
+    (void)dst_ip; (void)protocol; (void)payload; (void)len;
+    return NET_SEND_NO_ROUTE;
+}
+__attribute__((weak)) int icmp_recv(uint32_t *src_ip, void *buf, size_t max_len)
+{
+    (void)src_ip; (void)buf; (void)max_len;
+    return 0;
+}
 
 typedef struct {
     int used;
@@ -214,6 +238,8 @@ typedef struct {
     int connected;
     int bound;
     int is_dgram;   /* SOCK_DGRAM: datagram queue (+ e1000 for LAN) */
+    int is_raw;     /* SOCK_RAW (BusyBox ping ICMP) */
+    int ip_proto;   /* e.g. IPPROTO_ICMP=1 for raw */
     uint32_t addr;
     uint16_t port;
     int accept_rd;
@@ -1961,7 +1987,7 @@ static void bfree_guest_heap_unmap_range(page_table_t *pt, uint64_t lo, uint64_t
     __asm__ volatile("mov %0, %%cr3" :: "r"(pt) : "memory");
 }
 
-static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd);
+static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, long offset);
 static long sys_mmap_anonymous_heap(long addr, long length, long flags)
 {
     uint64_t want_bytes;
@@ -2056,8 +2082,11 @@ long sys_mmap(long addr, long length, long prot, long flags, long fd)
     uint64_t want_bytes;
     page_table_t *pt;
     size_t off;
+    long mmap_off;
 
     (void)prot;
+    /* Linux mmap arg6 is byte offset (page-aligned). Captured from R9 in entry. */
+    mmap_off = (long)g_bfree_user_syscall_r9;
     if (fd == BFREE_FB0_FD) {
         /* framebuffer path below */
     } else if (fd == (long)BFREE_GUEST_MEMFD_FD) {
@@ -2065,7 +2094,7 @@ long sys_mmap(long addr, long length, long prot, long flags, long fd)
     } else if (fd < 0 || (flags & MAP_ANONYMOUS)) {
         return sys_mmap_anonymous_heap(addr, length, flags);
     } else {
-        return bfree_guest_mmap_vfile(addr, length, flags, fd);
+        return bfree_guest_mmap_vfile(addr, length, flags, fd, mmap_off);
     }
 
     (void)addr;
@@ -3052,7 +3081,7 @@ static bfree_guest_vfile_t *bfree_guest_vfile_from_open_fd(
     return bfree_guest_vfile_from_fd(fd);
 }
 
-static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd)
+static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, long offset)
 {
     bfree_guest_ofd_t *ofd = 0;
     int resolved = bfree_guest_fd_resolve((int)fd);
@@ -3060,23 +3089,32 @@ static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd)
     long mapped;
     size_t copy_n;
     size_t i;
+    size_t off;
     uint8_t *dst;
 
     (void)ofd;
+    (void)flags;
     if (!vf || vf->is_dir) {
         return -19; /* ENODEV */
+    }
+    if (offset < 0) {
+        return -22; /* EINVAL */
+    }
+    off = (size_t)offset;
+    if (off > vf->len) {
+        return -22; /* EINVAL — past EOF */
     }
     mapped = sys_mmap_anonymous_heap(addr, length, flags | MAP_ANONYMOUS);
     if (mapped < 0) {
         return mapped;
     }
-    copy_n = vf->len;
+    copy_n = vf->len - off;
     if (length > 0 && (size_t)length < copy_n) {
         copy_n = (size_t)length;
     }
     dst = (uint8_t *)(uintptr_t)(uint64_t)mapped;
     for (i = 0; i < copy_n; ++i) {
-        dst[i] = vf->data[i];
+        dst[i] = vf->data[off + i];
     }
     return mapped;
 }
@@ -3291,6 +3329,7 @@ static int bfree_guest_vfile_alloc_slot(const char *name, int truncate)
 
 static int g_persist_disk_state; /* 0=unprobed 1=ready -1=absent */
 static int g_persist_loaded;
+static int g_persist_fat_mounted; /* 1 = FAT RW mirrored into vfiles */
 
 static inline uint8_t bfree_ata_inb(uint16_t port)
 {
@@ -3395,12 +3434,53 @@ static int bfree_ata_rw_sector(uint32_t lba, void *buf, int write)
 
 static uint8_t g_persist_sec[512];
 
+#if BFREE_PERSIST_FAT_PROBE
+#include "persist_fat_probe.h"
+#include "persist_fat_mount.h"
+
+static int bfree_persist_ata_read_cb(uint32_t lba, void *buf512)
+{
+    return bfree_ata_rw_sector(lba, buf512, 0);
+}
+
+static int bfree_persist_ata_write_cb(uint32_t lba, const void *buf512)
+{
+    /* ATA helper takes non-const; sector buffer is only read for writes. */
+    return bfree_ata_rw_sector(lba, (void *)buf512, 1);
+}
+#endif
+
 /* Rewrite the whole store from live persist/ vfiles (small: ≤16 recs). */
 static void bfree_persist_flush_all(void)
 {
     uint32_t rec = 0;
     int i;
 
+#if BFREE_PERSIST_FAT_PROBE
+    if (g_persist_fat_mounted) {
+        /* FAT RW: mirror each persist/ vfile as a root 8.3 file (1 cluster). */
+        for (i = 0; i < BFREE_GUEST_VFILE_SLOTS; ++i) {
+            bfree_guest_vfile_t *vf = &g_guest_vfiles[i];
+            const char *base;
+            if (!vf->used || vf->orphaned || vf->is_dir || vf->is_symlink)
+                continue;
+            if (strncmp(vf->name, "persist/", 8) != 0)
+                continue;
+            base = vf->name + 8;
+            if (!base[0])
+                continue;
+            if (bfree_persist_fat_put_root_file(bfree_persist_ata_read_cb,
+                                               bfree_persist_ata_write_cb,
+                                               base, vf->data,
+                                               (uint32_t)vf->len) != 0) {
+                uart_puts("[PERSIST] FAT put failed for ");
+                uart_puts(base);
+                uart_puts("\n");
+            }
+        }
+        return;
+    }
+#endif
     if (bfree_ata_probe() != 1) {
         return;
     }
@@ -3443,7 +3523,40 @@ static void bfree_persist_flush_all(void)
 }
 
 #if BFREE_PERSIST_FAT_PROBE
-#include "persist_fat_probe.h"
+static int bfree_persist_fat_on_file(const char *short_name, const uint8_t *data,
+                                    uint32_t size, void *ctx)
+{
+    char name[64];
+    int fd;
+    bfree_guest_vfile_t *vf;
+    size_t i;
+    (void)ctx;
+    if (!short_name || !short_name[0] || !data || size == 0)
+        return 0;
+    if (size > BFREE_GUEST_VFILE_SIZE)
+        size = BFREE_GUEST_VFILE_SIZE;
+    name[0] = 'p'; name[1] = 'e'; name[2] = 'r'; name[3] = 's';
+    name[4] = 'i'; name[5] = 's'; name[6] = 't'; name[7] = '/';
+    for (i = 0; short_name[i] && i + 9U < sizeof(name); ++i) {
+        char c = short_name[i];
+        /* Store lowercase for path match convenience; keep dots. */
+        if (c >= 'A' && c <= 'Z')
+            c = (char)(c - 'A' + 'a');
+        name[8 + i] = c;
+    }
+    name[8 + i] = '\0';
+    fd = bfree_guest_vfile_alloc_slot(name, 1);
+    if (fd < 0)
+        return -1;
+    vf = &g_guest_vfiles[fd - (int)BFREE_GUEST_VFILE_FD_BASE];
+    for (i = 0; i < size; ++i)
+        vf->data[i] = data[i];
+    vf->len = size;
+    uart_puts("[PERSIST] FAT file ");
+    uart_puts(name);
+    uart_puts("\n");
+    return 0;
+}
 #endif
 
 static void bfree_persist_load_once(void)
@@ -3455,6 +3568,7 @@ static void bfree_persist_load_once(void)
         return;
     }
     g_persist_loaded = 1;
+    g_persist_fat_mounted = 0;
     if (bfree_ata_probe() != 1) {
         return;
     }
@@ -3464,13 +3578,25 @@ static void bfree_persist_load_once(void)
 #if BFREE_PERSIST_FAT_PROBE
     {
         int fat = bfree_persist_fat_probe(g_persist_sec);
-        if (fat == 12 || fat == 16 || fat == 32) {
-            uart_puts("[PERSIST] FAT BPB detected type=");
-            {
-                extern void uart_puthex64(uint64_t v);
-                uart_puthex64((uint64_t)(unsigned)fat);
+        if (fat == 12 || fat == 16) {
+            int mounted = bfree_persist_fat_mount_ro(bfree_persist_ata_read_cb,
+                                                     bfree_persist_fat_on_file,
+                                                     0);
+            if (mounted == 12 || mounted == 16) {
+                g_persist_fat_mounted = 1;
+                uart_puts("[PERSIST] FAT mounted RW type=");
+                {
+                    extern void uart_puthex64(uint64_t v);
+                    uart_puthex64((uint64_t)(unsigned)mounted);
+                }
+                uart_puts("\n");
+                return;
             }
-            uart_puts(" (mount deferred; skip BFP1)\n");
+            uart_puts("[PERSIST] FAT BPB detected but mount failed\n");
+            return;
+        }
+        if (fat == 32) {
+            uart_puts("[PERSIST] FAT32 detected (RO mount unsupported; skip BFP1)\n");
             return;
         }
     }
@@ -4910,20 +5036,17 @@ static long sys_linux_write(long fd, long buf, long count)
     fd = bfree_guest_fd_resolve((int)fd);
     iidx = bfree_inet_from_fd((int)fd);
     if (iidx >= 0 && g_inet_socks[iidx].tcp_pcb >= 0) {
-        int st;
+        long n;
         if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf)) {
             return -14;
         }
-        st = tcp_min_pump(g_inet_socks[iidx].tcp_pcb);
-        if (st == 0) {
+        /* tcp_min_send pumps handshake; do not surface EINPROGRESS to BusyBox. */
+        n = (long)tcp_min_send(g_inet_socks[iidx].tcp_pcb,
+                               (const uint8_t *)(uintptr_t)buf, (size_t)count);
+        if (n >= 0) {
             g_inet_socks[iidx].connected = 1;
-        } else if (st == -115) {
-            return -115;
-        } else if (st < 0) {
-            return (long)st;
         }
-        return (long)tcp_min_send(g_inet_socks[iidx].tcp_pcb,
-                                  (const uint8_t *)(uintptr_t)buf, (size_t)count);
+        return n;
     }
     if (bfree_guest_is_eventfd((int)fd) || bfree_guest_is_eventfd(orig_fd)) {
         int efd = bfree_guest_is_eventfd((int)fd) ? (int)fd : orig_fd;
@@ -5523,12 +5646,28 @@ static long sys_linux_close(long fd)
 {
     int orig = (int)fd;
     int resolved;
+    int refs = 0;
+    int i;
 
     resolved = bfree_guest_fd_resolve(orig);
-    bfree_inet_sock_release(resolved);
     if (orig >= 0 && orig < BFREE_GUEST_FD_TABLE_SIZE) {
         g_guest_fd_target[orig] = -1;
         g_guest_fd_dup_save[orig] = -1;
+    }
+    /* BusyBox ping xmove_fd(sock,0): dup2 then close(old). Keep inet sock
+     * alive while another published fd still resolves to it. */
+    if (resolved >= (int)BFREE_INET_FD_BASE &&
+        resolved < (int)BFREE_INET_FD_BASE + BFREE_INET_SLOTS) {
+        for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            if (g_guest_fd_target[i] == resolved) {
+                refs++;
+            }
+        }
+        if (refs == 0) {
+            bfree_inet_sock_release(resolved);
+        }
+    } else {
+        bfree_inet_sock_release(resolved);
     }
     /* Absolute recount (live + inactive coop snap) — do not pipe_ref±1 here;
      * a parent close must not drop the child's still-parked endpoint to 0. */
@@ -8840,7 +8979,12 @@ static long sys_linux_clone(long flags, long newsp, long ptid, long ctid, long t
     if ((f & (unsigned long)BFREE_LINUX_CLONE_VFORK) != 0UL) {
         return bfree_guest_fork_enter(0);
     }
-    return -38; /* ENOSYS */
+    /* A2: process-spawn clone (no THREAD/VFORK) ≈ AS-copy fork. Ignore newsp/tls. */
+    (void)newsp;
+    (void)ptid;
+    (void)ctid;
+    (void)tls;
+    return bfree_guest_fork_enter(1);
 }
 
 static int bfree_user_exec_prepare_stack(uint64_t stack_top, void *entry, uint64_t *out_rsp)
@@ -10493,7 +10637,7 @@ static int bfree_inet_is_loopback(uint32_t addr)
 static long sys_linux_socket(long domain, long type, long protocol)
 {
     int i;
-    (void)protocol;
+    int stype = (int)(type & 0xFF);
     if (domain == BFREE_LINUX_AF_INET) {
         for (i = 0; i < BFREE_INET_SLOTS; ++i) {
             if (!g_inet_socks[i].used) {
@@ -10501,7 +10645,9 @@ static long sys_linux_socket(long domain, long type, long protocol)
                 g_inet_socks[i].listening = 0;
                 g_inet_socks[i].connected = 0;
                 g_inet_socks[i].bound = 0;
-                g_inet_socks[i].is_dgram = ((type & 0xFF) == 2); /* SOCK_DGRAM */
+                g_inet_socks[i].is_dgram = (stype == 2); /* SOCK_DGRAM */
+                g_inet_socks[i].is_raw = (stype == BFREE_SOCK_RAW);
+                g_inet_socks[i].ip_proto = (int)protocol;
                 g_inet_socks[i].addr = BFREE_INADDR_ANY;
                 g_inet_socks[i].port = 0;
                 g_inet_socks[i].accept_rd = -1;
@@ -10672,15 +10818,16 @@ static long sys_linux_connect(long sockfd, long addr, long addrlen)
                 if (pcb < 0) {
                     return (long)pcb;
                 }
-                g_inet_socks[idx].connected = 0; /* until ESTABLISHED */
                 g_inet_socks[idx].tcp_pcb = pcb;
                 g_inet_socks[idx].pipe_magic = -1;
                 g_inet_socks[idx].peer_addr = in_addr;
                 g_inet_socks[idx].peer_port = in_port;
                 g_inet_socks[idx].addr = in_addr;
                 g_inet_socks[idx].port = in_port;
-                /* Non-blocking handshake: SYN sent; complete via read/write pumps. */
-                return -115; /* EINPROGRESS */
+                /* Optimistic success: BusyBox xconnect dies on EINPROGRESS.
+                 * Handshake finishes on first write/read via tcp_min_pump. */
+                g_inet_socks[idx].connected = 1;
+                return 0;
             }
             return -111; /* ECONNREFUSED — no loopback listener */
         }
@@ -11125,6 +11272,111 @@ static long bfree_inet_dgram_send(int sender, uint32_t dst_addr, uint16_t dst_po
     return (long)n; /* UDP: success even if no receiver (dropped) */
 }
 
+static long bfree_inet_raw_sendto(int idx, uint32_t dst_addr, long buf, long len)
+{
+    int spins;
+    int rc;
+
+    if (buf == 0 || len <= 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    if (!bfree_inet_is_guest_routable(dst_addr)) {
+        return -101;
+    }
+    if (!g_inet_socks[idx].is_raw) {
+        return -95; /* EOPNOTSUPP */
+    }
+    /* BusyBox ping: SOCK_RAW + IPPROTO_ICMP payload (no IP header). */
+    if (g_inet_socks[idx].ip_proto != 0 &&
+        g_inet_socks[idx].ip_proto != BFREE_IPPROTO_ICMP) {
+        return -93; /* EPROTONOSUPPORT */
+    }
+    for (spins = 0; spins < 4096; ++spins) {
+        rc = ipv4_send(bfree_inet_ntohl(dst_addr), (uint8_t)BFREE_IPPROTO_ICMP,
+                       (const uint8_t *)(uintptr_t)buf, (size_t)len);
+        if (rc == NET_SEND_OK) {
+            return len;
+        }
+        if (rc == NET_SEND_PENDING) {
+            net_runtime_poll();
+            continue;
+        }
+        if (rc == NET_SEND_TIMEOUT || rc == NET_SEND_NO_ROUTE) {
+            return -101;
+        }
+        return -5; /* EIO */
+    }
+    return -11; /* EAGAIN — ARP not resolved */
+}
+
+static long bfree_inet_raw_recvfrom(int idx, long buf, long len, long addr)
+{
+    uint8_t icmp_buf[1500];
+    uint32_t src_le = 0;
+    uint32_t src_guest;
+    int n = 0;
+    int spins;
+    size_t out;
+    uint8_t *dst;
+    uint16_t tot_be;
+    uint32_t sbe;
+    uint32_t dbe;
+
+    (void)idx;
+    if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    for (spins = 0; spins < 200000; ++spins) {
+        n = icmp_recv(&src_le, icmp_buf, sizeof(icmp_buf));
+        if (n > 0) {
+            break;
+        }
+        net_runtime_poll();
+    }
+    if (n <= 0) {
+        return -11; /* EAGAIN */
+    }
+    /* Linux SOCK_RAW(IPPROTO_ICMP) delivers IP header + ICMP. */
+    out = 20U + (size_t)n;
+    if (out > (size_t)len) {
+        out = (size_t)len;
+    }
+    dst = (uint8_t *)(uintptr_t)buf;
+    memset(dst, 0, out);
+    if (out >= 20U) {
+        dst[0] = 0x45; /* v4, ihl=5 */
+        tot_be = bfree_inet_ntohs((uint16_t)(20 + n));
+        memcpy(dst + 2, &tot_be, 2);
+        dst[8] = 64;
+        dst[9] = (uint8_t)BFREE_IPPROTO_ICMP;
+        src_guest = bfree_inet_ntohl(src_le);
+        sbe = bfree_inet_ntohl(src_guest);
+        dbe = bfree_inet_ntohl(BFREE_INADDR_GUEST_LAN);
+        memcpy(dst + 12, &sbe, 4);
+        memcpy(dst + 16, &dbe, 4);
+        if (out > 20U) {
+            size_t copy = out - 20U;
+            if (copy > (size_t)n) {
+                copy = (size_t)n;
+            }
+            memcpy(dst + 20, icmp_buf, copy);
+        }
+    }
+    if (addr != 0 && bfree_user_ptr_mapped(addr)) {
+        uint8_t *sa = (uint8_t *)(uintptr_t)addr;
+        uint32_t abe;
+        src_guest = bfree_inet_ntohl(src_le);
+        abe = bfree_inet_ntohl(src_guest);
+        sa[0] = 2;
+        sa[1] = 0;
+        sa[2] = 0;
+        sa[3] = 0;
+        memcpy(sa + 4, &abe, 4);
+        memset(sa + 8, 0, 8);
+    }
+    return (long)out;
+}
+
 static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr, long addrlen)
 {
     int idx;
@@ -11132,6 +11384,22 @@ static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr,
     (void)addrlen;
     fd = bfree_guest_fd_resolve((int)fd);
     idx = bfree_inet_from_fd((int)fd);
+    if (idx >= 0 && g_inet_socks[idx].is_raw) {
+        uint32_t dst_addr;
+        uint16_t dst_port;
+        if (addr != 0) {
+            long perr = bfree_inet_parse_sockaddr(addr, 16, &dst_addr, &dst_port);
+            if (perr != 0) {
+                return perr;
+            }
+            (void)dst_port;
+        } else if (g_inet_socks[idx].connected) {
+            dst_addr = g_inet_socks[idx].peer_addr;
+        } else {
+            return -89; /* EDESTADDRREQ */
+        }
+        return bfree_inet_raw_sendto(idx, dst_addr, buf, len);
+    }
     if (idx >= 0 && g_inet_socks[idx].is_dgram) {
         uint32_t dst_addr;
         uint16_t dst_port;
@@ -11177,6 +11445,9 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
     (void)addrlen;
     fd = bfree_guest_fd_resolve((int)fd);
     idx = bfree_inet_from_fd((int)fd);
+    if (idx >= 0 && g_inet_socks[idx].is_raw) {
+        return bfree_inet_raw_recvfrom(idx, buf, len, addr);
+    }
     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].tcp_pcb >= 0) {
         int pcb = g_inet_socks[idx].tcp_pcb;
         int n;

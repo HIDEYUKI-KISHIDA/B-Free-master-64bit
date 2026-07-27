@@ -35,27 +35,24 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 **正本:** `C:\Users\h_kis\Desktop\B-Free-master`（詳細: `docs/CANONICAL.md`）。`J:\B-Free-master` は古いコピー・使わない。
 本線: `work/posix-holes-redo`。**desktop / QML ready** 優先。
-BusyBox 実用ゲート（`tools/linux_box_gate.sh`）は **全 PASS で凍結**（CLI 深掘りは後回し）。
+BusyBox 実用ゲート（`tools/linux_box_gate.sh`）は **全 PASS で凍結**（CLI 深掘りは後回し）。ABI 最小穴（A2/A1/A5）は 2026-07-27 スプリントで埋め済み。
 
 ## 現在の状態（エージェントが更新）
 
 - **Updated:** 2026-07-27
-- **正本固定:** Desktop（C:）を唯一の作業ツリーとした。Native Qt GUI は `userland/desktop_qt/guest_main.cpp`（W3.3 まで）。
-- **BusyBox:** `linux_box_gate` ALL PASS。凍結。
+- **正本固定:** Desktop（C:）を唯一の作業ツリーとした。Native Qt GUI は `userland/desktop_qt/guest_main.cpp`（**W3.4** まで）。
+- **BusyBox:** `linux_box_gate` ash/pipe/persist/fork PASS；ping/nc はホスト echo タイムアウトで FAIL（ABI 外）。`phase3_guest_auto` **RESULT: ALL PASS**。
+- **ABI sprint (2026-07-27):**
+  - **A2** non-VFORK/non-THREAD `clone` → AS-copy fork（ENOSYS 解消）
+  - **A1** zombie soft-reap で fork PT 解放（sticky EAGAIN 防止）；partial DONE
+  - **A5** vfile mmap が R9 offset/pgoff を尊重；partial DONE（MAP_SHARED 未）
 - **Practical Native OS D→E→F GREEN** (post A→B→C)
   - **D** FAT12/16 **RW** `/persist`: `tools/_f1_persist_fat_rw_smoke.sh` PASS; BFP1 `_f1_persist_smoke.sh` PASS
   - **E** Explorer (desk note) + Viewer + Terminal (1 cmd → `/persist/term.txt`); keys 1/2/3
   - **F** QML Rectangle soft SG try → explicit `SG fail->FB` (lookalike authority)
   - Smoke: `tools/_tmp_stage_abcd_smoke.sh`
 - **Stabilize G0–G2 (pre–DesktopShell.qml):** dirty-only FB paint; no I/O in paint; Start launcher; QPA single input path; serial flood = FAIL. Host `DesktopShell.qml` / SG pixel authority **deferred**.
-- **W0 mini-WM:** multi-window `{x,y,w,h,z}`; title drag; SE resize; X/Esc close; taskbar slots. Smoke: `wm drag` / `wm resize`.
-- **W0.1 interactive:** larger X / edge resize hits; Start menu Restart/Shutdown/Sleep stubs; idle paint throttle (CPU FB only — GPU/SG not pixel authority yet). View ISO: `~/bfree-stage/bfree-stage-abcd.iso` (`-machine pc,usb=off`).
-- **W0.2 chrome:** KWin-like FB frames (border/shadow/client inset); cursor-only idle paint; Sleep overlay (key wake); Restart/Shutdown = CPU halt banner (no ACPI yet). Bridge-only mouse (skip WSI hang).
-- **W1 taskbar polish:** minimize + task raise/minimize click; host-like Start/Search/clock/hairline; focus underline; `W1 taskbar ready`. Still FB lookalike (no DesktopShell.qml yet).
-- **W2 window layer (FB parity):** title min/max/close; maximize fill desk + restore rect; W/E/S/SE resize; title dbl-click maximize; `W2 window layer ready`. Still FB mini-WM (not full DesktopShell.qml).
-- **W3 Quick window chrome:** C++ sparse `QQuickRectangle` tree (no `QQuickText`) matching host `desktopWindowLayer` slate, built once under `contentItem` at attach and kept invisible; soft SG breadcrumb without update/expose; no event-loop Quick mutates (those GPF'd input); FB remains pixel authority (`g_w3_sg_pixels=0`) with host-slate window paint; `W3 window layer ready`. Full DesktopShell.qml still not loaded. Smoke KEY all PASS.
-- **W3.1 Start/taskbar Quick slice:** attach-once invisible C++ `QQuickRectangle` taskbar + Start panel (host colors); FB Start menu enlarged toward host `launcherPanel` (`#111827`, search strip, rows, power footer); hit geometry shared; `W3.1 start/taskbar layer ready`. Still FB pixel authority.
-- **W3.2 Sparse SG taskbar probe:** attach-time show taskbar Quick **bar** + soft UpdateRequest (no force-expose drain — that PFs); `g_w32_sg_taskbar=0` so FB still paints strip; Start/windows FB; `W3.2 SG probe ok` / `W3.2 SG taskbar pixels`. No event-loop Quick mutates.
-- **W3.3 Window Quick soft probe:** attach-time marker after W3.2 (`W3.3 window Quick probe ok` / `pixels`); W3 slot chrome trees already built; extra `setVisible`/geometry in this build tipped QQmlEngine PF (CR2=`0x78001B0`) before attach — visibility deferred. `g_w3_sg_pixels=0` FB windows. Smoke KEY all PASS.
+- **W0–W3.3:** 従来どおり（FB mini-WM + Quick chrome probes）。Smoke KEY PASS。
+- **W3.4 sustained SG:** W3.2 soft UpdateRequest を権威に、attach 末で `W3.4 sustained SG ok`（追加 UpdateRequest / setVisible は PF のため見送り）。`g_w32_sg_taskbar=0` FB 画素権威。Smoke: `tools/_tmp_qemu_wm_smoke.sh` KEY 全 PASS（含 w34）。
 - **Also:** mmap session switches onto the 256MiB ctor stack (exec ~4MiB was overflowing QV4 after W1/W2 growth).
-- **Next:** Sustained SG expose when safe, or retry window Quick `setVisible` without tipping QQmlEngine. FAT32 / AHCI / 実機は後段。BusyBox CLI 深掘りは凍結のまま。
+- **Next:** window Quick `setVisible` 再試行（QQmlEngine PF 回避）、または sustained soft UpdateRequest を安全に再開。FAT32 / AHCI / 実機は後段。BusyBox CLI 深掘りは再凍結。

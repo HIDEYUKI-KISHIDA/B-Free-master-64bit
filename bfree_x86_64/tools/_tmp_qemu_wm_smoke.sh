@@ -91,7 +91,7 @@ timeout 220 qemu-system-x86_64 -m 1024M -no-reboot -boot d -cdrom "$ISO" -vga st
 wait "$WATCH" 2>/dev/null || true
 echo '=== KEY ==='
 fail=0
-for t in 'processEvents ok:processEvents' 'W0 mini-WM ready:w0_wm_ready' 'W1 taskbar ready:w1_taskbar' 'W2 window layer ready:w2_window_layer' 'W3 window layer ready:w3_window_layer' 'W3.1 start/taskbar layer ready:w31_start_taskbar' 'W3.2 SG probe ok:w32_sg_probe' 'W3.3 window Quick probe ok:w33_window_probe' 'Start open:start_menu' 'wm drag:wm_drag' 'wm resize:wm_resize'; do
+for t in 'processEvents ok:processEvents' 'W0 mini-WM ready:w0_wm_ready' 'W1 taskbar ready:w1_taskbar' 'W2 window layer ready:w2_window_layer' 'W3 window layer ready:w3_window_layer' 'W3.1 start/taskbar layer ready:w31_start_taskbar' 'W3.2 SG probe ok:w32_sg_probe' 'W3.3 window Quick probe ok:w33_window_probe' 'W3.4 sustained SG ok:w34_sustained_sg' 'Start open:start_menu' 'wm drag:wm_drag' 'wm resize:wm_resize'; do
   pat=${t%%:*}; name=${t##*:}
   if grep -aqF "$pat" "$QLOG"; then echo PASS "$name"; else echo FAIL "$name"; fail=1; fi
 done

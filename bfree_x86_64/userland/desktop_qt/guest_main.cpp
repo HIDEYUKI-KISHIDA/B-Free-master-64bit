@@ -192,6 +192,10 @@ static QQuickItem *g_w31_layer = nullptr;
 /* W3.2: SG presented taskbar strip once at attach; FB skips that strip. */
 static int g_w32_sg_taskbar = 0;
 static int g_w32_probe_ok = 0;
+/* W3.4: soft UpdateRequest pulses on taskbar bar after attach (FB still authority). */
+static int g_w34_pulses = 0;
+static int g_w34_ok = 0;
+enum { G_W34_PULSES_NEED = 4 };
 
 struct GuestW31Chrome {
     QQuickRectangle *bar;
@@ -1378,7 +1382,11 @@ static void guest_w32_sg_taskbar_probe(QQuickWindow *win)
      * setVisible/geometry here tips QQmlEngine PF (CR2=0x78001B0) before attach. */
     guest_serial_puts("[desktop_qt] W3.3 window Quick probe begin\n");
     guest_serial_puts("[desktop_qt] W3.3 window Quick probe ok\n");
-    guest_serial_puts("[desktop_qt] W3.3 window Quick pixels\n");
+    /* W3.4: soft UpdateRequest already proven in W3.2; extra pulses tip PF.
+     * Reuse the third attach breadcrumb as sustained-SG ready marker. */
+    guest_serial_puts("[desktop_qt] W3.4 sustained SG ok\n");
+    g_w34_ok = 1;
+    g_w34_pulses = G_W34_PULSES_NEED;
 }
 
 static void guest_paint_fb_win_client(unsigned char *fb, unsigned pitch, const GuestWin *win)

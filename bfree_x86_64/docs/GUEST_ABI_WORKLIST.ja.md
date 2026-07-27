@@ -1,6 +1,6 @@
 # ゲスト Linux ABI 作業リスト（9 + ~40–80）
 
-更新: 2026-07-18  
+更新: 2026-07-27  
 対象: `kernel/sysmain/syscall.c` ほか process/vmm  
 ゴール: Phase 5（NOFORK 解除）→ Phase 6（一般 musl 静的）へ進める実用 ABI  
 非ゴール: Policy 94、未登録 syscall 全 352 本
@@ -17,18 +17,18 @@ bash tools/phase3_guest_auto.sh   # RESULT: ALL PASS 維持
 
 | ID | 場所 | 内容 | 優先 | 作業 | 完了条件 |
 |----|------|------|------|------|----------|
-| A1 | Linux `case 57` | `fork` = ENOSYS | **P0** | AS コピーまたは COW の本物 fork、または Phase5 までは clone+VFORK 経路を安定させ fork は後回しと明記 | `fork()` 成功＋親子別 AS、または文書で意図的延期 |
-| A2 | Linux `case 56` / `sys_linux_clone` | VFORK 以外の clone = ENOSYS | **P0** | (1) スレッド用 CLONE_VM\|FILES\|THREAD (2) 非共有 fork 相当 | musl 静的が `clone` で落ちない |
+| A1 | Linux `case 57` | `fork` AS-copy | **P0** | ~~ENOSYS~~ **partial DONE**（eager AS-copy）。ゾンビ soft-reap 時に fork PT を解放し sticky EAGAIN を防止（2026-07-27） | `fork()` 成功＋親子別 AS；連続 fork+wait+fork で sticky EAGAIN なし |
+| A2 | Linux `case 56` / `sys_linux_clone` | clone | **P0** | THREAD+VM → coop threads；VFORK → vfork；**それ以外 → AS-copy fork**（2026-07-27 **DONE**） | musl 静的が process-spawn `clone` で ENOSYS しない |
 | A3 | Linux `case 247` | `waitid` = ENOSYS | **P0** | ~~wait4 相当を waitid ABI で実装~~ **DONE** | BusyBox/musl waitid 呼び出し OK |
 | A4 | `sys_linux_execve` 非 fork 時 | fork 外 exec = -38 | **P0** | ~~単独 execve~~ **DONE**（in-place replace）+ 子は private AS 必須 | `BFREE_NOFORK_ALL=0` で外部 applet が Page Fault しない |
-| A5 | `sys_mmap` fd 付き | ファイル mmap = ENOSYS | **P1** | `/tmp` vfile・ELF・memfd の file-backed mmap | musl/Qt の mmap ファイルが動く |
+| A5 | `sys_mmap` fd 付き | ファイル mmap | **P1** | ~~ENOSYS~~ **partial DONE**：`/tmp` vfile を anon+memcpy；**R9 offset/pgoff 対応**（2026-07-27）。MAP_SHARED writeback は未 | open+mmap+read が `read()` と一致（offset 含む） |
 | A6 | `sys_shm_open` | ENOSYS | **P2** | memfd へマップ、または最小 shm | 必要アプリが通るまで後回し可 |
 | A7 | `sys_shm_unlink` | ENOSYS | **P2** | A6 とセット | 同上 |
 | A8 | 旧 `sys_pipe` (B-Free 番号) | ホスト向け ENOSYS | **P3** | ゲスト Linux は `pipe2` 済み。触らない／削除候補 | ゲスト回帰に影響しない |
 | A9 | unhandled default → -38 | 未登録番号すべて | **継続** | 下表 B の番号を 1 本ずつ dispatch に載せる | トレースで ENOSYS が減る |
 
 **A の実質 P0 は A1–A4（プロセス／exec）。A5 がメモリ。A6–A8 は後回し可。**
-
+A1/A2/A5 は 2026-07-27 スプリントで上記どおり更新。
 ---
 
 ## トラック B — 実用ギャップ（目標 40–80 本のうち、まず ~50）
@@ -43,7 +43,7 @@ bash tools/phase3_guest_auto.sh   # RESULT: ALL PASS 維持
 | B1.2 | `wait4`/`waitpid` 意味論 | 部分 | 複数ゾンビ掃引 |
 | B1.3 | `waitid` | ~~ENOSYS~~ **DONE** | = A3 |
 | B1.4 | `execve` 安定 | 部分 | = A4、プライベート AS 必須化 |
-| B1.5 | `clone` 非 VFORK | ENOSYS | = A2 |
+| B1.5 | `clone` 非 VFORK | ~~ENOSYS~~ **DONE**=A2 | = A2 |
 | B1.6 | SIGCHLD 配送 | 弱い/無し | 子 exit で親に通知 |
 | B1.7 | SIGPIPE / SIGINT | 弱い | パイプ切断・Ctrl+C |
 | B1.8 | パイプ両端同時実行 | 協調/inproc | 複数 runnable または本物パイプ |
@@ -61,7 +61,7 @@ bash tools/phase3_guest_auto.sh   # RESULT: ALL PASS 維持
 
 | ID | syscall / 機能 | 状態 | 作業 |
 |----|----------------|------|------|
-| B2.1 | file-backed `mmap` | ENOSYS | = A5 |
+| B2.1 | file-backed `mmap` | partial DONE | = A5 |
 | B2.2 | `mremap` | 未登録多い | 実装 or 安全 ENOSYS→代替確認 |
 | B2.3 | `pread64` / `pwrite64` | 要確認 | オフセット付き I/O |
 | B2.4 | `readv` / 強化 `writev` | 部分 | iovec 完走 |
@@ -142,3 +142,4 @@ Sprint 5+          B3 Qt
 - `tools/phase3_guest_auto.sh` — 回帰
 - `tools/build_guest_busybox.sh` — `BFREE_NOFORK_ALL`
 - `docs/POSIX_FULL_COMPAT_ROADMAP.ja.md` — マイルストーン
+- `docs/WINE_LINUX_ABI_MAP.md` — ホスト Wine strace → B-Free dispatch 差分地図（`tools/wine_linux_abi_map.sh`）

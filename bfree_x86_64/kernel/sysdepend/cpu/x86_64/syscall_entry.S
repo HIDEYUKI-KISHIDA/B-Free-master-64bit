@@ -86,6 +86,8 @@
 
 	.extern g_bfree_user_sysret_rdx
 
+	.extern g_bfree_user_syscall_r9
+
 	.extern g_bfree_fork_parent_ret
 
 	.extern g_bfree_fork_saved_rbx
@@ -154,6 +156,9 @@ syscall_entry:
 	movq %r15, g_bfree_user_sysret_r15(%rip)
 
 	movq %rdx, g_bfree_user_sysret_rdx(%rip)
+
+	/* Arg6 before C ABI shuffle (mmap offset / pgoff). */
+	movq %r9, g_bfree_user_syscall_r9(%rip)
 
 
 

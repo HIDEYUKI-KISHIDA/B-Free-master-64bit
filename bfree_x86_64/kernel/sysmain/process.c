@@ -175,6 +175,38 @@ int bfree_process_first_runnable_pid(void)
     return -1;
 }
 
+static void bfree_process_release_fork_pt(int idx)
+{
+    if (idx < 0 || idx >= BFREE_PROC_MAX_LIVE) {
+        return;
+    }
+    g_fork_pt_used[idx] = 0;
+}
+
+static void bfree_process_soft_reap_zombie_slot(int i)
+{
+    int pt_idx;
+
+    if (i < 0 || i >= BFREE_PROC_MAX_CHILDREN) {
+        return;
+    }
+    if (g_children[i].state != BFREE_PROC_ZOMBIE) {
+        return;
+    }
+    /* Soft-reap must free AS-copy PT or sequential fork+wait+fork sticky-EAGAIN. */
+    pt_idx = g_children[i].fork_pt_idx;
+    if (pt_idx >= 0) {
+        bfree_process_release_fork_pt(pt_idx);
+    }
+    g_children[i].state = BFREE_PROC_FREE;
+    g_children[i].pid = 0;
+    g_children[i].child_pt = 0;
+    g_children[i].parent_pt = 0;
+    g_children[i].has_private_as = 0;
+    g_children[i].fork_pt_idx = -1;
+    g_children[i].coop_session = -1;
+}
+
 static int bfree_process_find_free_slot(void)
 {
     int i;
@@ -187,20 +219,44 @@ static int bfree_process_find_free_slot(void)
     /* Soft-reap oldest zombie so pipelines do not stall forever. */
     for (i = 0; i < BFREE_PROC_MAX_CHILDREN; ++i) {
         if (g_children[i].state == BFREE_PROC_ZOMBIE) {
-            g_children[i].state = BFREE_PROC_FREE;
-            g_children[i].pid = 0;
-            g_children[i].fork_pt_idx = -1;
-            g_children[i].coop_session = -1;
+            bfree_process_soft_reap_zombie_slot(i);
             return i;
         }
     }
     return -1;
 }
 
+static void bfree_process_reclaim_orphan_fork_pts(void)
+{
+    int i;
+    int pt;
+    int held;
+
+    for (pt = 0; pt < BFREE_PROC_MAX_LIVE; ++pt) {
+        if (!g_fork_pt_used[pt]) {
+            continue;
+        }
+        held = 0;
+        for (i = 0; i < BFREE_PROC_MAX_CHILDREN; ++i) {
+            if (g_children[i].state == BFREE_PROC_FREE) {
+                continue;
+            }
+            if (g_children[i].fork_pt_idx == pt) {
+                held = 1;
+                break;
+            }
+        }
+        if (!held) {
+            g_fork_pt_used[pt] = 0;
+        }
+    }
+}
+
 static int bfree_process_alloc_fork_pt(void)
 {
     int i;
 
+    bfree_process_reclaim_orphan_fork_pts();
     for (i = 0; i < BFREE_PROC_MAX_LIVE; ++i) {
         if (!g_fork_pt_used[i]) {
             g_fork_pt_used[i] = 1;
@@ -208,14 +264,6 @@ static int bfree_process_alloc_fork_pt(void)
         }
     }
     return -1;
-}
-
-static void bfree_process_release_fork_pt(int idx)
-{
-    if (idx < 0 || idx >= BFREE_PROC_MAX_LIVE) {
-        return;
-    }
-    g_fork_pt_used[idx] = 0;
 }
 
 void bfree_process_init(void)
@@ -307,6 +355,8 @@ long bfree_process_fork_enter(int *child_pid)
     page_table_t *child;
     page_table_t *live_cr3;
 
+    bfree_process_heal_active();
+    bfree_process_reclaim_orphan_fork_pts();
     if (bfree_process_live_count() >= BFREE_PROC_MAX_LIVE) {
         uart_puts("[FORK] EAGAIN live=");
         uart_puthex64((uint64_t)(unsigned)bfree_process_live_count());
