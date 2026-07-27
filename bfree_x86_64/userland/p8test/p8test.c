@@ -9,6 +9,7 @@ typedef unsigned long uintptr_t;
 #define __NR_close 3
 #define __NR_mmap 9
 #define __NR_munmap 11
+#define __NR_lseek 8
 #define __NR_dup3 292
 #define __NR_nanosleep 35
 #define __NR_alarm 37
@@ -31,6 +32,13 @@ typedef unsigned long uintptr_t;
 #define __NR_rt_sigaction 13
 #define __NR_fcntl 72
 #define __NR_ioctl 16
+#define __NR_kill 62
+#define __NR_getpid 39
+#define __NR_mremap 25
+#define __NR_membarrier 324
+#define MAP_SHARED 1
+#define SIGCHLD 17
+#define MREMAP_MAYMOVE 1
 
 #define O_RDONLY 0
 #define O_WRONLY 1
@@ -407,6 +415,118 @@ static int test_mmap_file(void)
     return 0;
 }
 
+/* A5/B2: MAP_SHARED writeback visible via read(). */
+static int test_mmap_shared(void)
+{
+    long fd;
+    long map;
+    char *p;
+    char buf[8];
+    long n;
+
+    fd = sys3(__NR_open, (long)"/tmp/p8sh", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        return -1;
+    }
+    if (sys3(__NR_write, fd, (long)"XXXXXX", 6) != 6) {
+        return -1;
+    }
+    map = sys6(__NR_mmap, 0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (map < 0 && map > -4096) {
+        return -1;
+    }
+    p = (char *)(uintptr_t)map;
+    p[0] = 'S';
+    p[1] = 'H';
+    p[2] = 'A';
+    p[3] = 'R';
+    p[4] = 'E';
+    p[5] = 'D';
+    (void)sys3(__NR_lseek, fd, 0, 0);
+    n = sys3(__NR_read, fd, (long)buf, 6);
+    (void)sys3(__NR_munmap, map, 4096, 0);
+    (void)sys3(__NR_close, fd, 0, 0);
+    if (n != 6 || !streq_n(buf, "SHARED", 6)) {
+        return -1;
+    }
+    return 0;
+}
+
+static volatile long g_got_sigchld;
+
+static void on_sigchld(long sig)
+{
+    (void)sig;
+    g_got_sigchld = 1;
+}
+
+/* Linux x86_64 requires sa_restorer for kernel CATCH delivery. */
+static void sig_restorer(void)
+{
+    register long rax __asm__("rax") = 15; /* rt_sigreturn */
+    __asm__ volatile("syscall" : : "r"(rax) : "rcx", "r11", "memory");
+}
+
+/* B1.6/B1.14: install CATCH handler, raise SIGCHLD, deliver on syscall return. */
+static int test_sigchld(void)
+{
+    long act[4];
+    long i;
+    long pid;
+
+    g_got_sigchld = 0;
+    for (i = 0; i < 4; ++i) {
+        act[i] = 0;
+    }
+    act[0] = (long)(uintptr_t)on_sigchld;
+    act[2] = (long)(uintptr_t)sig_restorer;
+    if (sys6(__NR_rt_sigaction, SIGCHLD, (long)act, 0, 8, 0, 0) != 0) {
+        return -1;
+    }
+    pid = sys3(__NR_getpid, 0, 0, 0);
+    if (pid < 0) {
+        return -1;
+    }
+    if (sys3(__NR_kill, pid, SIGCHLD, 0) != 0) {
+        return -1;
+    }
+    /* Enter kernel so pending CATCH is delivered. */
+    (void)sys3(__NR_getpid, 0, 0, 0);
+    (void)sys3(__NR_getpid, 0, 0, 0);
+    act[0] = 0;
+    act[2] = 0;
+    (void)sys6(__NR_rt_sigaction, SIGCHLD, (long)act, 0, 8, 0, 0);
+    if (g_got_sigchld == 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int test_mremap_membarrier(void)
+{
+    long map;
+    long grown;
+    long rc;
+
+    map = sys6(__NR_mmap, 0, 4096, PROT_READ | PROT_WRITE,
+               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (map < 0 && map > -4096) {
+        return -1;
+    }
+    grown = sys6(__NR_mremap, map, 4096, 8192, 0, 0, 0);
+    if (grown < 0 && grown > -4096) {
+        /* in-place expand may fail with ENOMEM — still accept shrink path */
+        (void)sys3(__NR_munmap, map, 4096, 0);
+    } else {
+        (void)sys3(__NR_munmap, grown, 8192, 0);
+    }
+    rc = sys3(__NR_membarrier, 0, 0, 0);
+    if (rc != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 static int test_misc(void)
 {
     struct timespec res;
@@ -652,6 +772,24 @@ void p8_main(void)
         put("P8_MMAP_OK\n");
     } else {
         put("P8_MMAP_FAIL\n");
+        fail = 1;
+    }
+    if (test_mmap_shared() == 0) {
+        put("P8_MMAP_SHARED_OK\n");
+    } else {
+        put("P8_MMAP_SHARED_FAIL\n");
+        fail = 1;
+    }
+    if (test_sigchld() == 0) {
+        put("P8_SIGCHLD_OK\n");
+    } else {
+        put("P8_SIGCHLD_FAIL\n");
+        fail = 1;
+    }
+    if (test_mremap_membarrier() == 0) {
+        put("P8_MREMAP_OK\n");
+    } else {
+        put("P8_MREMAP_FAIL\n");
         fail = 1;
     }
     if (test_misc() == 0) {

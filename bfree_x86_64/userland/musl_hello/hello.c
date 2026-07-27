@@ -1,11 +1,9 @@
-#include <stdio.h>
+/* Minimal musl-static hello for B2.20 gate. */
 #include <unistd.h>
 
 int main(void)
 {
-    puts("MUSL_HELLO_OK");
-    fflush(stdout);
-    /* _exit avoids musl atexit against a shared guest fd table after exec. */
-    _exit(0);
+    const char msg[] = "B2_MUSL_HELLO_OK\n";
+    (void)write(1, msg, sizeof(msg) - 1);
     return 0;
 }

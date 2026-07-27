@@ -34,24 +34,14 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 ## 常設方針（エージェント用・スマホでは触らなくてよい）
 
 **正本:** `C:\Users\h_kis\Desktop\B-Free-master`（詳細: `docs/CANONICAL.md`）。`J:\B-Free-master` は古いコピー・使わない。
-本線: `work/posix-holes-redo`。**desktop / QML ready** 優先。
-BusyBox 実用ゲート（`tools/linux_box_gate.sh`）は **全 PASS で凍結**（CLI 深掘りは後回し）。ABI トラック A（A1–A7）は 2026-07-28 までで埋め済み（真のページ共有 CoW は未）。
+本線: `work/posix-holes-redo`。**B1→B2→B3 ABI 完了** + **Desktop 本線 GREEN（W3.5 + QML ready hybrid）**。
 
 ## 現在の状態（エージェントが更新）
 
 - **Updated:** 2026-07-28
-- **正本固定:** Desktop（C:）を唯一の作業ツリー。Native Qt GUI は `guest_main.cpp`（**W3.5** まで）。
-- **BusyBox / phase3:** `phase3_guest_auto` **RESULT: ALL PASS**（2026-07-28）。`linux_box_gate` ash/pipe/persist/fork PASS；ping/nc はホスト echo タイムアウト（ABI 外）。
-- **ABI トラック A（2026-07-28）:**
-  - **A5** vfile mmap：R9 offset + **MAP_SHARED writeback**（munmap / `read()` 前に vf->data へ反映）。PRIVATE はコピーのまま
-  - **A6/A7** `shm_open`/`shm_unlink` は vfile `shm/<name>` 配線済み（worklist を DONE に更新）。`memfd_create` も簡易 DONE（B3.3）
-- **Practical Native OS D→E→F GREEN** (post A→B→C)
-  - **D** FAT12/16 **RW** `/persist`: `tools/_f1_persist_fat_rw_smoke.sh` PASS; BFP1 `_f1_persist_smoke.sh` PASS
-  - **E** Explorer (desk note) + Viewer + Terminal (1 cmd → `/persist/term.txt`); keys 1/2/3
-  - **F** QML Rectangle soft SG try → explicit `SG fail->FB` (lookalike authority)
-  - Smoke: `tools/_tmp_stage_abcd_smoke.sh`
-- **Stabilize G0–G2 (pre–DesktopShell.qml):** dirty-only FB paint; no I/O in paint; Start launcher; QPA single input path; serial flood = FAIL. Host `DesktopShell.qml` / SG pixel authority **deferred**.
-- **W0–W3.4:** 従来どおり。`g_w3_sg_pixels=0` FB 画素権威。
-- **W3.5 window setVisible:** attach 末で `guest_w3_sync_one(0)` 経由の **outer 1 枚だけ** `setVisible(true)`（直接 Qt 呼び出しの肥大は早期 PF のため回避）。シリアル `W3.5 window setVisible ok`。Smoke: `tools/_tmp_qemu_wm_smoke.sh` KEY 全 PASS（含 **w35_setvisible** / no_panic）。
-- **Also:** mmap session switches onto the 256MiB ctor stack (exec ~4MiB was overflowing QV4 after W1/W2 growth).
-- **Next:** SG 画素権威（`g_w3_sg_pixels=1`）を安全に上げる、または host `DesktopShell.qml` 本読み込み。FAT32 / AHCI / 実機・BusyBox CLI / B1–B2 は後段。
+- **Phase5 (B1):** sticky-fork／waitall；SIGCHLD CATCH+restorer；SIGPIPE；seq-fork；NOFORK_ALL=0。`phase3` **ALL PASS**
+- **Phase6 (B2):** mremap／membarrier／rseq；MAP_SHARED；`/musl_hello.elf`
+- **B3:** epoll←timerfd；poll/eventfd 既存；socket は B4 方式
+- **Desktop 本線（B3c）:** `QML ready (hybrid stack)` + W0–W3.5 + FB 画素権威。Smoke KEY: processEvents…w35 + **qml_ready** + start/wm + no_panic
+- **ブロッカー 1:** `g_w3_sg_pixels=1` および attach 後 Quick 幾何 sync は早期 PF（CR2 可変）。host `DesktopShell.qml` 本読み込みは TypeCompiler hang 歴あり → **次の単独課題**
+- **Next:** 安全な SG 画素権威（または DesktopShell 本読）を **単独** で掘る。FAT32／AHCI／futex 深化は後段。

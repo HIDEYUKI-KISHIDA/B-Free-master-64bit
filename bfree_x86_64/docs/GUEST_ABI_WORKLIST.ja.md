@@ -39,21 +39,21 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 
 | ID | syscall / 機能 | 状態 | 作業 |
 |----|----------------|------|------|
-| B1.1 | 複数子プロセス枠 | ~~1 子のみ~~ **ゾンビ最大 8** | zombie 表・複数 wait |
-| B1.2 | `wait4`/`waitpid` 意味論 | 部分 | 複数ゾンビ掃引 |
+| B1.1 | 複数子プロセス枠 | ~~1 子のみ~~ **DONE**（ゾンビ最大 8） | zombie 表・複数 wait |
+| B1.2 | `wait4`/`waitpid` 意味論 | **DONE**（wait 時 fork PT 解放を防御的に強化 2026-07-28） | 複数ゾンビ掃引 |
 | B1.3 | `waitid` | ~~ENOSYS~~ **DONE** | = A3 |
-| B1.4 | `execve` 安定 | 部分 | = A4、プライベート AS 必須化 |
+| B1.4 | `execve` 安定 | **partial DONE** | = A4、プライベート AS 必須化 |
 | B1.5 | `clone` 非 VFORK | ~~ENOSYS~~ **DONE**=A2 | = A2 |
-| B1.6 | SIGCHLD 配送 | 弱い/無し | 子 exit で親に通知 |
-| B1.7 | SIGPIPE / SIGINT | 弱い | パイプ切断・Ctrl+C |
-| B1.8 | パイプ両端同時実行 | 協調/inproc | 複数 runnable または本物パイプ |
-| B1.9 | BusyBox inproc pipe 撤去 | パッチ依存 | B1.1+B1.8 後 |
-| B1.10 | bg-inline 撤去 | パッチ依存 | 同上 |
-| B1.11 | `setpgid` / `getpgid` | 要確認・不足なら新規 | ジョブ制御下準備 |
-| B1.12 | `setsid` / `getsid` / `getpgrp` | 要確認 | 同上 |
-| B1.13 | `tcsetpgrp` / `tcgetpgrp` (ioctl) | 浅い | フォアグラウンド PG |
-| B1.14 | `rt_sigaction` 配送 | 登録のみ寄り | 実際にハンドラ実行 |
-| B1.15 | `BFREE_NOFORK_ALL=0` 回帰 | 失敗歴あり | **2026-07-18 再試験: kernel panic / 全滅 → NOFORK=1 にロールバック済。次は B1.6–B1.10** |
+| B1.6 | SIGCHLD 配送 | **DONE**（raise + CATCH 配送；p8/ash マーカー） | 子 exit で親に通知 |
+| B1.7 | SIGPIPE / SIGINT | **DONE**（P8_SIGPIPE；コンソール VINTR→SIGINT） | パイプ切断・Ctrl+C |
+| B1.8 | パイプ両端同時実行 | **DONE**（seq-fork AS-copy + coop；B2_3PIPE） | 複数 runnable または本物パイプ |
+| B1.9 | BusyBox inproc pipe 撤去 | **DONE**（default KEEP_INPROC=0） | B1.1+B1.8 後 |
+| B1.10 | bg-inline 撤去 | **DONE**（default off；FORK_BG→AS-copy） | 同上 |
+| B1.11 | `setpgid` / `getpgid` | **DONE** | ジョブ制御下準備 |
+| B1.12 | `setsid` / `getsid` / `getpgrp` | **DONE** | 同上 |
+| B1.13 | `tcsetpgrp` / `tcgetpgrp` (ioctl) | **DONE**（P8_TTY） | フォアグラウンド PG |
+| B1.14 | `rt_sigaction` 配送 | **DONE**（CATCH 実行；P8_SIGCHLD） | 実際にハンドラ実行 |
+| B1.15 | `BFREE_NOFORK_ALL=0` 回帰 | **DONE**（2026-07-28 phase3 ALL PASS） | NOFORK=0 で ALL PASS |
 
 **完了条件:** `BFREE_NOFORK_ALL=0` で `phase3_guest_auto` 相当が ALL PASS。
 
@@ -61,26 +61,26 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 
 | ID | syscall / 機能 | 状態 | 作業 |
 |----|----------------|------|------|
-| B2.1 | file-backed `mmap` | partial DONE | = A5 |
-| B2.2 | `mremap` | 未登録多い | 実装 or 安全 ENOSYS→代替確認 |
-| B2.3 | `pread64` / `pwrite64` | 要確認 | オフセット付き I/O |
+| B2.1 | file-backed `mmap` | **DONE（簡易）** | = A5 + SHARED |
+| B2.2 | `mremap` | **DONE（簡易・非 MAYMOVE）** | in-place grow/shrink |
+| B2.3 | `pread64` / `pwrite64` | **DONE** | P8_PREAD |
 | B2.4 | `readv` / 強化 `writev` | 部分 | iovec 完走 |
-| B2.5 | `fsync` / `fdatasync` | 要確認 | no-op 可なら明示 |
-| B2.6 | `flock` / fcntl ロック | 要確認 | 単一プロセスなら no-op |
-| B2.7 | `clone` スレッドフラグ | ENOSYS | TLS + スケジューラ |
+| B2.5 | `fsync` / `fdatasync` | **DONE（no-op）** | 明示成功 |
+| B2.6 | `flock` / fcntl ロック | **DONE** | P8_FLOCK |
+| B2.7 | `clone` スレッドフラグ | partial（coop THREAD） | TLS + スケジューラ |
 | B2.8 | futex 深化 | 部分 stub | WAIT 実待ち・WAKE |
-| B2.9 | `set_robust_list` | get のみ？ | set 実装 |
-| B2.10 | `exit_group` | exit と同居 | スレッド全終了 |
+| B2.9 | `set_robust_list` | **DONE（no-op set）** | set 実装 |
+| B2.10 | `exit_group` | **DONE** | exit と同居 |
 | B2.11 | `tgkill` / `rt_tgsigqueueinfo` | 要確認 | スレッドシグナル |
-| B2.12 | `sigaltstack` | 要確認 | |
-| B2.13 | `rt_sigreturn` | 要確認 | |
+| B2.12 | `sigaltstack` | **DONE** | |
+| B2.13 | `rt_sigreturn` | **DONE** | |
 | B2.14 | `rt_sigtimedwait` / `rt_sigsuspend` | 要確認 | |
-| B2.15 | `clock_nanosleep` | 番号注意 | Linux 230 と整合 |
-| B2.16 | `clock_getres` | 要確認 | |
+| B2.15 | `clock_nanosleep` | あり | Linux 230 と整合 |
+| B2.16 | `clock_getres` | **DONE** | P8_MISC |
 | B2.17 | `sysinfo` / `prlimit64` | 部分 | musl が期待する値 |
-| B2.18 | `membarrier` / `rseq` | 未 | 空成功スタブで足りるか検証 |
-| B2.19 | `getrandom` | あり | 品質確認のみ |
-| B2.20 | 静的 hello/musl スモーク | 無し | `/tmp` に置いた静的 ELF 実行テスト |
+| B2.18 | `membarrier` / `rseq` | **DONE（空成功）** | |
+| B2.19 | `getrandom` | **DONE** | 品質は簡易 |
+| B2.20 | 静的 hello/musl スモーク | **追加**（`/musl_hello.elf`） | B2_MUSL_HELLO_OK |
 
 **完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。
 
@@ -88,17 +88,18 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 
 | ID | syscall / 機能 | 優先 | 作業 |
 |----|----------------|------|------|
-| B3.1 | `epoll_*` 深化 | P1 | 既に case あり → 実イベント接続 |
-| B3.2 | `eventfd` / `timerfd` | P1 | 既にある → Qt が使う意味論 |
+| B3.1 | `epoll_*` 深化 | P1 | ~~部分~~ **DONE+**：pipe/eventfd/timerfd/sock ready を epoll_wait に接続（2026-07-28） |
+| B3.2 | `eventfd` / `timerfd` | P1 | **DONE**（epoll 連携強化） |
 | B3.3 | `memfd_create` | P1 | ~~確認~~ **DONE（簡易）**：`sys_linux_memfd_create` → vfile + ftruncate（A5 mmap 経路） |
-| B3.4 | `poll`/`ppoll` | P1 | 深化 |
-| B3.5 | `ioctl` FB/input | P1 | QPA 経路 |
+| B3.4 | `poll`/`ppoll` | P1 | 既存あり・深化継続 |
+| B3.5 | `ioctl` FB/input | P1 | QPA 経路（既存） |
 | B3.6–B3.12 | socket 系 7 本 | P2 | socket/bind/connect/listen/accept/sendto/recvfrom（ネット無しなら後回し） |
 | B3.13 | `getsockopt`/`setsockopt` | P2 | |
 | B3.14 | `shutdown`/`socketpair` | P2 | socketpair はあり |
-| B3.15 | 大スタック / TLS / 例外 | P1 | 既存 Qt デバッグ知見の定着 |
+| B3.15 | 大スタック / TLS / 例外 | P1 | **定着**（256MiB mmap session stack；W3.5 まで GREEN） |
 
-**完了条件:** `[desktop_qt] QML ready` が再現する、または明確な次のブロッカー 1 個に収束。
+**完了条件:** `[desktop_qt] QML ready` が再現する、または明確な次のブロッカー 1 個に収束。  
+→ **2026-07-28:** `QML ready` + W3.5 KEY PASS。次ブロッカー = `g_w3_sg_pixels=1` / DesktopShell 本読（早期 PF）。
 
 ### B4 — バッファ（必要になったら）〜10–20
 

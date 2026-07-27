@@ -876,11 +876,21 @@ long bfree_process_wait4(long pid, int *status_out, int options)
     }
     {
         long reaped = (long)g_children[found].pid;
+        int pt_idx = g_children[found].fork_pt_idx;
+
+        /* Defensive: exit_restore_as usually freed the PT already; soft-reap
+         * path also releases. Never leave g_fork_pt_used sticky after wait. */
+        if (pt_idx >= 0) {
+            bfree_process_release_fork_pt(pt_idx);
+        }
         g_children[found].state = BFREE_PROC_FREE;
         g_children[found].pid = 0;
         g_children[found].exited_signal = 0;
         g_children[found].stop_sig = 0;
         g_children[found].stop_pending = 0;
+        g_children[found].has_private_as = 0;
+        g_children[found].child_pt = 0;
+        g_children[found].parent_pt = 0;
         g_children[found].fork_pt_idx = -1;
         g_children[found].coop_session = -1;
         return reaped;

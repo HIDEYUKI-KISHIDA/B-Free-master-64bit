@@ -98,6 +98,12 @@ run_once() {
   fi
   cp -f userland/p8test/p8test.elf iso_root/boot/p8test.elf 2>/dev/null || true
 
+  echo "[phase3] build musl hello (B2.20)" | tee -a "$LOG"
+  if ! bash tools/build_musl_hello.sh >>"$LOG" 2>&1; then
+    echo "FAIL musl hello build" | tee -a "$REPORT"
+    return 1
+  fi
+
   # Phase 3 needs only the serial BusyBox payload. Building from the complete
   # iso_root traverses thousands of GUI assets on the Windows mount and turns
   # every test run into a multi-minute ISO build.
@@ -115,6 +121,7 @@ run_once() {
   install -m 0644 userland/busybox_guest/busybox.elf "$ISO_STAGE/boot/busybox.elf"
   install -m 0644 userland/init/init.elf "$ISO_STAGE/boot/initrd.img"
   install -m 0644 userland/p8test/p8test.elf "$ISO_STAGE/boot/p8test.elf"
+  install -m 0644 userland/musl_hello/hello.elf "$ISO_STAGE/boot/musl_hello.elf"
   cp -f "$GRUB_CFG" "$ISO_STAGE/boot/grub/grub.cfg"
   # menuentry index 3: "B-Free OS (busybox serial — AUTO_LOGIN)"
   sed -i 's/^set default=.*/set default=3/' "$ISO_STAGE/boot/grub/grub.cfg"
@@ -123,7 +130,10 @@ run_once() {
     sed -i '/module2 \/boot\/busybox.elf busybox.elf/a\    module2 /boot/p8test.elf p8test.elf' \
       "$ISO_STAGE/boot/grub/grub.cfg"
   fi
-
+  if ! grep -q 'musl_hello.elf' "$ISO_STAGE/boot/grub/grub.cfg"; then
+    sed -i '/module2 \/boot\/p8test.elf p8test.elf/a\    module2 /boot/musl_hello.elf musl_hello.elf' \
+      "$ISO_STAGE/boot/grub/grub.cfg"
+  fi
   echo "[phase3] mkrescue ISO" | tee -a "$LOG"
   if ! grub-mkrescue -o "$ISO" "$ISO_STAGE" -- -volid BFREE >>"$LOG" 2>&1; then
     echo "FAIL grub-mkrescue" | tee -a "$REPORT"
@@ -294,6 +304,12 @@ run_once() {
     # Multi-zombie: two sequential exits must both be waitable (8-slot table).
     printf 'false; false; echo P5_MULTI_Z_O""K\n'
     sleep 2
+    # B1a sticky-fork: fork+wait+fork must not EAGAIN (PT release on wait/exit).
+    printf 'false; true; false; true; echo P5_STICKY_FORK_O""K\n'
+    sleep 3
+    # waitpid(-1) sweep via ash: reap then continue.
+    printf 'false; wait; echo P5_WAITALL_O""K\n'
+    sleep 2
     # POSIX holes: umask + mode-aware chmod/access + hard link under /tmp.
     printf 'umask 022; umask | grep 022 && echo P6_UMASK_O""K\n'
     sleep 2
@@ -358,6 +374,9 @@ run_once() {
     sleep 2
     printf '/p8test.elf\n'
     sleep 22
+    # B2.20: musl-static hello via initrd module
+    printf '/musl_hello.elf; echo B2_MUSL_RUN_O""K\n'
+    sleep 3
     # Hold the serial pipe open until the outer timeout (guest AS-copy fork/sort
     # can run for minutes; closing stdin early killed QEMU mid-suite).
     sleep 650
@@ -485,6 +504,8 @@ run_once() {
   check "p4_rmdir_tree" 'P4_RMDIR_OK'
   check "p4_wait_status" 'P4_WAIT_OK'
   check "p5_multi_zombie" 'P5_MULTI_Z_OK'
+  check "p5_sticky_fork" 'P5_STICKY_FORK_OK'
+  check "p5_waitall" 'P5_WAITALL_OK'
   check "p6_umask" 'P6_UMASK_OK'
   check "p6_chmod_mode" 'P6_CHMOD_OK'
   check "p6_hardlink" 'P6_LINK_OK'
@@ -508,9 +529,14 @@ run_once() {
   check "p8_persist" 'P8_PERSIST_OK'
   check "p8_tty" 'P8_TTY_OK'
   check "p8_mmap" 'P8_MMAP_OK'
+  check "p8_mmap_shared" 'P8_MMAP_SHARED_OK'
+  check "p8_sigchld" 'P8_SIGCHLD_OK'
+  check "p8_mremap" 'P8_MREMAP_OK'
   check "p8_misc" 'P8_MISC_OK'
   check "p8_alarm" 'P8_ALARM_OK'
   check "p8_done" 'P8_DONE_OK'
+  check "b2_musl_hello" 'B2_MUSL_HELLO_OK'
+  check "b2_musl_run" 'B2_MUSL_RUN_OK'
   check "p9_home" 'P9_HOME_OK'
   check "p9_cloexec" 'P9_CLOEXEC_OK'
   check "p9_shome" 'P9_SHOME_OK'

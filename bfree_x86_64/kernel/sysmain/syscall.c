@@ -2346,6 +2346,54 @@ static long sys_linux_madvise(long addr, long length, long advice)
     return 0;
 }
 
+/* Linux 25: mremap — grow/shrink anonymous guest heap mapping (no move). */
+static long sys_linux_mremap(long old_addr, long old_size, long new_size, long flags,
+                             long new_addr)
+{
+    (void)new_addr;
+    if (old_size <= 0 || new_size <= 0) {
+        return -22;
+    }
+    /* MREMAP_MAYMOVE unsupported; refuse move requests. */
+    if ((flags & 1L) != 0) { /* MREMAP_MAYMOVE */
+        return -38; /* ENOSYS — force musl/glibc fallback */
+    }
+    if (new_size == old_size) {
+        return old_addr;
+    }
+    if (new_size < old_size) {
+        (void)sys_munmap(old_addr + new_size, old_size - new_size);
+        return old_addr;
+    }
+    /* Expand in place only when the extension is free — else ENOSYS. */
+    {
+        long ext = sys_mmap_anonymous_heap(old_addr + old_size, new_size - old_size,
+                                           MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE);
+        if (ext < 0) {
+            return -12; /* ENOMEM */
+        }
+        return old_addr;
+    }
+}
+
+/* Linux 324 / 334: empty-success stubs for musl/pthread bootstrap. */
+static long sys_linux_membarrier(long cmd, long flags, long cpu_id)
+{
+    (void)cmd;
+    (void)flags;
+    (void)cpu_id;
+    return 0;
+}
+
+static long sys_linux_rseq(long rseq_ptr, long rseq_len, long flags, long sig)
+{
+    (void)rseq_ptr;
+    (void)rseq_len;
+    (void)flags;
+    (void)sig;
+    return 0;
+}
+
 // Linux 12: brk — map new pages when musl extends the break (was pointer-only).
 long sys_brk(long addr)
 {
@@ -8877,6 +8925,8 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
             img = "p8test.elf";
         } else if (bfree_guest_basename_eq(path, "hello.elf")) {
             img = "hello.elf";
+        } else if (bfree_guest_basename_eq(path, "musl_hello.elf")) {
+            img = "musl_hello.elf";
         } else if (bfree_guest_basename_eq(path, "ltp_curated.elf")) {
             img = "ltp_curated.elf";
         }
@@ -9706,6 +9756,8 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
         } else if (bfree_guest_is_eventfd(w->fd)
                    && g_guest_eventfd_val[bfree_guest_eventfd_index(w->fd)] != 0) {
             revents = EPOLLIN;
+        } else if (bfree_find_timerfd(w->fd) && sys_timerfd_pending(w->fd) > 0) {
+            revents = EPOLLIN;
         } else {
             revents = bfree_guest_sock_ready_mask(w->fd);
         }
@@ -9747,6 +9799,8 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
                     revents = EPOLLIN;
                 } else if (bfree_guest_is_eventfd(w->fd)
                            && g_guest_eventfd_val[bfree_guest_eventfd_index(w->fd)] != 0) {
+                    revents = EPOLLIN;
+                } else if (bfree_find_timerfd(w->fd) && sys_timerfd_pending(w->fd) > 0) {
                     revents = EPOLLIN;
                 } else {
                     revents = bfree_guest_sock_ready_mask(w->fd);
@@ -12212,6 +12266,8 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_mmap(arg1, arg2, arg3, arg4, arg5);
     case 10:
         return sys_mprotect(arg1, arg2, arg3);
+    case 25: /* mremap */
+        return sys_linux_mremap(arg1, arg2, arg3, arg4, arg5);
     case 28:
         return sys_linux_madvise(arg1, arg2, arg3);
     case 11:
@@ -12405,6 +12461,10 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_openat(arg1, arg2, arg3, arg4);
     case 318:
         return sys_linux_getrandom(arg1, arg2, arg3);
+    case 324: /* membarrier */
+        return sys_linux_membarrier(arg1, arg2, arg3);
+    case 334: /* rseq */
+        return sys_linux_rseq(arg1, arg2, arg3, arg4);
     case 262:
         return sys_linux_newfstatat(arg1, arg2, arg3, arg4);
     case 217:
