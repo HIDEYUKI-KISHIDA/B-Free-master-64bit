@@ -2,6 +2,7 @@
 
 > 第一地図: `docs/LINUX_ABI_HOLES.ja.md`（NR表・Cat0–4・非ゴール宣言）  
 > 第二地図: **実際のユーザーランドが叩く表面**で次に埋める順番を決める。  
+> 参考切り分け: `docs/COMPAT_REFERENCES.ja.md`（WSL1 / Linuxulator / Wine / T-Kernel）  
 > 生成補助: `bfree_x86_64/tools/gen_abi_second_map.py`
 
 ## なぜ第二地図が必要か
@@ -93,9 +94,10 @@ BusyBox 証拠ではないが、登録済みの片割れを埋めた薄い実装
 
 ## 次（M20 候補）
 
-1. `stat` applet + ash_regress（任意。raw `stat_guest` は既にある）
+1. ~~`stat` applet + ash_regress~~ → M20 で実施
 2. 新 BusyBox applet を足すときは必ず `gen_abi_second_map.py` で NR 差分を取る
 3. INET・io_uring・namespaces は引き続き非ゴール
+4. 参考の切り分け: `docs/COMPAT_REFERENCES.ja.md`（WSL1/Linuxulator vs Wine vs T-Kernel）
 
 ## 第一地図との関係
 

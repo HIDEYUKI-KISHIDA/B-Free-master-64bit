@@ -31,6 +31,6 @@ str1:
 str2:
 	.asciz "-c"
 str3:
-	.asciz "out=$(echo pipe-data | cat); [ \"$out\" = \"pipe-data\" ] || exit 1; echo ASH_PIPE_GUEST_OK; marker=parent; ( marker=subshell ); [ \"$marker\" = \"parent\" ] || exit 1; echo ASH_SUBSHELL_GUEST_OK; out=$(echo hello); [ \"$out\" = \"hello\" ] || exit 1; echo ASH_CMDSUBST_GUEST_OK; sleep 0 & wait; echo ASH_BG_GUEST_OK; /bin/true || exit 1; /bin/false && exit 1; echo ASH_EXTERNAL_GUEST_OK; date +%s >/dev/null || exit 1; echo ASH_DATE_GUEST_OK; [ \"$(id -u)\" = 0 ] || exit 1; echo ASH_ID_GUEST_OK; ln -s /bin/true /tmp/ash_rl && [ \"$(readlink /tmp/ash_rl)\" = /bin/true ] || exit 1; echo ASH_LN_READLINK_GUEST_OK"
+	.asciz "out=$(echo pipe-data | cat); [ \"$out\" = \"pipe-data\" ] || exit 1; echo ASH_PIPE_GUEST_OK; marker=parent; ( marker=subshell ); [ \"$marker\" = \"parent\" ] || exit 1; echo ASH_SUBSHELL_GUEST_OK; out=$(echo hello); [ \"$out\" = \"hello\" ] || exit 1; echo ASH_CMDSUBST_GUEST_OK; sleep 0 & wait; echo ASH_BG_GUEST_OK; /bin/true || exit 1; /bin/false && exit 1; echo ASH_EXTERNAL_GUEST_OK; date +%s >/dev/null || exit 1; echo ASH_DATE_GUEST_OK; [ \"$(id -u)\" = 0 ] || exit 1; echo ASH_ID_GUEST_OK; ln -s /bin/true /tmp/ash_rl && [ \"$(readlink /tmp/ash_rl)\" = /bin/true ] || exit 1; echo ASH_LN_READLINK_GUEST_OK; stat /bin/true >/dev/null || exit 1; echo ASH_STAT_GUEST_OK"
 
 ash_regress_tramp_end:

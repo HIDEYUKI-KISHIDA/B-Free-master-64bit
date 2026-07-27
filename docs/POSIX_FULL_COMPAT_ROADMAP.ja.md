@@ -1,7 +1,8 @@
 # B-Free x86_64 — Linux/POSIX 完全互換トラッキング
 
 > **目的:** BusyBox / musl ゲストが「通常の Linux CLI」として動く状態を経て、最終的に Linux ABI / POSIX ユーザーランド互換を目指す。  
-> **方針:** 一発実装ではなく、検証可能な小さな PR を積み上げる。未到達は `ENOSYS` で明示する。
+> **方針:** 一発実装ではなく、検証可能な小さな PR を積み上げる。未到達は `ENOSYS` で明示する。  
+> **参考切り分け:** Wine / WSL1 / Linuxulator / T-Kernel → `docs/COMPAT_REFERENCES.ja.md`
 
 ## 現状（2026-07）
 
@@ -183,7 +184,14 @@
 - [x] 残 ENOSYS〜187 は **証拠無しでは埋めない**（第二地図に方針記載）
 - 次（M20）: `stat` applet 任意、`AF_INET` は別トラック、long-tail 一括埋めはしない
 
-手順: `docs/LINUX_ABI_SECOND_MAP.ja.md`
+### M20 — 参考地図の固定 + `stat` applet
+
+- [x] `docs/COMPAT_REFERENCES.ja.md`（WSL1 / Linuxulator / Wine / T-Kernel の切り分け）
+- [x] BusyBox `stat` + ash_regress 09 + QEMU マーカー
+- 方針: T-Kernel `tk_*` は別トラック。Linux 互換率は Linuxulator 級の証拠駆動で上げる
+- 次: guest で落ちた既存 REG の厚み直し、`/proc` 最小は証拠付きのみ
+
+手順: `docs/COMPAT_REFERENCES.ja.md` / `docs/LINUX_ABI_SECOND_MAP.ja.md`
 
 ## 非ゴール（このトラックでは約束しない）
 
