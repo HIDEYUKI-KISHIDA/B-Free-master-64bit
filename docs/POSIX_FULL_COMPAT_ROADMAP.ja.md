@@ -205,7 +205,14 @@
 - [x] guest pid1 を user VA モードへ（`guest_kernel.c`）
 - [x] stack top `0x2000000`、heap `0x540000`、mmap は下向き
 - [x] ゲート: `test_p20_user_va_brk_mmap`
-- 次（L3/L4）: exec 経路の仕上げ、`/proc/self/exe`
+
+### M23 — Linux-on-BTRON L3/L4（multi-MB execve + `/proc/self/exe`）
+
+- [x] exec blob 上限 8MiB + symlink follow（`elf_user_exec.c`）
+- [x] 最小 procfs: `/proc/self/exe` + `/proc/self/maps`（`procfs.c`）
+- [x] exec / ash boot で procfs 更新
+- [x] ゲート: `test_p21_multi_mb_execve` / `test_p22_proc_self_exe`
+- 次（L5）: 証拠落ち NR だけ stub を厚く
 
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 

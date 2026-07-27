@@ -56,9 +56,9 @@ T-Kernel を動かす仕事（`tk2-*-virt`）とは地図を分ける。混ぜ�
 | 起動 ABI | C 風 trampoline | Linux stack + auxv |
 | TLS | 変数に保存のみ | `FS` MSR 書き込み |
 | brk/mmap | カーネル heap ポインタ | identity map 上の user VA |
-| execve | 小さいファイルのみ | マルチ MB ET_EXEC |
+| execve | 小さいファイルのみ | マルチ MB ET_EXEC（8MiB + symlink） |
 | uname | `"B-Free"` | `"Linux"`（アプリ判定用） |
-| /proc | 無し | 最低 `/proc/self/exe` |
+| /proc | 無し | 最低 `/proc/self/exe`（+ maps） |
 | syscall 表 | 広いが薄い | 落ちたものだけ厚く |
 
 ---
@@ -70,10 +70,10 @@ T-Kernel を動かす仕事（`tk2-*-virt`）とは地図を分ける。混ぜ�
 | **L0** | 本プレイブック固定 | 文書 + ゲート方針 | 本 PR |
 | **L1** | Linux stack + auxv で `e_entry` へ | BusyBox `_start` が argc を読める | 済 |
 | **L1b** | `uname` → `Linux`、`ARCH_SET_FS` → FS MSR | libc が自分を Linux と認識 / TLS 設定可 | 済 |
-| **L2** | user VA の `brk`/`mmap` | `malloc` が生きる | 本 PR |
-| **L3** | 大きい `execve` | ash が `/bin/busybox` を載せる | 次（blob 2MiB は L1 で一部） |
-| **L4** | `/proc/self/exe`（+ maps） | BusyBox `CONFIG_BUSYBOX_EXEC_PATH` | その次 |
-| **L5** | 証拠付きで stub を厚く | 第二地図 + guest 落ちログ | 継続 |
+| **L2** | user VA の `brk`/`mmap` | `malloc` が生きる | 済 |
+| **L3** | 大きい `execve` | ash が `/bin/busybox` を載せる | 済（blob 8MiB + symlink follow） |
+| **L4** | `/proc/self/exe`（+ maps） | BusyBox `CONFIG_BUSYBOX_EXEC_PATH` | 済 |
+| **L5** | 証拠付きで stub を厚く | 第二地図 + guest 落ちログ | 次 |
 
 非ゴール（互換率の見せ金にしない）: io_uring、namespaces、フル INET、T-Kernel `tk_*` 混在。
 
@@ -85,7 +85,7 @@ T-Kernel を動かす仕事（`tk2-*-virt`）とは地図を分ける。混ぜ�
 - QEMU guest で `ASH_*_GUEST_OK` が出ても、trampoline が BusyBox 内部を迂回しているなら証明が弱い
 - L1 以降の正本ゲート: **Linux stack 経由で `_start` に入り**、既知マーカーを出す
 
-ゲート: `test_p19_linux_process_abi`（stack ビルダ単体）+ QEMU ash（段階的に trampoline 撤去）
+ゲート: `test_p19_linux_process_abi`（stack）/ `test_p20_user_va_brk_mmap`（L2）/ `test_p21_multi_mb_execve`（L3）/ `test_p22_proc_self_exe`（L4）+ QEMU ash（段階的に trampoline 撤去）
 
 ---
 

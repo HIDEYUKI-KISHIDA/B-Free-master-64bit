@@ -5,7 +5,10 @@
 #include "elf_user_load.h"
 #include "initramfs.h"
 #include "linux_user_stack.h"
+#include "procfs.h"
+#include "syscall.h"
 #include "user_boot.h"
+#include "vmm.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -33,6 +36,15 @@ int bfree_ash_guest_boot(void)
 					   &aux);
 	if (rsp == 0)
 		return 0;
+
+	{
+		struct bfree_fs *fs = guest_fs();
+
+		if (fs != NULL)
+			(void)bfree_procfs_on_exec(fs, "/bin/busybox",
+						   BFREE_USER_HEAP_BASE,
+						   BFREE_USER_STACK_TOP);
+	}
 
 	/* Jump to real ELF e_entry with Linux stack — no C-ABI trampoline. */
 	bfree_user_boot_exec(entry, rsp);

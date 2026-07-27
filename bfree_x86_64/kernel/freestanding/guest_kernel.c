@@ -7,6 +7,7 @@
 #include "fs_ofd.h"
 #include "guest_io.h"
 #include "process.h"
+#include "procfs.h"
 #include "syscall.h"
 #include "vmm.h"
 
@@ -42,4 +43,5 @@ void bfree_kernel_guest_init(void)
 		bfree_close(fs, fd);
 
 	bfree_guest_initramfs_seed_vfs(fs);
+	(void)bfree_procfs_init(fs);
 }

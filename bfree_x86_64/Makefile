@@ -19,7 +19,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p14_stat_poll test_p14_guest_regress test_p15_poll_blocking \
 	test_p15_ash_regress_staged test_p16_pipe_dup2 test_p16_ash_full_staged \
 	test_p17_abi_holes test_p18_second_map_24 test_p19_linux_process_abi \
-	test_p20_user_va_brk_mmap
+	test_p20_user_va_brk_mmap test_p21_multi_mb_execve test_p22_proc_self_exe
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -50,7 +50,7 @@ FREESTANDING_CFLAGS := -Wall -Wextra -std=c11 -O2 -ffreestanding -fno-builtin \
 KERNEL_INC := -Ikernel/arch/x86_64 -Ikernel/sysmain -Ikernel/freestanding
 
 FS_OBJS := $(BUILD_DIR)/fs_ofd.o $(BUILD_DIR)/blk_vol.o $(BUILD_DIR)/blk_persist.o \
-	$(BUILD_DIR)/devnode.o $(BUILD_DIR)/mount.o
+	$(BUILD_DIR)/devnode.o $(BUILD_DIR)/mount.o $(BUILD_DIR)/procfs.o
 PROC_OBJS := $(BUILD_DIR)/process.o $(BUILD_DIR)/vmm.o $(BUILD_DIR)/shell_cli.o \
 	$(BUILD_DIR)/guest_io.o $(BUILD_DIR)/elf_load.o $(BUILD_DIR)/elf_host_run.o \
 	$(BUILD_DIR)/elf_trap_exec.o $(BUILD_DIR)/thread.o $(BUILD_DIR)/tty.o
@@ -68,7 +68,7 @@ TRAP_PAYLOAD_OBJS := $(P6_OBJS) $(BUILD_DIR)/trap_setup.o
 
 KERNEL_FREESTANDING_INC := -nostdinc -Ikernel/freestanding/include -DBFREE_KERNEL_GUEST
 KERNEL_SYSMAIN_OBJS := $(addprefix $(KERNEL_DIR)/,fs_ofd.o blk_vol.o blk_persist.o devnode.o \
-	mount.o cred.o net_unix.o ipc_shm.o ipc_sysv.o epoll.o sched_abi.o syscall_dispatch.o syscall.o \
+	mount.o procfs.o cred.o net_unix.o ipc_shm.o ipc_sysv.o epoll.o sched_abi.o syscall_dispatch.o syscall.o \
 	process.o vmm.o guest_io.o elf_load.o thread.o tty.o)
 KERNEL_FREESTANDING_OBJS := $(KERNEL_DIR)/libc_stubs.o $(KERNEL_DIR)/exec_stubs.o \
 	$(KERNEL_DIR)/guest_kernel.o $(KERNEL_DIR)/elf_user_load.o \
@@ -187,6 +187,10 @@ $(BUILD_DIR)/devnode.o: kernel/sysmain/devnode.c kernel/sysmain/devnode.h | $(BU
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/mount.o: kernel/sysmain/mount.c kernel/sysmain/mount.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/procfs.o: kernel/sysmain/procfs.c kernel/sysmain/procfs.h \
+		kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/cred.o: kernel/sysmain/cred.c kernel/sysmain/cred.h | $(BUILD_DIR)
@@ -543,6 +547,30 @@ $(BUILD_DIR)/test_p20_user_va_brk_mmap.o: tools/test_p20_user_va_brk_mmap.c \
 	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
 
 $(BUILD_DIR)/test_p20_user_va_brk_mmap: $(BUILD_DIR)/test_p20_user_va_brk_mmap.o $(COMMON_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/elf_user_exec.o: kernel/freestanding/elf_user_exec.c \
+		kernel/freestanding/elf_user_exec.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -Ikernel/freestanding -Ikernel/arch/x86_64 -c $< -o $@
+
+$(BUILD_DIR)/elf_user_exec_host_stubs.o: tools/elf_user_exec_host_stubs.c \
+		kernel/freestanding/elf_user_load.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) -Ikernel/freestanding -Ikernel/arch/x86_64 -c $< -o $@
+
+$(BUILD_DIR)/test_p21_multi_mb_execve.o: tools/test_p21_multi_mb_execve.c \
+		kernel/freestanding/elf_user_exec.h kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -Ikernel/freestanding -c $< -o $@
+
+$(BUILD_DIR)/test_p21_multi_mb_execve: $(BUILD_DIR)/test_p21_multi_mb_execve.o \
+		$(BUILD_DIR)/elf_user_exec.o $(BUILD_DIR)/elf_user_exec_host_stubs.o \
+		$(BUILD_DIR)/linux_user_stack.o $(COMMON_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p22_proc_self_exe.o: tools/test_p22_proc_self_exe.c \
+		kernel/sysmain/procfs.h kernel/sysmain/fs_ofd.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p22_proc_self_exe: $(BUILD_DIR)/test_p22_proc_self_exe.o $(COMMON_OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
