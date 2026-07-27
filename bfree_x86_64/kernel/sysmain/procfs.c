@@ -7,6 +7,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define PROC_AT_NULL   0UL
+#define PROC_AT_PAGESZ 6UL
+#define PROC_AT_UID    11UL
+#define PROC_AT_EUID   12UL
+#define PROC_AT_GID    13UL
+#define PROC_AT_EGID   14UL
+
 static size_t cstr_len(const char *s)
 {
 	size_t n = 0;
@@ -73,6 +80,44 @@ static int set_file_text(struct bfree_fs *fs, const char *path,
 	if (buf == NULL)
 		return -ENOMEM;
 	memcpy(buf, text, n + 1U);
+
+	vn = bfree_lookup(fs, path);
+	if (vn == NULL) {
+		int rc = bfree_create(fs, path, 0644);
+
+		if (rc != 0) {
+			free(buf);
+			return rc;
+		}
+		vn = bfree_lookup(fs, path);
+		if (vn == NULL) {
+			free(buf);
+			return -ENOENT;
+		}
+	}
+	if (vn->type != BFREE_VNODE_FILE) {
+		free(buf);
+		return -EINVAL;
+	}
+	free(vn->data);
+	vn->data = buf;
+	vn->size = n;
+	return 0;
+}
+
+static int set_file_bin(struct bfree_fs *fs, const char *path,
+			const void *data, size_t n)
+{
+	struct bfree_vnode *vn;
+	void *buf;
+
+	if (fs == NULL || path == NULL || (n > 0 && data == NULL))
+		return -EINVAL;
+	buf = malloc(n > 0 ? n : 1U);
+	if (buf == NULL)
+		return -ENOMEM;
+	if (n > 0)
+		memcpy(buf, data, n);
 
 	vn = bfree_lookup(fs, path);
 	if (vn == NULL) {
@@ -190,6 +235,40 @@ static int set_proc_self_status(struct bfree_fs *fs, const char *name)
 	return set_file_text(fs, "/proc/self/status", status);
 }
 
+static int set_proc_self_stat(struct bfree_fs *fs, const char *name)
+{
+	char statln[512];
+	size_t pos = 0;
+
+	if (fs == NULL || name == NULL)
+		return -EINVAL;
+	append_str(statln, &pos, sizeof(statln), "1 (");
+	append_str(statln, &pos, sizeof(statln), name);
+	append_str(statln, &pos, sizeof(statln),
+		   ") R 0 1 1 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n");
+	statln[pos < sizeof(statln) ? pos : sizeof(statln) - 1U] = '\0';
+	return set_file_text(fs, "/proc/self/stat", statln);
+}
+
+static int set_proc_uptime(struct bfree_fs *fs)
+{
+	return set_file_text(fs, "/proc/uptime", "1.00 0.00\n");
+}
+
+static int set_proc_self_auxv(struct bfree_fs *fs)
+{
+	uint64_t auxv[] = {
+		PROC_AT_PAGESZ, 4096UL,
+		PROC_AT_UID, 0UL,
+		PROC_AT_EUID, 0UL,
+		PROC_AT_GID, 0UL,
+		PROC_AT_EGID, 0UL,
+		PROC_AT_NULL, 0UL
+	};
+
+	return set_file_bin(fs, "/proc/self/auxv", auxv, sizeof(auxv));
+}
+
 int bfree_procfs_init(struct bfree_fs *fs)
 {
 	if (fs == NULL)
@@ -223,6 +302,12 @@ int bfree_procfs_init(struct bfree_fs *fs)
 	    0)
 		return -1;
 	if (set_proc_self_status(fs, "busybox") != 0)
+		return -1;
+	if (set_proc_self_stat(fs, "busybox") != 0)
+		return -1;
+	if (set_proc_uptime(fs) != 0)
+		return -1;
+	if (set_proc_self_auxv(fs) != 0)
 		return -1;
 	return 0;
 }
@@ -259,7 +344,13 @@ int bfree_procfs_on_exec(struct bfree_fs *fs, const char *exe_path,
 
 	if (set_proc_self_status(fs, name) != 0)
 		return -1;
+	if (set_proc_self_stat(fs, name) != 0)
+		return -1;
 	if (set_file_text(fs, "/proc/self/maps", maps) != 0)
+		return -1;
+	if (set_proc_uptime(fs) != 0)
+		return -1;
+	if (set_proc_self_auxv(fs) != 0)
 		return -1;
 	return 0;
 }

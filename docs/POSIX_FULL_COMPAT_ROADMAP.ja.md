@@ -212,7 +212,14 @@
 - [x] 最小 procfs: `/proc/self/exe` + `/proc/self/maps`（`procfs.c`）
 - [x] exec / ash boot で procfs 更新
 - [x] ゲート: `test_p21_multi_mb_execve` / `test_p22_proc_self_exe`
-- 次（L5）: 証拠落ち NR だけ stub を厚く
+
+### M24 — Linux-on-BTRON L5/L6（procfs 実用層）
+
+- [x] `/proc/self/status`・`/proc/meminfo`・`/proc/cpuinfo`
+- [x] `/proc/uptime`・`/proc/self/stat`・`/proc/self/auxv`
+- [x] `exec` 後に `status/stat` の Name 更新
+- [x] ゲート: `test_p23_procfs_basic` / `test_p24_procfs_runtime`
+- 次（L7）: 証拠落ち syscall / signal frame を優先して厚くする
 
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 
