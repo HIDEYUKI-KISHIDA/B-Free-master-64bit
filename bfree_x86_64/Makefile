@@ -22,7 +22,7 @@ HOST_TESTS := test_p4_dirent_ofd test_p4_unlink_open test_p4_openat test_p4_bloc
 	test_p20_user_va_brk_mmap test_p21_multi_mb_execve test_p22_proc_self_exe \
 	test_p23_procfs_basic test_p24_procfs_runtime test_p25_signal_abi_honesty \
 	test_p26_rt_sigreturn test_p27_signal_deliver test_p28_signal_entry \
-	test_p29_abi_thicken
+	test_p29_abi_thicken test_p30_linux_compat
 
 PAYLOAD_ELF := $(BUILD_DIR)/payload.elf
 MUSL_STATIC_ELF := $(BUILD_DIR)/musl_static.elf
@@ -639,6 +639,14 @@ $(BUILD_DIR)/test_p29_abi_thicken.o: tools/test_p29_abi_thicken.c \
 $(BUILD_DIR)/test_p29_abi_thicken: $(BUILD_DIR)/test_p29_abi_thicken.o $(P6_OBJS) \
 		$(KERNEL_ELF)
 	$(CC) $(CFLAGS) $(BUILD_DIR)/test_p29_abi_thicken.o $(P6_OBJS) -o $@ $(LDFLAGS)
+
+$(BUILD_DIR)/test_p30_linux_compat.o: tools/test_p30_linux_compat.c \
+		kernel/sysmain/signal_frame.h kernel/sysmain/fs_ofd.h \
+		kernel/sysmain/procfs.h kernel/sysmain/devnode.h | $(BUILD_DIR)
+	$(CC) $(CFLAGS) $(SYS_INC) -c $< -o $@
+
+$(BUILD_DIR)/test_p30_linux_compat: $(BUILD_DIR)/test_p30_linux_compat.o $(P6_OBJS)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 $(KERNEL_DIR)/paging.o: kernel/arch/x86_64/paging.c kernel/arch/x86_64/paging.h | $(KERNEL_DIR)
 	$(CC) $(FREESTANDING_CFLAGS) $(KERNEL_INC) -c $< -o $@

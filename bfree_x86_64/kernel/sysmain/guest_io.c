@@ -76,9 +76,9 @@ int guest_dup2(struct guest_io *io, int oldfd, int newfd)
 
 int guest_fcntl(struct guest_io *io, int fd, int cmd, long arg)
 {
-	if (io == NULL || io->fs == NULL)
+	if (io == NULL || io->fs == NULL || io->proc == NULL)
 		return -EINVAL;
 	if (is_pipe_fd(io->proc, fd))
-		return -EBADF;
+		return bfree_pipe_fcntl(io->proc, fd, cmd, arg);
 	return bfree_fcntl(io->fs, fd, cmd, arg);
 }

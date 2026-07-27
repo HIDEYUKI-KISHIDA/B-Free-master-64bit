@@ -23,6 +23,15 @@
 #ifndef O_EXCL
 #define O_EXCL 0200
 #endif
+#ifndef O_TRUNC
+#define O_TRUNC 01000
+#endif
+#ifndef O_APPEND
+#define O_APPEND 02000
+#endif
+#ifndef O_NONBLOCK
+#define O_NONBLOCK 04000
+#endif
 #ifndef R_OK
 #define R_OK 4
 #endif
@@ -516,7 +525,6 @@ static int ofd_open_vnode(struct bfree_fs *fs, struct bfree_vnode *vn,
 	int fd;
 	struct bfree_ofd *ofd;
 
-	(void)flags;
 	ofd_idx = alloc_ofd_slot(fs);
 	if (ofd_idx < 0)
 		return -EMFILE;
@@ -526,8 +534,17 @@ static int ofd_open_vnode(struct bfree_fs *fs, struct bfree_vnode *vn,
 	ofd->vnode = vn;
 	ofd->offset = 0;
 	ofd->dirent_index = 0;
+	ofd->flags = flags;
 	ofd->refcount = 1;
 	vnode_hold(vn);
+
+	if ((flags & O_TRUNC) && vn->type == BFREE_VNODE_FILE) {
+		vn->size = 0;
+		if (vn->data != NULL) {
+			free(vn->data);
+			vn->data = NULL;
+		}
+	}
 
 	fd = alloc_fd(fs, ofd_idx);
 	if (fd < 0) {
@@ -652,19 +669,30 @@ int bfree_dup2(struct bfree_fs *fs, int oldfd, int newfd)
 
 #define F_GETFD 1
 #define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
 #ifndef FD_CLOEXEC
 #define FD_CLOEXEC 1
 #endif
 
 int bfree_fcntl(struct bfree_fs *fs, int fd, int cmd, long arg)
 {
-	if (ofd_from_fd(fs, fd) == NULL)
+	struct bfree_ofd *ofd;
+
+	ofd = ofd_from_fd(fs, fd);
+	if (ofd == NULL)
 		return -EBADF;
 	switch (cmd) {
 	case F_GETFD:
 		return (fs->fd_flags[fd] & BFREE_FD_CLOEXEC) ? FD_CLOEXEC : 0;
 	case F_SETFD:
 		fs->fd_flags[fd] = (arg & FD_CLOEXEC) ? BFREE_FD_CLOEXEC : 0;
+		return 0;
+	case F_GETFL:
+		return (int)ofd->flags;
+	case F_SETFL:
+		ofd->flags = (ofd->flags & ~(O_NONBLOCK | O_APPEND)) |
+			     (arg & (O_NONBLOCK | O_APPEND));
 		return 0;
 	default:
 		return -EINVAL;
@@ -1030,22 +1058,41 @@ ssize_t bfree_getdents64(struct bfree_fs *fs, int fd, void *buf, size_t count)
 	out_used = 0;
 	idx = ofd->dirent_index;
 
-	while (idx < dir->child_count) {
-		struct bfree_vnode *child = dir->children[idx];
-		size_t namelen = strlen(child->name) + 1;
-		size_t reclen =
-			(sizeof(struct bfree_linux_dirent64) + namelen + 7) & ~7;
+	while (idx < dir->child_count + 2U) {
+		const char *name;
+		unsigned char dtype;
+		uint64_t ino;
+		size_t namelen;
+		size_t reclen;
 		struct bfree_linux_dirent64 *de;
 
+		if (idx == 0) {
+			name = ".";
+			dtype = DT_DIR;
+			ino = 1;
+		} else if (idx == 1) {
+			name = "..";
+			dtype = DT_DIR;
+			ino = 1;
+		} else {
+			struct bfree_vnode *child = dir->children[idx - 2U];
+
+			name = child->name;
+			dtype = dirent_type(child);
+			ino = (uint64_t)(idx);
+		}
+		namelen = strlen(name) + 1;
+		reclen = (sizeof(struct bfree_linux_dirent64) + namelen + 7) &
+			 ~7ULL;
 		if (out_used + reclen > count)
 			break;
 
 		de = (struct bfree_linux_dirent64 *)(out + out_used);
-		de->d_ino = (uint64_t)(idx + 2);
+		de->d_ino = ino;
 		de->d_off = (int64_t)(idx + 1);
 		de->d_reclen = (unsigned short)reclen;
-		de->d_type = dirent_type(child);
-		memcpy(de->d_name, child->name, namelen);
+		de->d_type = dtype;
+		memcpy(de->d_name, name, namelen);
 		out_used += reclen;
 		idx++;
 	}

@@ -30,7 +30,16 @@ static char ash_regress_cmd[] =
 	"[ \"$(id -u)\" = 0 ] || exit 1; echo ASH_ID_GUEST_OK; "
 	"ln -s /bin/true /tmp/ash_rl && [ \"$(readlink /tmp/ash_rl)\" = /bin/true ] || exit 1; "
 	"echo ASH_LN_READLINK_GUEST_OK; "
-	"stat / >/dev/null || exit 1; echo ASH_STAT_GUEST_OK";
+	"stat / >/dev/null || exit 1; echo ASH_STAT_GUEST_OK; "
+	"mkdir -p /tmp/ash_fs && echo hello > /tmp/ash_fs/a.txt && "
+	"[ \"$(cat /tmp/ash_fs/a.txt)\" = hello ] && "
+	"cp /tmp/ash_fs/a.txt /tmp/ash_fs/b.txt && "
+	"mv /tmp/ash_fs/b.txt /tmp/ash_fs/c.txt && "
+	"rm /tmp/ash_fs/a.txt /tmp/ash_fs/c.txt && rmdir /tmp/ash_fs && "
+	"echo ASH_FS_BASIC_GUEST_OK; "
+	"mkdir -p /tmp/ash_ls && echo x > /tmp/ash_ls/item && "
+	"ls /tmp/ash_ls | grep -q item && ls -a /tmp/ash_ls | grep -q '\\.' && "
+	"rm /tmp/ash_ls/item && rmdir /tmp/ash_ls && echo ASH_LS_GUEST_OK";
 
 int bfree_ash_regress_guest_boot(void)
 {

@@ -309,6 +309,24 @@ int bfree_procfs_init(struct bfree_fs *fs)
 		return -1;
 	if (set_proc_self_auxv(fs) != 0)
 		return -1;
+	if (ensure_dir(fs, "/proc/self/fd") != 0)
+		return -1;
+	if (set_symlink(fs, "/proc/self/fd/0", "/dev/tty") != 0)
+		return -1;
+	if (set_symlink(fs, "/proc/self/fd/1", "/dev/tty") != 0)
+		return -1;
+	if (set_symlink(fs, "/proc/self/fd/2", "/dev/tty") != 0)
+		return -1;
+	if (ensure_dir(fs, "/sys") != 0)
+		return -1;
+	if (ensure_dir(fs, "/sys/class") != 0)
+		return -1;
+	if (ensure_dir(fs, "/sys/devices") != 0)
+		return -1;
+	if (ensure_dir(fs, "/sys/devices/system") != 0)
+		return -1;
+	if (ensure_dir(fs, "/sys/devices/system/cpu") != 0)
+		return -1;
 	return 0;
 }
 

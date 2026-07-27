@@ -35,6 +35,9 @@ typedef enum {
 #define BFREE_DEV_NULL     1
 #define BFREE_DEV_ZERO     2
 #define BFREE_DEV_CONSOLE  3
+#define BFREE_DEV_TTY      4
+#define BFREE_DEV_URANDOM  5
+#define BFREE_DEV_RANDOM   6
 
 struct bfree_vnode {
 	char            name[BFREE_MAX_NAME];

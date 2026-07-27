@@ -140,6 +140,14 @@ static int has_pending(const struct bfree_proc *self, int sig)
 		return self->sigpipe_pending != 0;
 	if (sig == BFREE_SIGCHLD)
 		return self->sigchld_pending != 0;
+	if (sig == BFREE_SIGTSTP)
+		return self->sigtstp_pending != 0;
+	if (sig == BFREE_SIGCONT)
+		return self->sigcont_pending != 0;
+	if (sig == BFREE_SIGTTIN)
+		return self->sigttin_pending != 0;
+	if (sig == BFREE_SIGTTOU)
+		return self->sigttou_pending != 0;
 	return 0;
 }
 
@@ -151,6 +159,14 @@ static void clear_pending(struct bfree_proc *self, int sig)
 		self->sigpipe_pending = 0;
 	else if (sig == BFREE_SIGCHLD)
 		self->sigchld_pending = 0;
+	else if (sig == BFREE_SIGTSTP)
+		self->sigtstp_pending = 0;
+	else if (sig == BFREE_SIGCONT)
+		self->sigcont_pending = 0;
+	else if (sig == BFREE_SIGTTIN)
+		self->sigttin_pending = 0;
+	else if (sig == BFREE_SIGTTOU)
+		self->sigttou_pending = 0;
 }
 
 static int deliver_one(struct bfree_proc_mgr *mgr, struct bfree_proc *self,
@@ -218,7 +234,10 @@ static int deliver_one(struct bfree_proc_mgr *mgr, struct bfree_proc *self,
 int bfree_rt_signal_poll_deliver(struct bfree_proc_mgr *mgr)
 {
 	struct bfree_proc *self;
-	static const int order[] = { BFREE_SIGINT, BFREE_SIGPIPE, BFREE_SIGCHLD };
+	static const int order[] = {
+		BFREE_SIGINT, BFREE_SIGPIPE, BFREE_SIGCHLD, BFREE_SIGCONT,
+		BFREE_SIGTSTP, BFREE_SIGTTIN, BFREE_SIGTTOU
+	};
 	size_t i;
 
 	if (mgr == NULL)

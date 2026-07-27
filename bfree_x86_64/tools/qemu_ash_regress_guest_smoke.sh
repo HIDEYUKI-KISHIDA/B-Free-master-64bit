@@ -29,7 +29,9 @@ if [[ "${out}" == *"ASH_LINUX_STACK_BOOT"* &&
       "${out}" == *"ASH_DATE_GUEST_OK"* &&
       "${out}" == *"ASH_ID_GUEST_OK"* &&
       "${out}" == *"ASH_LN_READLINK_GUEST_OK"* &&
-      "${out}" == *"ASH_STAT_GUEST_OK"* ]]; then
+      "${out}" == *"ASH_STAT_GUEST_OK"* &&
+      "${out}" == *"ASH_FS_BASIC_GUEST_OK"* &&
+      "${out}" == *"ASH_LS_GUEST_OK"* ]]; then
 	echo "P16_ASH_REGRESS_GUEST_QEMU: PASS"
 	exit 0
 fi

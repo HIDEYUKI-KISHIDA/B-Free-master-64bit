@@ -117,6 +117,7 @@ run_test test_p26_rt_sigreturn
 run_test test_p27_signal_deliver
 run_test test_p28_signal_entry
 run_test test_p29_abi_thicken
+run_test test_p30_linux_compat
 
 echo "== phase3_guest_auto: ABI second map (BusyBox evidence) =="
 if ! python3 "${ROOT}/tools/gen_abi_second_map.py"; then

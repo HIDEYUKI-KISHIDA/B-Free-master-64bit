@@ -40,6 +40,10 @@ int main(void)
 	      "08_ln_readlink.sh staged");
 	CHECK(file_exists("guest/initramfs/ash_regress/09_stat.sh"),
 	      "09_stat.sh staged");
+	CHECK(file_exists("guest/initramfs/ash_regress/10_fs_basic.sh"),
+	      "10_fs_basic.sh staged");
+	CHECK(file_exists("guest/initramfs/ash_regress/11_ls.sh"),
+	      "11_ls.sh staged");
 
 	printf("P16_ASH_FULL_STAGED: PASS\n");
 	return 0;

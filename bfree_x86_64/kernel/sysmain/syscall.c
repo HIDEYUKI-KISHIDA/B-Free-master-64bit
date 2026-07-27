@@ -453,16 +453,7 @@ int sys_pipe(int pipefd[2])
 
 int sys_pipe2(int pipefd[2], int flags)
 {
-	int rc;
-
-	rc = bfree_pipe_open(&guest.proc, pipefd);
-	if (rc < 0)
-		return rc;
-	if (flags & O_CLOEXEC) {
-		guest_fcntl(&guest.io, pipefd[0], 2, BFREE_FD_CLOEXEC);
-		guest_fcntl(&guest.io, pipefd[1], 2, BFREE_FD_CLOEXEC);
-	}
-	return 0;
+	return bfree_pipe_open2(&guest.proc, pipefd, flags);
 }
 
 int sys_kill(int pid, int sig)
@@ -633,7 +624,10 @@ int sys_prctl(int option, unsigned long a2, unsigned long a3, unsigned long a4,
 
 int sys_ioctl(int fd, unsigned long req, void *arg)
 {
-	(void)fd;
+	int pgrp;
+
+	if (fd < 0)
+		return -EBADF;
 	switch (req) {
 	case 0x5401: /* TCGETS */
 		if (arg != NULL) {
@@ -676,11 +670,17 @@ int sys_ioctl(int fd, unsigned long req, void *arg)
 		(void)arg;
 		return 0;
 	case 0x540F: /* TIOCGPGRP */
-		return bfree_tcgetpgrp(0);
+		if (arg == NULL)
+			return -EFAULT;
+		pgrp = bfree_tcgetpgrp(fd);
+		if (pgrp < 0)
+			return pgrp;
+		*(int *)arg = pgrp;
+		return 0;
 	case 0x5410: /* TIOCSPGRP */
 		if (arg == NULL)
 			return -EFAULT;
-		return bfree_tcsetpgrp(0, *(int *)arg);
+		return bfree_tcsetpgrp(fd, *(int *)arg);
 	default:
 		return -EINVAL;
 	}
@@ -1765,6 +1765,14 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 				pending |= BFREE_SIGBIT(BFREE_SIGPIPE);
 			if (self->sigchld_pending)
 				pending |= BFREE_SIGBIT(BFREE_SIGCHLD);
+			if (self->sigtstp_pending)
+				pending |= BFREE_SIGBIT(BFREE_SIGTSTP);
+			if (self->sigcont_pending)
+				pending |= BFREE_SIGBIT(BFREE_SIGCONT);
+			if (self->sigttin_pending)
+				pending |= BFREE_SIGBIT(BFREE_SIGTTIN);
+			if (self->sigttou_pending)
+				pending |= BFREE_SIGBIT(BFREE_SIGTTOU);
 		}
 		*(unsigned long *)a0 = pending;
 		return 0;
@@ -1778,14 +1786,27 @@ long bfree_invoke_syscall(unsigned long nr, unsigned long a0, unsigned long a1,
 		bfree_sched_tick(&guest.proc);
 		return -EINTR;
 	case 131: /* sigaltstack */
-		if (a1 != 0) {
-			/* old_ss: report disabled */
-			*(unsigned long *)a1 = 0;
-			*((unsigned long *)a1 + 1) = 0;
-			*((unsigned long *)a1 + 2) = 2; /* SS_DISABLE */
+	{
+		struct bfree_proc *self = bfree_proc_current(&guest.proc);
+		const unsigned long *nss = (const unsigned long *)a0;
+		unsigned long *oss = (unsigned long *)a1;
+
+		if (self == NULL)
+			return -ESRCH;
+		if (oss != NULL) {
+			oss[0] = self->sas_ss_sp;
+			oss[1] = self->sas_ss_size;
+			oss[2] = (unsigned long)(unsigned)self->sas_ss_flags;
+			if (self->sas_ss_size == 0 && self->sas_ss_sp == 0)
+				oss[2] = 2; /* SS_DISABLE */
 		}
-		(void)a0;
+		if (nss != NULL) {
+			self->sas_ss_sp = nss[0];
+			self->sas_ss_size = nss[1];
+			self->sas_ss_flags = (int)nss[2];
+		}
 		return 0;
+	}
 	case 132: /* utime */
 		return sys_utimensat(BFREE_AT_FDCWD, (const char *)a0, NULL, 0);
 	case 133: /* mknod */

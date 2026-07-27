@@ -66,11 +66,17 @@ void bfree_devnodes_init(struct bfree_fs *fs)
 	add_dev(dev, "null", BFREE_DEV_NULL);
 	add_dev(dev, "zero", BFREE_DEV_ZERO);
 	add_dev(dev, "console", BFREE_DEV_CONSOLE);
+	add_dev(dev, "tty", BFREE_DEV_TTY);
+	add_dev(dev, "urandom", BFREE_DEV_URANDOM);
+	add_dev(dev, "random", BFREE_DEV_RANDOM);
 }
 
 ssize_t bfree_dev_read(struct bfree_fs *fs, int fd, void *buf, size_t count)
 {
 	struct bfree_ofd *ofd;
+	unsigned char *out;
+	size_t i;
+	static uint32_t rnd = 0xC0FFEEU;
 
 	ofd = bfree_ofd_for_fd(fs, fd);
 	if (ofd == NULL || ofd->vnode->type != BFREE_VNODE_DEV)
@@ -79,6 +85,17 @@ ssize_t bfree_dev_read(struct bfree_fs *fs, int fd, void *buf, size_t count)
 		return 0;
 	if (ofd->vnode->dev_id == BFREE_DEV_ZERO) {
 		memset(buf, 0, count);
+		return (ssize_t)count;
+	}
+	if (ofd->vnode->dev_id == BFREE_DEV_TTY)
+		return 0;
+	if (ofd->vnode->dev_id == BFREE_DEV_URANDOM ||
+	    ofd->vnode->dev_id == BFREE_DEV_RANDOM) {
+		out = buf;
+		for (i = 0; i < count; i++) {
+			rnd = rnd * 1664525u + 1013904223u;
+			out[i] = (unsigned char)(rnd >> 24);
+		}
 		return (ssize_t)count;
 	}
 	return -EINVAL;
@@ -94,9 +111,12 @@ ssize_t bfree_dev_write(struct bfree_fs *fs, int fd, const void *buf,
 	if (ofd == NULL || ofd->vnode->type != BFREE_VNODE_DEV)
 		return -EBADF;
 	if (ofd->vnode->dev_id == BFREE_DEV_NULL ||
-	    ofd->vnode->dev_id == BFREE_DEV_ZERO)
+	    ofd->vnode->dev_id == BFREE_DEV_ZERO ||
+	    ofd->vnode->dev_id == BFREE_DEV_URANDOM ||
+	    ofd->vnode->dev_id == BFREE_DEV_RANDOM)
 		return (ssize_t)count;
-	if (ofd->vnode->dev_id == BFREE_DEV_CONSOLE) {
+	if (ofd->vnode->dev_id == BFREE_DEV_CONSOLE ||
+	    ofd->vnode->dev_id == BFREE_DEV_TTY) {
 #ifdef BFREE_KERNEL_GUEST
 		bfree_debug_write(buf, count);
 #endif

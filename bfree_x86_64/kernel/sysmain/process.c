@@ -139,8 +139,10 @@ void bfree_proc_init(struct bfree_proc_mgr *mgr)
 	mgr->procs[0].state = BFREE_PROC_RUNNING;
 	bfree_as_init(&mgr->procs[0].as, 65536);
 	bfree_fs_init_proc_fds(mgr->procs[0].fd_ofd, mgr->procs[0].fd_flags);
-	for (i = 0; i < BFREE_MAX_FD; i++)
+	for (i = 0; i < BFREE_MAX_FD; i++) {
 		mgr->fd_pipe_map[i] = BFREE_FD_UNMAPPED;
+		mgr->fd_pipe_flags[i] = 0;
+	}
 #ifdef BFREE_KERNEL_GUEST
 	bfree_ring3_proc_init(&mgr->procs[0]);
 #endif
@@ -260,6 +262,8 @@ int bfree_execve(struct bfree_proc_mgr *mgr, const char *path,
 	if (self == NULL)
 		return -ESRCH;
 
+	bfree_proc_close_cloexec(mgr, g_exec_fs);
+
 	if (g_exec_fs != NULL) {
 #ifdef BFREE_KERNEL_GUEST
 		rc = bfree_user_execve_ring3(g_exec_fs, path,
@@ -357,6 +361,7 @@ int bfree_wait4(struct bfree_proc_mgr *mgr, int pid, int *status,
 {
 	struct bfree_proc *self;
 	int i;
+	int has_child = 0;
 
 	(void)rusage;
 	self = current_proc(mgr);
@@ -364,21 +369,27 @@ int bfree_wait4(struct bfree_proc_mgr *mgr, int pid, int *status,
 		return -ESRCH;
 
 	for (;;) {
+		has_child = 0;
 		for (i = 0; i < BFREE_MAX_PROC; i++) {
 			struct bfree_proc *p = &mgr->procs[i];
 
-			if (p->state != BFREE_PROC_ZOMBIE)
+			if (p->state == BFREE_PROC_FREE)
 				continue;
 			if (p->ppid != self->pid)
 				continue;
 			if (pid > 0 && p->pid != pid)
 				continue;
+			has_child = 1;
+			if (p->state != BFREE_PROC_ZOMBIE)
+				continue;
 			if (pid == 0 || pid == -1 || p->pid == pid)
 				return reap_one(mgr, p, status);
 		}
 		if (options & WNOHANG)
-			return 0;
+			return has_child ? 0 : -ECHILD;
 #ifdef BFREE_KERNEL_GUEST
+		if (!has_child)
+			return -ECHILD;
 		bfree_ring3_block(mgr, BFREE_PROC_BLOCKED_WAIT);
 #else
 		return -ECHILD;
@@ -391,7 +402,8 @@ int bfree_waitid(struct bfree_proc_mgr *mgr, int idtype, int id,
 {
 	struct bfree_proc *self;
 	int i;
-	int found = 0;
+	int found_any = 0;
+	int found_zombie = 0;
 
 	self = current_proc(mgr);
 	if (self == NULL)
@@ -400,11 +412,16 @@ int bfree_waitid(struct bfree_proc_mgr *mgr, int idtype, int id,
 	for (i = 0; i < BFREE_MAX_PROC; i++) {
 		struct bfree_proc *p = &mgr->procs[i];
 
-		if (p->state != BFREE_PROC_ZOMBIE || p->ppid != self->pid)
+		if (p->state == BFREE_PROC_FREE || p->ppid != self->pid)
 			continue;
 		if (idtype == P_PID && p->pid != id)
 			continue;
-		found = 1;
+		if (idtype == P_PGID && p->pgid != id)
+			continue;
+		found_any = 1;
+		if (p->state != BFREE_PROC_ZOMBIE)
+			continue;
+		found_zombie = 1;
 		if (options & WNOWAIT) {
 			if (status != NULL)
 				*status = p->exit_status;
@@ -413,9 +430,10 @@ int bfree_waitid(struct bfree_proc_mgr *mgr, int idtype, int id,
 		return reap_one(mgr, p, status);
 	}
 	if (options & WNOHANG)
-		return 0;
-	if (!found && idtype == P_PID)
+		return found_any ? 0 : -ECHILD;
+	if (!found_any)
 		return -ECHILD;
+	(void)found_zombie;
 	return -ECHILD;
 }
 
@@ -476,10 +494,39 @@ int bfree_switch_proc(struct bfree_proc_mgr *mgr, int pid)
 	return 0;
 }
 
-int bfree_pipe_open(struct bfree_proc_mgr *mgr, int pipefd[2])
+static int alloc_pipe_fd_slot(struct bfree_proc_mgr *mgr)
+{
+	int fd;
+
+	/* Prefer high fds to reduce collision with VFS low descriptors. */
+	for (fd = BFREE_MAX_FD - 1; fd >= 0; fd--) {
+		if (mgr->fd_pipe_map[fd] == BFREE_FD_UNMAPPED)
+			return fd;
+	}
+	return -1;
+}
+
+int bfree_pipe_open2(struct bfree_proc_mgr *mgr, int pipefd[2], int flags)
 {
 	int i;
-	static int next_fd = 100;
+	int rfd;
+	int wfd;
+	int pflags = 0;
+
+	if (pipefd == NULL)
+		return -EFAULT;
+	if (flags & ~(O_CLOEXEC | O_NONBLOCK))
+		return -EINVAL;
+
+	rfd = alloc_pipe_fd_slot(mgr);
+	if (rfd < 0)
+		return -EMFILE;
+	mgr->fd_pipe_map[rfd] = -2; /* reserve */
+	wfd = alloc_pipe_fd_slot(mgr);
+	if (wfd < 0) {
+		mgr->fd_pipe_map[rfd] = BFREE_FD_UNMAPPED;
+		return -EMFILE;
+	}
 
 	for (i = 0; i < BFREE_MAX_PIPE; i++) {
 		if (!mgr->pipes[i].in_use) {
@@ -487,18 +534,41 @@ int bfree_pipe_open(struct bfree_proc_mgr *mgr, int pipefd[2])
 			mgr->pipes[i].in_use = 1;
 			mgr->pipes[i].read_ref = 1;
 			mgr->pipes[i].write_ref = 1;
-			mgr->pipes[i].read_fd = next_fd++;
-			mgr->pipes[i].write_fd = next_fd++;
-			pipefd[0] = mgr->pipes[i].read_fd;
-			pipefd[1] = mgr->pipes[i].write_fd;
-			mgr->fd_pipe_map[pipefd[0]] = i;
-			mgr->fd_pipe_map[pipefd[1]] = i;
-			mgr->fd_pipe_end[pipefd[0]] = 0;
-			mgr->fd_pipe_end[pipefd[1]] = 1;
+			mgr->pipes[i].read_fd = rfd;
+			mgr->pipes[i].write_fd = wfd;
+			pipefd[0] = rfd;
+			pipefd[1] = wfd;
+			mgr->fd_pipe_map[rfd] = i;
+			mgr->fd_pipe_map[wfd] = i;
+			mgr->fd_pipe_end[rfd] = 0;
+			mgr->fd_pipe_end[wfd] = 1;
+			if (flags & O_NONBLOCK)
+				pflags |= O_NONBLOCK;
+			mgr->fd_pipe_flags[rfd] = pflags;
+			mgr->fd_pipe_flags[wfd] = pflags;
+			if (flags & O_CLOEXEC) {
+				struct bfree_proc *self = current_proc(mgr);
+
+				if (self != NULL) {
+					self->fd_flags[rfd] |= BFREE_FD_CLOEXEC;
+					self->fd_flags[wfd] |= BFREE_FD_CLOEXEC;
+				}
+				if (g_exec_fs != NULL) {
+					g_exec_fs->fd_flags[rfd] |= BFREE_FD_CLOEXEC;
+					g_exec_fs->fd_flags[wfd] |= BFREE_FD_CLOEXEC;
+				}
+			}
 			return 0;
 		}
 	}
+	mgr->fd_pipe_map[rfd] = BFREE_FD_UNMAPPED;
+	mgr->fd_pipe_map[wfd] = BFREE_FD_UNMAPPED;
 	return -EMFILE;
+}
+
+int bfree_pipe_open(struct bfree_proc_mgr *mgr, int pipefd[2])
+{
+	return bfree_pipe_open2(mgr, pipefd, 0);
 }
 
 static struct bfree_pipe *pipe_for_fd(struct bfree_proc_mgr *mgr, int fd,
@@ -570,11 +640,85 @@ int bfree_pipe_dup2(struct bfree_proc_mgr *mgr, int oldfd, int newfd)
 
 	mgr->fd_pipe_map[newfd] = idx;
 	mgr->fd_pipe_end[newfd] = end;
+	mgr->fd_pipe_flags[newfd] = mgr->fd_pipe_flags[oldfd];
 	if (end)
 		p->write_ref++;
 	else
 		p->read_ref++;
 	return newfd;
+}
+
+#define F_GETFD 1
+#define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
+#ifndef FD_CLOEXEC
+#define FD_CLOEXEC 1
+#endif
+
+int bfree_pipe_fcntl(struct bfree_proc_mgr *mgr, int fd, int cmd, long arg)
+{
+	struct bfree_proc *self;
+
+	if (!bfree_pipe_is_fd(mgr, fd) || fd < 0 || fd >= BFREE_MAX_FD)
+		return -EBADF;
+	self = current_proc(mgr);
+	switch (cmd) {
+	case F_GETFD:
+		if (self != NULL)
+			return (self->fd_flags[fd] & BFREE_FD_CLOEXEC) ?
+				       FD_CLOEXEC :
+				       0;
+		return 0;
+	case F_SETFD:
+		if (self != NULL)
+			self->fd_flags[fd] =
+				(arg & FD_CLOEXEC) ? BFREE_FD_CLOEXEC : 0;
+		if (g_exec_fs != NULL)
+			g_exec_fs->fd_flags[fd] =
+				(arg & FD_CLOEXEC) ? BFREE_FD_CLOEXEC : 0;
+		return 0;
+	case F_GETFL:
+		return mgr->fd_pipe_flags[fd] | (pipe_for_fd(mgr, fd, 1) ? 1 : 0);
+	case F_SETFL:
+		mgr->fd_pipe_flags[fd] =
+			(mgr->fd_pipe_flags[fd] & ~O_NONBLOCK) |
+			(arg & O_NONBLOCK);
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
+void bfree_proc_close_cloexec(struct bfree_proc_mgr *mgr, struct bfree_fs *fs)
+{
+	struct bfree_proc *self;
+	int fd;
+
+	if (mgr == NULL)
+		return;
+	self = current_proc(mgr);
+	if (self == NULL)
+		return;
+	for (fd = 0; fd < BFREE_MAX_FD; fd++) {
+		int cloexec = (self->fd_flags[fd] & BFREE_FD_CLOEXEC) != 0;
+
+		if (!cloexec && fs != NULL)
+			cloexec = (fs->fd_flags[fd] & BFREE_FD_CLOEXEC) != 0;
+		if (!cloexec)
+			continue;
+		if (bfree_pipe_is_fd(mgr, fd)) {
+			bfree_pipe_close(mgr, fd);
+			self->fd_flags[fd] = 0;
+			if (fs != NULL)
+				fs->fd_flags[fd] = 0;
+			continue;
+		}
+		if (fs != NULL && fs->fd_ofd[fd] >= 0) {
+			bfree_close(fs, fd);
+			self->fd_flags[fd] = 0;
+		}
+	}
 }
 
 int bfree_pipe_is_fd(struct bfree_proc_mgr *mgr, int fd)
@@ -618,6 +762,9 @@ ssize_t bfree_pipe_read(struct bfree_proc_mgr *mgr, int fd, void *buf,
 		}
 		if (done > 0 || p->write_ref == 0)
 			return (ssize_t)done;
+		if (fd >= 0 && fd < BFREE_MAX_FD &&
+		    (mgr->fd_pipe_flags[fd] & O_NONBLOCK))
+			return -EAGAIN;
 #ifdef BFREE_KERNEL_GUEST
 		bfree_ring3_block(mgr, BFREE_PROC_BLOCKED_IO);
 #else
@@ -656,6 +803,11 @@ ssize_t bfree_pipe_write(struct bfree_proc_mgr *mgr, int fd, const void *buf,
 		p->tail = (p->tail + 1) % BFREE_MAX_PIPE_BUF;
 		p->count++;
 	}
+	if (done == 0 && count > 0) {
+		if (fd >= 0 && fd < BFREE_MAX_FD &&
+		    (mgr->fd_pipe_flags[fd] & O_NONBLOCK))
+			return -EAGAIN;
+	}
 #ifdef BFREE_KERNEL_GUEST
 	{
 		int i;
@@ -682,6 +834,7 @@ void bfree_pipe_close(struct bfree_proc_mgr *mgr, int fd)
 		idx = mgr->fd_pipe_map[fd];
 		end = mgr->fd_pipe_end[fd];
 		mgr->fd_pipe_map[fd] = BFREE_FD_UNMAPPED;
+		mgr->fd_pipe_flags[fd] = 0;
 		if (idx >= 0 && idx < BFREE_MAX_PIPE && mgr->pipes[idx].in_use) {
 			if (end)
 				mgr->pipes[idx].write_ref--;
@@ -783,11 +936,9 @@ static int poll_scan(struct bfree_proc_mgr *mgr, struct bfree_fs *fs,
 		short revents;
 
 		fds[i].revents = 0;
-		if (fds[i].fd < 0) {
-			fds[i].revents = BFREE_POLLNVAL;
-			ready++;
+		/* Linux ignores negative pollfds (revents stays 0). */
+		if (fds[i].fd < 0)
 			continue;
-		}
 
 		revents = pipe_poll_events(mgr, fds[i].fd, fds[i].events);
 		if (revents == 0 && !bfree_pipe_is_fd(mgr, fds[i].fd)) {
@@ -889,6 +1040,14 @@ void bfree_kill(struct bfree_proc_mgr *mgr, int pid, int sig)
 		p->sigchld_pending = sender_pid > 0 ? sender_pid : 1;
 	else if (sig == BFREE_SIGPIPE)
 		p->sigpipe_pending = 1;
+	else if (sig == BFREE_SIGTSTP)
+		p->sigtstp_pending = 1;
+	else if (sig == BFREE_SIGCONT)
+		p->sigcont_pending = 1;
+	else if (sig == BFREE_SIGTTIN)
+		p->sigttin_pending = 1;
+	else if (sig == BFREE_SIGTTOU)
+		p->sigttou_pending = 1;
 	else
 		return; /* unsupported signal numbers stay undelivered */
 
@@ -915,6 +1074,22 @@ int bfree_sig_pending(struct bfree_proc_mgr *mgr, int sig)
 	}
 	if (sig == BFREE_SIGPIPE && self->sigpipe_pending) {
 		self->sigpipe_pending = 0;
+		return 1;
+	}
+	if (sig == BFREE_SIGTSTP && self->sigtstp_pending) {
+		self->sigtstp_pending = 0;
+		return 1;
+	}
+	if (sig == BFREE_SIGCONT && self->sigcont_pending) {
+		self->sigcont_pending = 0;
+		return 1;
+	}
+	if (sig == BFREE_SIGTTIN && self->sigttin_pending) {
+		self->sigttin_pending = 0;
+		return 1;
+	}
+	if (sig == BFREE_SIGTTOU && self->sigttou_pending) {
+		self->sigttou_pending = 0;
 		return 1;
 	}
 	return 0;

@@ -24,6 +24,20 @@ struct bfree_fs;
 #define BFREE_SIGCHLD  17
 #define BFREE_SIGINT    2
 #define BFREE_SIGPIPE  13
+#define BFREE_SIGCONT  18
+#define BFREE_SIGTSTP  20
+#define BFREE_SIGTTIN  21
+#define BFREE_SIGTTOU  22
+
+#ifndef O_NONBLOCK
+#define O_NONBLOCK 04000
+#endif
+#ifndef O_CLOEXEC
+#define O_CLOEXEC 02000000
+#endif
+#ifndef O_TRUNC
+#define O_TRUNC 01000
+#endif
 
 struct bfree_ring3_frame {
 	uint64_t rcx;
@@ -76,11 +90,19 @@ struct bfree_proc {
 	int               sigchld_pending;
 	int               sigint_pending;
 	int               sigpipe_pending;
+	int               sigtstp_pending;
+	int               sigcont_pending;
+	int               sigttin_pending;
+	int               sigttou_pending;
 	/* Per-signal delivery metadata (compact Linux siginfo subset). */
 	int               sig_si_code[64];
 	int               sig_si_pid[64];
 	int               sig_si_uid[64];
 	int               sig_si_status[64];
+	/* sigaltstack (store/report; delivery may still ignore SA_ONSTACK). */
+	uint64_t          sas_ss_sp;
+	uint64_t          sas_ss_size;
+	int               sas_ss_flags;
 	unsigned long     sig_mask;
 	unsigned long     sig_handler[64];
 	unsigned long     sig_restorer[64];
@@ -114,6 +136,7 @@ struct bfree_proc_mgr {
 	int               next_pid;
 	int               fd_pipe_map[BFREE_MAX_FD];
 	int               fd_pipe_end[BFREE_MAX_FD];
+	int               fd_pipe_flags[BFREE_MAX_FD]; /* O_NONBLOCK / status */
 	unsigned long     global_ticks;
 	int               preempt_quantum;
 };
@@ -138,6 +161,7 @@ int  bfree_fork(struct bfree_proc_mgr *mgr);
 int  bfree_switch_proc(struct bfree_proc_mgr *mgr, int pid);
 
 int  bfree_pipe_open(struct bfree_proc_mgr *mgr, int pipefd[2]);
+int  bfree_pipe_open2(struct bfree_proc_mgr *mgr, int pipefd[2], int flags);
 ssize_t bfree_pipe_read(struct bfree_proc_mgr *mgr, int fd, void *buf,
 			size_t count);
 ssize_t bfree_pipe_write(struct bfree_proc_mgr *mgr, int fd,
@@ -146,6 +170,8 @@ void bfree_pipe_close(struct bfree_proc_mgr *mgr, int fd);
 
 int bfree_pipe_is_fd(struct bfree_proc_mgr *mgr, int fd);
 int bfree_pipe_dup2(struct bfree_proc_mgr *mgr, int oldfd, int newfd);
+int bfree_pipe_fcntl(struct bfree_proc_mgr *mgr, int fd, int cmd, long arg);
+void bfree_proc_close_cloexec(struct bfree_proc_mgr *mgr, struct bfree_fs *fs);
 
 #define BFREE_POLLIN   0x0001
 #define BFREE_POLLOUT  0x0004

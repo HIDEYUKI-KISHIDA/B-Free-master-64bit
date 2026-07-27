@@ -261,7 +261,16 @@
 - [x] `TCGETS` が最小 termios を返す
 - [x] ash C-ABI trampoline を kernel リンクから除去、`ASH_LINUX_STACK_BOOT` マーカー
 - [x] ゲート: `test_p29_abi_thicken`
-- 次: guest 落ちログで REG をさらに厚く / QEMU 実機で ash regress（環境依存）
+
+### M31 — Linux 互換 1–5（stub厚み / regress / 見える世界 / 信号・FD）
+
+- [x] guest-fail 系: `poll` 負fd無視、`pipe2` O_NONBLOCK/CLOEXEC、`F_GETFL/F_SETFL`、`O_TRUNC`、getdents `.`/`..`
+- [x] ash_regress 追加: `10_fs_basic` / `11_ls`（mkdir/cp/mv/rm/ls applet）
+- [x] `/dev/tty` `/dev/urandom` `/dev/random`、`/proc/self/fd/{0,1,2}`、薄い `/sys`
+- [x] ジョブ制御信号 SIGTSTP/CONT/TTIN/TTOU、`sigaltstack` 保存、`TIOCGPGRP` 正しい書込み
+- [x] `wait4(WNOHANG)` 子無しは `-ECHILD`、exec で CLOEXEC 閉鎖
+- [x] ゲート: `test_p30_linux_compat`
+- 次: QEMU 実機で新 applets を含む ash regress / 落ちログでさらに厚く
 
 手順: `docs/LINUX_ON_BTRON_PLAYBOOK.ja.md`
 
