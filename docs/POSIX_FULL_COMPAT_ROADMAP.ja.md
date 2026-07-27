@@ -149,6 +149,23 @@
 
 手順: `docs/M15_GUEST_ASH_EXECVE.md`
 
+### M16 — ring-3 fork / full ash QEMU ✅ 完了
+
+- [x] Ring-3 `fork`/`vfork` + pipe `dup2` + blocking wait
+- [x] Full ash regress on QEMU (`ASH_*_GUEST_OK`)
+
+手順: `docs/M16_RING3_FORK_ASH.md`
+
+### M17 — Linux ABI holes 0–4 ✅ 完了
+
+- [x] Cat0: 誤 NR 配線修正（`chmod`/`fchmod`/`prctl`/`cap*`/`prlimit64`）
+- [x] Cat1: BusyBox/musl 高優先 `ENOSYS` 埋め（登録 64→190、`0..399` ENOSYS 336→210）
+- [x] Cat2: 薄いスタブ強化（signals/`ioctl`/`nanosleep`/listen·accept/`clone`/`futex`）
+- [x] Cat3: 中優先 POSIX（SysV sem/msg、epoll、cred groups、…）
+- [x] Cat4: プロセス別 FD、`bfree_sched_tick`、P17 ゲート
+
+手順: `docs/M17_ABI_HOLES_0TO4.md` / `docs/LINUX_ABI_HOLES.ja.md`
+
 ## 非ゴール（このトラックでは約束しない）
 
 - 一 PR での「POSIX 全部」

@@ -154,7 +154,7 @@ int bfree_msgrcv(int msqid, void *msgp, unsigned long msgsz, long msgtyp,
 	if (msgp == NULL)
 		return -EINVAL;
 	if (bfree_msgs[msqid].len == 0)
-		return -ENOMSG;
+		return -EAGAIN;
 	n = bfree_msgs[msqid].len;
 	if (n > msgsz)
 		n = msgsz;

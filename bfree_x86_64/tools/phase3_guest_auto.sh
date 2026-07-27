@@ -101,6 +101,9 @@ run_test test_p15_ash_regress_staged
 run_test test_p16_pipe_dup2
 run_test test_p16_ash_full_staged
 
+# M17 Linux ABI holes categories 0-4
+run_test test_p17_abi_holes
+
 echo "== phase3_guest_auto: QEMU user boot smoke =="
 if ! "${ROOT}/tools/qemu_user_boot_smoke.sh"; then
   FAIL=1
