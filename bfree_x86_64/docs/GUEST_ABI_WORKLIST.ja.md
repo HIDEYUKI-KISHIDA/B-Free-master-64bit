@@ -74,6 +74,7 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.5g | getpeername UNIX / MSG_PEEK / O_EXCL / CLOEXEC / rusage·times | **DONE** | AF_UNIX getpeername；pipe MSG_PEEK；open O_EXCL；socket/epoll/timerfd CLOEXEC；getrusage/times/getpriority stub |
 | B2.5h | inet write pipe / setgid / socketpair CLOEXEC / round-8 curated | **DONE** | inet `write`→pipe_magic；setgid；socketpair CLOEXEC；curated **215** |
 | B2.5i | pure libc + fork/waitpid PF | **DONE** | curated **261**；`exit_from_fork` mode-2 wait+reap+parent PT+drop SIGCHLD；実 `proc_fork_wait` |
+| B2.5j | curated round-9 pure libc | **DONE** | +41 math/wchar/stdio/string；fork 0x522ea0 fingerprint non-fatal；**302** |
 | B2.6 | `flock` / fcntl ロック | **DONE** | P8_FLOCK |
 | B2.7 | `clone` スレッドフラグ | partial（coop THREAD） | TLS + スケジューラ |
 | B2.8 | futex 深化 | 部分 stub | WAIT 実待ち・WAKE |
@@ -89,10 +90,10 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.18 | `membarrier` / `rseq` | **DONE（空成功）** | |
 | B2.19 | `getrandom` | **DONE** | 品質は簡易 |
 | B2.20 | 静的 hello/musl スモーク | **追加**（`/musl_hello.elf`） | B2_MUSL_HELLO_OK |
-| B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **261**；実 fork+wait） | `LIBC_TEST_CURATED_RESULT` |
+| B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **302**） | `LIBC_TEST_CURATED_RESULT` |
 
 **完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。  
-→ 2026-07-28: curated **261 TPASS** (pure libc + real fork/waitpid). Ceiling: thread/TCP/slots/ash-vfork (post-suite) remain walls.
+→ 2026-07-28: curated **302 TPASS** (round-9 pure libc + fork fingerprint non-fatal). Walls: thread/TCP/slots/ash-vfork.
 
 ### B3 — Qt / デスクトップ向け（Phase 6 後半〜）〜15 項目
 

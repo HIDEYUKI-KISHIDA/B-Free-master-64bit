@@ -40,14 +40,12 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 - **Updated:** 2026-07-28
 - **Desktop 本線:** W0–W3.5 + FB authority + Explorer 実用。wm smoke GREEN
-- **musl libc-test サブセット:** **261 TPASS**（純 libc 拡張 + 実 `fork`+`waitpid`）
-- **穴埋め（本ラウンド）:** Phase1 純 libc → Phase2 fork PF 修正
-  - `exit_from_fork`: wait 完了を mode-2 + status/reap、親 PT を強制復帰、wait 後は SIGCHLD pending を落とす
-  - curated `proc_fork_wait` を実 `fork`/`waitpid`/`WEXITSTATUS==42` に復帰
+- **musl libc-test サブセット:** **302 TPASS**（+41 純 libc: math/wchar/stdio/string/ctype；fork 指紋チェックを非 fatal 化）
+- **穴埋め（本ラウンド）:** commit で fork+261 を固め → round-9 純 libc 拡張
 - **天井（どこまで広げられるか）:**
   - **まだ伸ばせる:** 純 libc、既存 stub の組み合わせ、UDP/UNIX の浅いケース
   - **すぐ壁:** clone スレッド、双方向 TCP 深化、フル POSIX ファイル属性、pipe/UNIX スロット枯渇、ash vfork 親 PF（スイート後・スモークは無視）
   - **本セット一括:** まだ不可。curated は「穴発見用サブセット」が役割
 - **既知ノイズ:** スイート PASS 後の ash vfork 親 PF。スモークは RESULT PASS 後を無視
 - **保留:** ash vfork 親 PF 本線（スイート外）
-- **Next:** 天井までさらに広げるか、ash vfork 親 PF。Desktop は並行可
+- **Next:** さらに天井を伸ばすか、ash vfork 親 PF。Desktop は並行可

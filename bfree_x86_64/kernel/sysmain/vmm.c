@@ -1065,10 +1065,23 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
                 uart_puts(" dst_phys=");
                 uart_puthex64((uint64_t)(uintptr_t)newpage);
                 uart_puts("\n");
-                if (page_buf[0xEA0] != 0xf3u || page_buf[0xEA1] != 0x0fu ||
-                    page_buf[0xEA2] != 0x1eu || page_buf[0xEA3] != 0xfau) {
-                    uart_puts("[FORK] FATAL: source setvbuf page already bad\n");
-                    return -1;
+                /*
+                 * Shell fingerprint at 0x522ea0 — diagnostic only. Curated (and
+                 * any guest whose .text no longer covers that offset) must not
+                 * abort AS-copy on mismatch.
+                 */
+                {
+                    extern uint8_t g_bfree_shell_text_fp[4];
+                    extern int g_bfree_shell_text_fp_valid;
+
+                    if (g_bfree_shell_text_fp_valid &&
+                        (page_buf[0xEA0] != g_bfree_shell_text_fp[0] ||
+                         page_buf[0xEA1] != g_bfree_shell_text_fp[1] ||
+                         page_buf[0xEA2] != g_bfree_shell_text_fp[2] ||
+                         page_buf[0xEA3] != g_bfree_shell_text_fp[3])) {
+                        uart_puts(
+                            "[FORK] WARN: 0x522ea0 fingerprint mismatch (non-fatal)\n");
+                    }
                 }
             }
         }

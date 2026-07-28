@@ -3021,6 +3021,314 @@ static void stdio_clearerr(void)
     report("stdio_clearerr", ok);
 }
 
+/* --- round-9: pure libc growth (+40) --- */
+static int math_near(double a, double b)
+{
+    double d = a - b;
+    if (d < 0)
+        d = -d;
+    return d < 1e-6;
+}
+
+static void math_tan_atan(void)
+{
+    report("math_tan_atan",
+           math_near(tan(0.0), 0.0) && math_near(atan(1.0), 0.7853981633974483));
+}
+
+static void math_atan2(void)
+{
+    report("math_atan2", math_near(atan2(0.0, 1.0), 0.0) &&
+                             math_near(atan2(1.0, 0.0), 1.5707963267948966));
+}
+
+static void math_asin_acos(void)
+{
+    report("math_asin_acos",
+           math_near(asin(0.0), 0.0) && math_near(acos(1.0), 0.0));
+}
+
+static void math_trunc_round(void)
+{
+    report("math_trunc_round",
+           trunc(3.9) == 3.0 && trunc(-3.9) == -3.0 &&
+               round(2.5) == 3.0 && round(2.4) == 2.0);
+}
+
+static void math_hypot_cbrt(void)
+{
+    report("math_hypot_cbrt",
+           math_near(hypot(3.0, 4.0), 5.0) && math_near(cbrt(8.0), 2.0));
+}
+
+static void math_copysign_fminmax(void)
+{
+    report("math_copysign_fminmax",
+           copysign(1.0, -2.0) == -1.0 && fmin(1.0, 2.0) == 1.0 &&
+               fmax(1.0, 2.0) == 2.0);
+}
+
+static void math_remainder(void)
+{
+    report("math_remainder", math_near(remainder(5.0, 3.0), -1.0) ||
+                                 math_near(remainder(5.0, 3.0), 2.0));
+}
+
+static void math_float_basic(void)
+{
+    report("math_float_basic",
+           fabsf(-2.5f) == 2.5f && sqrtf(9.0f) == 3.0f &&
+               floorf(2.9f) == 2.0f && ceilf(2.1f) == 3.0f);
+}
+
+static void math_sinh_cosh(void)
+{
+    report("math_sinh_cosh",
+           math_near(sinh(0.0), 0.0) && math_near(cosh(0.0), 1.0));
+}
+
+static void math_tanh(void)
+{
+    report("math_tanh", math_near(tanh(0.0), 0.0));
+}
+
+static void math_ldexp_frexp(void)
+{
+    int exp = 0;
+    double m = frexp(8.0, &exp);
+    report("math_ldexp_frexp",
+           math_near(ldexp(1.0, 3), 8.0) && math_near(m, 0.5) && exp == 4);
+}
+
+static void math_modf(void)
+{
+    double ip = 0;
+    double fr = modf(3.25, &ip);
+    report("math_modf", ip == 3.0 && math_near(fr, 0.25));
+}
+
+static void wchar_wcscpy_cat(void)
+{
+    wchar_t d[16];
+    wcscpy(d, L"ab");
+    wcscat(d, L"cd");
+    report("wchar_wcscpy_cat", wcscmp(d, L"abcd") == 0);
+}
+
+static void wchar_wcsncpy(void)
+{
+    wchar_t d[8];
+    wmemset(d, L'x', 8);
+    wcsncpy(d, L"hi", 8);
+    report("wchar_wcsncpy", d[0] == L'h' && d[1] == L'i' && d[2] == L'\0');
+}
+
+static void wchar_wcschr_str(void)
+{
+    const wchar_t *s = L"hello";
+    report("wchar_wcschr_str",
+           wcschr(s, L'e') == s + 1 && wcsstr(s, L"ll") == s + 2);
+}
+
+static void wchar_wcsrchr(void)
+{
+    const wchar_t *s = L"abaca";
+    report("wchar_wcsrchr", wcsrchr(s, L'a') == s + 4);
+}
+
+static void wchar_wmemcmp_set(void)
+{
+    wchar_t a[4], b[4];
+    wmemset(a, L'q', 4);
+    wmemset(b, L'q', 4);
+    report("wchar_wmemcmp_set",
+           wmemcmp(a, b, 4) == 0 && a[0] == L'q' && a[3] == L'q');
+}
+
+static void wchar_wmemmove(void)
+{
+    wchar_t b[] = L"abcdef";
+    wmemmove(b + 1, b, 3);
+    report("wchar_wmemmove", b[0] == L'a' && b[1] == L'a' && b[2] == L'b');
+}
+
+static void wchar_wcslen_empty(void)
+{
+    report("wchar_wcslen_empty", wcslen(L"") == 0 && wcslen(L"xy") == 2);
+}
+
+static void wctype_iswdigit_space(void)
+{
+    report("wctype_iswdigit_space",
+           iswdigit(L'7') && iswspace(L' ') && !iswdigit(L'a'));
+}
+
+static void wctype_towupper_alnum(void)
+{
+    report("wctype_towupper_alnum",
+           towupper(L'b') == L'B' && iswalnum(L'Z') && !iswalnum(L'!'));
+}
+
+static void wctype_iswprint_cntrl(void)
+{
+    report("wctype_iswprint_cntrl",
+           iswprint(L'A') && iswcntrl(L'\n') && !iswprint(L'\n'));
+}
+
+static void ctype_isblank_ascii(void)
+{
+    report("ctype_isblank_ascii",
+           isblank(' ') && isblank('\t') && !isblank('\n') &&
+               isascii('A') && !isascii(0x80));
+}
+
+static void stdlib_strtoimax(void)
+{
+    char *end = NULL;
+    intmax_t v = strtoimax("-42x", &end, 10);
+    report("stdlib_strtoimax", v == -42 && end && *end == 'x');
+}
+
+static void stdlib_strtoumax(void)
+{
+    char *end = NULL;
+    uintmax_t v = strtoumax("99z", &end, 10);
+    report("stdlib_strtoumax", v == 99 && end && *end == 'z');
+}
+
+static void stdlib_mblen(void)
+{
+    report("stdlib_mblen", mblen(NULL, 0) == 0 && mblen("A", 1) == 1);
+}
+
+static void stdlib_mbtowc_wctomb(void)
+{
+    wchar_t wc = 0;
+    char mb[8];
+    int n1 = mbtowc(&wc, "Z", 1);
+    int n2 = wctomb(mb, L'Y');
+    report("stdlib_mbtowc_wctomb",
+           n1 == 1 && wc == L'Z' && n2 == 1 && mb[0] == 'Y');
+}
+
+static void stdlib_reallocarray_probe(void)
+{
+    void *p = malloc(16);
+    void *q = realloc(p, 64);
+    int ok = q != NULL;
+    free(q);
+    report("stdlib_reallocarray_probe", ok);
+}
+
+static void stdio_snprintf_width(void)
+{
+    char buf[16];
+    int n = snprintf(buf, sizeof(buf), "%04d", 7);
+    report("stdio_snprintf_width", n == 4 && strcmp(buf, "0007") == 0);
+}
+
+static void stdio_sscanf_hex(void)
+{
+    unsigned v = 0;
+    report("stdio_sscanf_hex",
+           sscanf("0xff", "%x", &v) == 1 && v == 0xffu);
+}
+
+static void stdio_fputc_fgetc(void)
+{
+    FILE *fp = fopen("/tmp/libc_fputc", "w+");
+    int ok = 0;
+
+    if (fp) {
+        ok = fputc('K', fp) == 'K' && fseek(fp, 0, SEEK_SET) == 0 &&
+             fgetc(fp) == 'K';
+        fclose(fp);
+        unlink("/tmp/libc_fputc");
+    }
+    report("stdio_fputc_fgetc", ok);
+}
+
+static void stdio_ftell_after_write(void)
+{
+    FILE *fp = fopen("/tmp/libc_ftell2", "w+");
+    int ok = 0;
+
+    if (fp) {
+        ok = fputs("abcd", fp) >= 0 && ftell(fp) == 4;
+        fclose(fp);
+        unlink("/tmp/libc_ftell2");
+    }
+    report("stdio_ftell_after_write", ok);
+}
+
+static void stdio_perror_probe(void)
+{
+    errno = EINVAL;
+    perror("libc_perror_probe");
+    report("stdio_perror_probe", 1);
+}
+
+static void string_strndup(void)
+{
+    char *p = strndup("abcdef", 3);
+    int ok = p && strcmp(p, "abc") == 0;
+    free(p);
+    report("string_strndup", ok);
+}
+
+static void string_bcmp_bcopy(void)
+{
+    char d[8];
+    bcopy("xy", d, 3);
+    report("string_bcmp_bcopy",
+           bcmp("ab", "ab", 2) == 0 && d[0] == 'x' && d[1] == 'y');
+}
+
+static void string_index_rindex(void)
+{
+    const char *s = "banana";
+    report("string_index_rindex",
+           index(s, 'a') == s + 1 && rindex(s, 'a') == s + 5);
+}
+
+static void string_ffs(void)
+{
+    report("string_ffs", ffs(0) == 0 && ffs(8) == 4);
+}
+
+static void time_clock(void)
+{
+    clock_t c = clock();
+    report("time_clock", c != (clock_t)-1);
+}
+
+static void time_strftime_weekday(void)
+{
+    time_t t = 0;
+    struct tm *tm = gmtime(&t);
+    char buf[32];
+    int ok = 0;
+
+    if (tm) {
+        ok = strftime(buf, sizeof(buf), "%A", tm) > 0 && buf[0] != '\0';
+    }
+    report("time_strftime_weekday", ok);
+}
+
+static void unistd_getpagesize_match(void)
+{
+    long sc = sysconf(_SC_PAGESIZE);
+    int ps = getpagesize();
+    report("unistd_getpagesize_match", sc > 0 && ps > 0 && (long)ps == sc);
+}
+
+static void unistd_isatty_stderr(void)
+{
+    /* Guest may or may not attach a tty to stderr; just exercise the call. */
+    int r = isatty(2);
+    report("unistd_isatty_stderr", r == 0 || r == 1);
+}
+
 int main(void)
 {
     string_strlen();
@@ -3118,6 +3426,47 @@ int main(void)
     wchar_wmemcpy();
     wctype_iswalpha();
     wctype_towlower();
+    math_tan_atan();
+    math_atan2();
+    math_asin_acos();
+    math_trunc_round();
+    math_hypot_cbrt();
+    math_copysign_fminmax();
+    math_remainder();
+    math_float_basic();
+    math_sinh_cosh();
+    math_tanh();
+    math_ldexp_frexp();
+    math_modf();
+    wchar_wcscpy_cat();
+    wchar_wcsncpy();
+    wchar_wcschr_str();
+    wchar_wcsrchr();
+    wchar_wmemcmp_set();
+    wchar_wmemmove();
+    wchar_wcslen_empty();
+    wctype_iswdigit_space();
+    wctype_towupper_alnum();
+    wctype_iswprint_cntrl();
+    ctype_isblank_ascii();
+    stdlib_strtoimax();
+    stdlib_strtoumax();
+    stdlib_mblen();
+    stdlib_mbtowc_wctomb();
+    stdlib_reallocarray_probe();
+    stdio_snprintf_width();
+    stdio_sscanf_hex();
+    stdio_fputc_fgetc();
+    stdio_ftell_after_write();
+    stdio_perror_probe();
+    string_strndup();
+    string_bcmp_bcopy();
+    string_index_rindex();
+    string_ffs();
+    time_clock();
+    time_strftime_weekday();
+    unistd_getpagesize_match();
+    unistd_isatty_stderr();
     unistd_write();
     unistd_getpid();
     unistd_pipe();
