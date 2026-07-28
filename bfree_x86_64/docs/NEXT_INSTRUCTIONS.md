@@ -38,10 +38,10 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-07-28
+- **Updated:** 2026-07-29
 - **Desktop 本線:** W0–W3.5 + FB authority + Explorer 実用。wm smoke GREEN
-- **musl libc-test サブセット:** **477 TPASS**（round-14 +71 どーん純 libc）
-- **穴埋め（本ラウンド）:** round-14 拡張（mathf / complex / wchar / stdio memstream / string / time / mkstemp）
+- **musl libc-test サブセット:** **627 TPASS**（round-16 +77 どーん純 libc）
+- **穴埋め（本ラウンド）:** round-16 拡張（mathl / complexf / fpclassify / wchar / stdio / inet）
 - **天井（どこまで広げられるか）:**
   - **まだ伸ばせる:** 純 libc、既存 stub の組み合わせ、UDP/UNIX の浅いケース
   - **すぐ壁:** clone スレッド、双方向 TCP 深化、フル POSIX ファイル属性、pipe/UNIX スロット枯渇

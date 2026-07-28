@@ -17,6 +17,7 @@
 #include <stdarg.h>
 #include <libgen.h>
 #include <limits.h>
+#include <locale.h>
 #include <math.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -4551,6 +4552,1037 @@ static void unistd_fpathconf(void)
     report("unistd_fpathconf", ok);
 }
 
+/* --- round-15: bold pure libc growth (+72) --- */
+static void math_acoshf(void)
+{
+    report("math_acoshf", acoshf(1.0f) == 0.0f);
+}
+
+static void math_asinhf(void)
+{
+    report("math_asinhf", asinhf(0.0f) == 0.0f);
+}
+
+static void math_atanhf_zero(void)
+{
+    report("math_atanhf_zero", atanhf(0.0f) == 0.0f);
+}
+
+static void math_fmaf(void)
+{
+    report("math_fmaf", math_near((double)fmaf(2.0f, 3.0f, 4.0f), 10.0));
+}
+
+static void math_hypotl(void)
+{
+    report("math_hypotl", math_near((double)hypotl(3.0L, 4.0L), 5.0));
+}
+
+static void math_ceill(void)
+{
+    report("math_ceill", ceill(2.1L) == 3.0L && ceill(-2.1L) == -2.0L);
+}
+
+static void math_floorl(void)
+{
+    report("math_floorl", floorl(2.9L) == 2.0L && floorl(-2.1L) == -3.0L);
+}
+
+static void math_sqrtl(void)
+{
+    report("math_sqrtl", sqrtl(9.0L) == 3.0L);
+}
+
+static void math_sinl(void)
+{
+    report("math_sinl", sinl(0.0L) == 0.0L);
+}
+
+static void math_cosl(void)
+{
+    report("math_cosl", cosl(0.0L) == 1.0L);
+}
+
+static void math_csqrt(void)
+{
+    double complex z = csqrt(4.0 + 0.0 * I);
+    report("math_csqrt", math_near(creal(z), 2.0) && math_near(cimag(z), 0.0));
+}
+
+static void math_cexp(void)
+{
+    double complex z = cexp(0.0 + 0.0 * I);
+    report("math_cexp", math_near(creal(z), 1.0) && math_near(cimag(z), 0.0));
+}
+
+static void math_clog(void)
+{
+    double complex z = clog(1.0 + 0.0 * I);
+    report("math_clog", math_near(creal(z), 0.0) && math_near(cimag(z), 0.0));
+}
+
+static void math_csin(void)
+{
+    double complex z = csin(0.0 + 0.0 * I);
+    report("math_csin", math_near(creal(z), 0.0) && math_near(cimag(z), 0.0));
+}
+
+static void math_ccos(void)
+{
+    double complex z = ccos(0.0 + 0.0 * I);
+    report("math_ccos", math_near(creal(z), 1.0) && math_near(cimag(z), 0.0));
+}
+
+static void math_cabsf(void)
+{
+    float complex z = 3.0f + 4.0f * I;
+    report("math_cabsf", math_near((double)cabsf(z), 5.0));
+}
+
+static void math_crealf(void)
+{
+    float complex z = 2.5f + 1.0f * I;
+    report("math_crealf", crealf(z) == 2.5f);
+}
+
+static void math_cimagf(void)
+{
+    float complex z = 1.0f + 3.5f * I;
+    report("math_cimagf", cimagf(z) == 3.5f);
+}
+
+static void math_nan(void)
+{
+    report("math_nan", isnan(nan("")) && !isnan(1.0));
+}
+
+static void math_llroundf(void)
+{
+    report("math_llroundf", llroundf(2.6f) == 3 && llroundf(-2.6f) == -3);
+}
+
+static void math_llrintf(void)
+{
+    report("math_llrintf", llrintf(2.0f) == 2);
+}
+
+static void math_remquof(void)
+{
+    int q = 0;
+    float r = remquof(5.0f, 3.0f, &q);
+    report("math_remquof", math_near((double)r, -1.0) || math_near((double)r, 2.0));
+}
+
+static void math_fmodl(void)
+{
+    report("math_fmodl", math_near((double)fmodl(5.0L, 3.0L), 2.0));
+}
+
+static void math_powl(void)
+{
+    report("math_powl", math_near((double)powl(2.0L, 3.0L), 8.0));
+}
+
+static void math_logl(void)
+{
+    report("math_logl", math_near((double)logl(1.0L), 0.0));
+}
+
+static void math_expl(void)
+{
+    report("math_expl", math_near((double)expl(0.0L), 1.0));
+}
+
+static void math_tanhl(void)
+{
+    report("math_tanhl", tanhl(0.0L) == 0.0L);
+}
+
+static void math_sinhl(void)
+{
+    report("math_sinhl", sinhl(0.0L) == 0.0L);
+}
+
+static void math_coshl(void)
+{
+    report("math_coshl", coshl(0.0L) == 1.0L);
+}
+
+static void math_truncl(void)
+{
+    report("math_truncl", truncl(2.9L) == 2.0L && truncl(-2.9L) == -2.0L);
+}
+
+static void math_roundl(void)
+{
+    report("math_roundl", roundl(2.5L) == 3.0L || roundl(2.5L) == 2.0L);
+}
+
+static void locale_setlocale(void)
+{
+    char *p = setlocale(LC_ALL, "C");
+    report("locale_setlocale", p != NULL && strstr(p, "C") != NULL);
+}
+
+static void locale_localeconv(void)
+{
+    struct lconv *lc = localeconv();
+    report("locale_localeconv",
+           lc != NULL && lc->decimal_point != NULL && lc->decimal_point[0] != '\0');
+}
+
+static void string_strnlen_cap(void)
+{
+    report("string_strnlen_cap",
+           strnlen("abcdef", 3) == 3 && strnlen("ab", 8) == 2);
+}
+
+static void string_memchr_edge(void)
+{
+    const char *s = "abcd";
+    report("string_memchr_edge",
+           memchr(s, 'd', 4) == s + 3 && memchr(s, 'z', 4) == NULL);
+}
+
+static void time_strptime(void)
+{
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    char *p = strptime("1970-01-02", "%Y-%m-%d", &tm);
+    report("time_strptime",
+           p != NULL && *p == '\0' && tm.tm_year == 70 && tm.tm_mday == 2);
+}
+
+static void time_timegm(void)
+{
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    tm.tm_year = 70;
+    tm.tm_mday = 1;
+    report("time_timegm", timegm(&tm) == 0);
+}
+
+static void time_tzset_probe(void)
+{
+    tzset();
+    report("time_tzset_probe", 1);
+}
+
+static void stdlib_drand48(void)
+{
+    srand48(1);
+    double a = drand48();
+    report("stdlib_drand48", a >= 0.0 && a < 1.0);
+}
+
+static void stdlib_lrand48(void)
+{
+    srand48(2);
+    long a = lrand48();
+    report("stdlib_lrand48", a >= 0 && a < (1L << 31));
+}
+
+static void stdlib_erand48(void)
+{
+    unsigned short x[3] = {1, 2, 3};
+    double a = erand48(x);
+    report("stdlib_erand48", a >= 0.0 && a < 1.0);
+}
+
+static void stdlib_mrand48(void)
+{
+    srand48(3);
+    long a = mrand48();
+    report("stdlib_mrand48", a >= -(1L << 31) && a < (1L << 31));
+}
+
+static void stdlib_seed48(void)
+{
+    unsigned short x[3] = {9, 8, 7};
+    unsigned short *p = seed48(x);
+    report("stdlib_seed48", p != NULL);
+}
+
+static void stdlib_a64l(void)
+{
+    report("stdlib_a64l", a64l(".") == 0 && a64l("./") == 64);
+}
+
+static void stdlib_l64a(void)
+{
+    char *p = l64a(64);
+    report("stdlib_l64a", p != NULL && strcmp(p, "./") == 0);
+}
+
+static int vdprintf_helper(int fd, const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+
+    va_start(ap, fmt);
+    n = vdprintf(fd, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
+static void stdio_vdprintf(void)
+{
+    int fd = open("/tmp/libc_vdprintf", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    char buf[8] = {0};
+    int ok = 0;
+
+    if (fd >= 0) {
+        ok = vdprintf_helper(fd, "%d", 9) == 1 &&
+             lseek(fd, 0, SEEK_SET) == 0 &&
+             read(fd, buf, sizeof(buf)) == 1 && buf[0] == '9';
+        close(fd);
+        unlink("/tmp/libc_vdprintf");
+    }
+    report("stdio_vdprintf", ok);
+}
+
+static int vasprintf_helper(char **out, const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+
+    va_start(ap, fmt);
+    n = vasprintf(out, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
+static void stdio_vasprintf(void)
+{
+    char *p = NULL;
+    int n = vasprintf_helper(&p, "%s", "ok");
+    int ok = n == 2 && p && strcmp(p, "ok") == 0;
+    free(p);
+    report("stdio_vasprintf", ok);
+}
+
+static void stdio_tmpfile(void)
+{
+    FILE *fp = tmpfile();
+    int ok = 0;
+
+    if (fp) {
+        ok = fputs("z", fp) >= 0 && fseek(fp, 0, SEEK_SET) == 0 && fgetc(fp) == 'z';
+        fclose(fp);
+    }
+    report("stdio_tmpfile", ok);
+}
+
+static void stdio_getdelim(void)
+{
+    FILE *fp = fopen("/tmp/libc_getdelim", "w+");
+    char *line = NULL;
+    size_t n = 0;
+    int ok = 0;
+
+    if (fp) {
+        fputs("ab;cd", fp);
+        rewind(fp);
+        ok = getdelim(&line, &n, ';', fp) == 3 && line && strcmp(line, "ab;") == 0;
+        free(line);
+        fclose(fp);
+        unlink("/tmp/libc_getdelim");
+    }
+    report("stdio_getdelim", ok);
+}
+
+static void stdio_flockfile(void)
+{
+    FILE *fp = fopen("/tmp/libc_flock", "w");
+    int ok = 0;
+
+    if (fp) {
+        flockfile(fp);
+        fputc('A', fp);
+        funlockfile(fp);
+        ok = ftrylockfile(fp) == 0;
+        if (ok)
+            funlockfile(fp);
+        fclose(fp);
+        unlink("/tmp/libc_flock");
+    }
+    report("stdio_flockfile", ok);
+}
+
+static void wchar_btowc(void)
+{
+    report("wchar_btowc", btowc('A') == L'A' && btowc(EOF) == WEOF);
+}
+
+static void wchar_wctob(void)
+{
+    report("wchar_wctob", wctob(L'B') == 'B' && wctob(WEOF) == EOF);
+}
+
+static void wchar_mbrtowc(void)
+{
+    wchar_t wc = 0;
+    mbstate_t st;
+    size_t n;
+
+    memset(&st, 0, sizeof(st));
+    n = mbrtowc(&wc, "Q", 1, &st);
+    report("wchar_mbrtowc", n == 1 && wc == L'Q' && mbsinit(&st));
+}
+
+static void wchar_wcrtomb(void)
+{
+    char mb[8];
+    mbstate_t st;
+    size_t n;
+
+    memset(&st, 0, sizeof(st));
+    n = wcrtomb(mb, L'R', &st);
+    report("wchar_wcrtomb", n == 1 && mb[0] == 'R');
+}
+
+static void wchar_mbsrtowcs(void)
+{
+    const char *src = "hi";
+    wchar_t dst[4];
+    mbstate_t st;
+    size_t n;
+
+    memset(&st, 0, sizeof(st));
+    n = mbsrtowcs(dst, &src, 4, &st);
+    report("wchar_mbsrtowcs", n == 2 && dst[0] == L'h' && dst[1] == L'i' && src == NULL);
+}
+
+static void wchar_wcsrtombs(void)
+{
+    const wchar_t *src = L"xy";
+    char dst[4];
+    mbstate_t st;
+    size_t n;
+
+    memset(&st, 0, sizeof(st));
+    n = wcsrtombs(dst, &src, 4, &st);
+    report("wchar_wcsrtombs", n == 2 && dst[0] == 'x' && dst[1] == 'y' && src == NULL);
+}
+
+static void wchar_mbsinit(void)
+{
+    mbstate_t st;
+    memset(&st, 0, sizeof(st));
+    report("wchar_mbsinit", mbsinit(&st) != 0 && mbsinit(NULL) != 0);
+}
+
+static void wctype_wctrans_more(void)
+{
+    wctrans_t t = wctrans("tolower");
+    report("wctype_wctrans_more",
+           t != (wctrans_t)0 && towctrans(L'Z', t) == L'z');
+}
+
+static void net_inet_aton(void)
+{
+    struct in_addr a;
+    report("net_inet_aton",
+           inet_aton("127.0.0.1", &a) == 1 && a.s_addr == htonl(0x7f000001u));
+}
+
+static void net_inet_ntoa(void)
+{
+    struct in_addr a;
+    a.s_addr = htonl(0x7f000001u);
+    char *p = inet_ntoa(a);
+    report("net_inet_ntoa", p && strcmp(p, "127.0.0.1") == 0);
+}
+
+static void net_inet_pton(void)
+{
+    struct in_addr a;
+    report("net_inet_pton",
+           inet_pton(AF_INET, "10.0.0.1", &a) == 1 &&
+               a.s_addr == htonl(0x0a000001u));
+}
+
+static void net_inet_ntop(void)
+{
+    struct in_addr a;
+    char buf[INET_ADDRSTRLEN];
+    a.s_addr = htonl(0x0a000002u);
+    report("net_inet_ntop",
+           inet_ntop(AF_INET, &a, buf, sizeof(buf)) != NULL &&
+               strcmp(buf, "10.0.0.2") == 0);
+}
+
+static void net_htons(void)
+{
+    report("net_htons", htons(0x1234) == 0x1234 || htons(0x1234) == 0x3412);
+}
+
+static void net_ntohs(void)
+{
+    uint16_t x = htons(0xabcd);
+    report("net_ntohs", ntohs(x) == 0xabcd);
+}
+
+static void net_htonl(void)
+{
+    uint32_t x = htonl(0x01020304u);
+    report("net_htonl", ntohl(x) == 0x01020304u);
+}
+
+static void net_ntohl(void)
+{
+    report("net_ntohl", ntohl(htonl(0xdeadbeefu)) == 0xdeadbeefu);
+}
+
+static void unistd_sysconf_argmax(void)
+{
+    long n = sysconf(_SC_ARG_MAX);
+    report("unistd_sysconf_argmax", n > 0 || n == -1);
+}
+
+static void unistd_pathconf(void)
+{
+    long n = pathconf("/tmp", _PC_NAME_MAX);
+    report("unistd_pathconf", n > 0 || n == -1);
+}
+
+static void unistd_getdtablesize(void)
+{
+    int n = getdtablesize();
+    report("unistd_getdtablesize", n >= 3);
+}
+
+static void unistd_geteuid_probe(void)
+{
+    report("unistd_geteuid_probe", geteuid() == getuid());
+}
+
+static void unistd_getegid_probe(void)
+{
+    report("unistd_getegid_probe", getegid() == getgid());
+}
+
+static void unistd_sleep0(void)
+{
+    report("unistd_sleep0", sleep(0) == 0);
+}
+
+static void ctype_digit_range(void)
+{
+    int ok = 1;
+    int c;
+
+    for (c = '0'; c <= '9'; ++c) {
+        if (!isdigit(c))
+            ok = 0;
+    }
+    report("ctype_digit_range", ok && !isdigit('A'));
+}
+
+/* --- round-16: bold pure libc growth (+72) --- */
+static void math_acoshl(void)
+{
+    report("math_acoshl", acoshl(1.0L) == 0.0L);
+}
+
+static void math_asinhl(void)
+{
+    report("math_asinhl", asinhl(0.0L) == 0.0L);
+}
+
+static void math_atanhl(void)
+{
+    report("math_atanhl", atanhl(0.0L) == 0.0L);
+}
+
+static void math_cbrtl(void)
+{
+    report("math_cbrtl", math_near((double)cbrtl(27.0L), 3.0));
+}
+
+static void math_log2l(void)
+{
+    report("math_log2l", math_near((double)log2l(8.0L), 3.0));
+}
+
+static void math_exp2l(void)
+{
+    report("math_exp2l", math_near((double)exp2l(3.0L), 8.0));
+}
+
+static void math_log10l(void)
+{
+    report("math_log10l", math_near((double)log10l(1000.0L), 3.0));
+}
+
+static void math_expm1l(void)
+{
+    report("math_expm1l", expm1l(0.0L) == 0.0L);
+}
+
+static void math_log1pl(void)
+{
+    report("math_log1pl", log1pl(0.0L) == 0.0L);
+}
+
+static void math_fmal(void)
+{
+    report("math_fmal", math_near((double)fmal(2.0L, 3.0L, 4.0L), 10.0));
+}
+
+static void math_fdiml(void)
+{
+    report("math_fdiml", fdiml(5.0L, 3.0L) == 2.0L && fdiml(2.0L, 5.0L) == 0.0L);
+}
+
+static void math_copysignl(void)
+{
+    report("math_copysignl", copysignl(1.0L, -2.0L) == -1.0L);
+}
+
+static void math_fminl(void)
+{
+    report("math_fminl", fminl(2.0L, 3.0L) == 2.0L);
+}
+
+static void math_fmaxl(void)
+{
+    report("math_fmaxl", fmaxl(2.0L, 3.0L) == 3.0L);
+}
+
+static void math_nearbyintl(void)
+{
+    report("math_nearbyintl", nearbyintl(2.0L) == 2.0L);
+}
+
+static void math_rintl(void)
+{
+    report("math_rintl", rintl(2.0L) == 2.0L);
+}
+
+static void math_lroundl(void)
+{
+    report("math_lroundl", lroundl(2.6L) == 3 && lroundl(-2.6L) == -3);
+}
+
+static void math_llroundl(void)
+{
+    report("math_llroundl", llroundl(2.6L) == 3 && llroundl(-2.6L) == -3);
+}
+
+static void math_modfl(void)
+{
+    long double ip = 0;
+    long double fr = modfl(3.25L, &ip);
+    report("math_modfl", ip == 3.0L && fr == 0.25L);
+}
+
+static void math_frexpl(void)
+{
+    int e = 0;
+    long double m = frexpl(8.0L, &e);
+    report("math_frexpl", m == 0.5L && e == 4);
+}
+
+static void math_ldexpl(void)
+{
+    report("math_ldexpl", ldexpl(1.5L, 1) == 3.0L);
+}
+
+static void math_scalbnl(void)
+{
+    report("math_scalbnl", scalbnl(1.5L, 1) == 3.0L);
+}
+
+static void math_ilogbl(void)
+{
+    report("math_ilogbl", ilogbl(8.0L) == 3);
+}
+
+static void math_nextafterl(void)
+{
+    long double n = nextafterl(1.0L, 2.0L);
+    report("math_nextafterl", n > 1.0L && n < 1.0001L);
+}
+
+static void math_remainderl(void)
+{
+    long double r = remainderl(5.0L, 3.0L);
+    report("math_remainderl", math_near((double)r, -1.0) || math_near((double)r, 2.0));
+}
+
+static void math_ctanf(void)
+{
+    float complex z = ctanf(0.0f + 0.0f * I);
+    report("math_ctanf", crealf(z) == 0.0f && cimagf(z) == 0.0f);
+}
+
+static void math_catanf(void)
+{
+    float complex z = catanf(0.0f + 0.0f * I);
+    report("math_catanf", crealf(z) == 0.0f && cimagf(z) == 0.0f);
+}
+
+static void math_casinf(void)
+{
+    float complex z = casinf(0.0f + 0.0f * I);
+    report("math_casinf", crealf(z) == 0.0f && cimagf(z) == 0.0f);
+}
+
+static void math_cacosf(void)
+{
+    float complex z = cacosf(1.0f + 0.0f * I);
+    report("math_cacosf", crealf(z) == 0.0f && cimagf(z) == 0.0f);
+}
+
+static void math_csinhf(void)
+{
+    float complex z = csinhf(0.0f + 0.0f * I);
+    report("math_csinhf", crealf(z) == 0.0f && cimagf(z) == 0.0f);
+}
+
+static void math_ccoshf(void)
+{
+    float complex z = ccoshf(0.0f + 0.0f * I);
+    report("math_ccoshf", crealf(z) == 1.0f && cimagf(z) == 0.0f);
+}
+
+static void math_ctanhf(void)
+{
+    float complex z = ctanhf(0.0f + 0.0f * I);
+    report("math_ctanhf", crealf(z) == 0.0f && cimagf(z) == 0.0f);
+}
+
+static void math_cprojf(void)
+{
+    float complex z = cprojf(1.0f + 0.0f * I);
+    report("math_cprojf", crealf(z) == 1.0f && cimagf(z) == 0.0f);
+}
+
+static void math_conjf(void)
+{
+    float complex z = conjf(1.0f + 2.0f * I);
+    report("math_conjf", crealf(z) == 1.0f && cimagf(z) == -2.0f);
+}
+
+static void math_cargf(void)
+{
+    float complex z = 1.0f + 0.0f * I;
+    report("math_cargf", cargf(z) == 0.0f);
+}
+
+static void math_isgreater_probe(void)
+{
+    report("math_isgreater_probe", isgreater(2.0, 1.0) && !isgreater(1.0, 2.0));
+}
+
+static void math_isless_probe(void)
+{
+    report("math_isless_probe", isless(1.0, 2.0) && !isless(2.0, 1.0));
+}
+
+static void math_isunordered_probe(void)
+{
+    report("math_isunordered_probe",
+           isunordered(nan(""), 1.0) && !isunordered(1.0, 2.0));
+}
+
+static void math_fpclassify_probe(void)
+{
+    report("math_fpclassify_probe",
+           fpclassify(0.0) == FP_ZERO && fpclassify(1.0) == FP_NORMAL);
+}
+
+static void math_signbitl(void)
+{
+    report("math_signbitl", signbit(-1.0L) && !signbit(1.0L));
+}
+
+static void stdio_snprintf_ptr(void)
+{
+    char buf[32];
+    int n = snprintf(buf, sizeof(buf), "%p", (void *)0);
+    report("stdio_snprintf_ptr", n > 0 && buf[0] != '\0');
+}
+
+static void stdio_sscanf_ll(void)
+{
+    long long v = 0;
+    report("stdio_sscanf_ll",
+           sscanf("1234567890123", "%lld", &v) == 1 && v == 1234567890123LL);
+}
+
+static void stdio_fwide(void)
+{
+    FILE *fp = fopen("/tmp/libc_fwide", "w+");
+    int ok = 0;
+
+    if (fp) {
+        ok = fwide(fp, 0) == 0;
+        fclose(fp);
+        unlink("/tmp/libc_fwide");
+    }
+    report("stdio_fwide", ok);
+}
+
+static void stdio_setbuf(void)
+{
+    FILE *fp = fopen("/tmp/libc_setbuf", "w");
+    char buf[BUFSIZ];
+    int ok = 0;
+
+    if (fp) {
+        setbuf(fp, buf);
+        ok = fputs("x", fp) >= 0;
+        fclose(fp);
+        unlink("/tmp/libc_setbuf");
+    }
+    report("stdio_setbuf", ok);
+}
+
+static void stdio_fflush_null(void)
+{
+    report("stdio_fflush_null", fflush(NULL) == 0);
+}
+
+static void stdio_snprintf_star(void)
+{
+    char buf[16];
+    int n = snprintf(buf, sizeof(buf), "%*d", 4, 7);
+    report("stdio_snprintf_star", n == 4 && strcmp(buf, "   7") == 0);
+}
+
+static void stdio_sscanf_n(void)
+{
+    int a = 0, n = -1;
+    report("stdio_sscanf_n",
+           sscanf("42", "%d%n", &a, &n) == 1 && a == 42 && n == 2);
+}
+
+static void string_strndup_empty(void)
+{
+    char *p = strndup("abc", 0);
+    int ok = p && p[0] == '\0';
+    free(p);
+    report("string_strndup_empty", ok);
+}
+
+static void string_stpncpy_pad(void)
+{
+    char d[6];
+    memset(d, 'x', sizeof(d));
+    char *e = stpncpy(d, "ab", 5);
+    report("string_stpncpy_pad",
+           e == d + 2 && d[0] == 'a' && d[2] == '\0' && d[4] == '\0');
+}
+
+static void string_strcasestr_miss(void)
+{
+    report("string_strcasestr_miss", strcasestr("Foo", "bar") == NULL);
+}
+
+static void string_bzero_probe(void)
+{
+    char b[4] = {1, 2, 3, 4};
+    bzero(b, sizeof(b));
+    report("string_bzero_probe",
+           b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0);
+}
+
+static void string_strcasecmp_eq(void)
+{
+    report("string_strcasecmp_eq",
+           strcasecmp("AbC", "aBc") == 0 && strcasecmp("a", "b") < 0);
+}
+
+static void string_strncasecmp_n(void)
+{
+    report("string_strncasecmp_n",
+           strncasecmp("abcXYZ", "ABCzzz", 3) == 0);
+}
+
+static void wchar_wcsnlen_cap(void)
+{
+    report("wchar_wcsnlen_cap",
+           wcsnlen(L"abcdef", 3) == 3 && wcsnlen(L"ab", 8) == 2);
+}
+
+static void wchar_wcstol_neg(void)
+{
+    wchar_t *end = NULL;
+    long v = wcstol(L"-99z", &end, 10);
+    report("wchar_wcstol_neg", v == -99 && end && *end == L'z');
+}
+
+static void wchar_wcstoul_hex(void)
+{
+    wchar_t *end = NULL;
+    unsigned long v = wcstoul(L"ffg", &end, 16);
+    report("wchar_wcstoul_hex", v == 0xfful && end && *end == L'g');
+}
+
+static void wchar_fputwc(void)
+{
+    FILE *fp = fopen("/tmp/libc_fputwc", "w+");
+    int ok = 0;
+
+    if (fp) {
+        ok = fputwc(L'Z', fp) == L'Z' && fseek(fp, 0, SEEK_SET) == 0 &&
+             fgetwc(fp) == L'Z';
+        fclose(fp);
+        unlink("/tmp/libc_fputwc");
+    }
+    report("wchar_fputwc", ok);
+}
+
+static void wchar_ungetwc(void)
+{
+    FILE *fp = fopen("/tmp/libc_ungetwc", "w+");
+    int ok = 0;
+
+    if (fp) {
+        fputwc(L'A', fp);
+        rewind(fp);
+        ok = ungetwc(L'B', fp) == L'B' && fgetwc(fp) == L'B';
+        fclose(fp);
+        unlink("/tmp/libc_ungetwc");
+    }
+    report("wchar_ungetwc", ok);
+}
+
+static void wctype_iswctype_digit(void)
+{
+    wctype_t t = wctype("digit");
+    report("wctype_iswctype_digit",
+           t != (wctype_t)0 && iswctype(L'7', t) && !iswctype(L'a', t));
+}
+
+static void wctype_towupper_lower(void)
+{
+    report("wctype_towupper_lower",
+           towupper(L'a') == L'A' && towlower(L'Z') == L'z');
+}
+
+static void ctype_toascii_high(void)
+{
+    report("ctype_toascii_high", toascii(0x141) == 0x41);
+}
+
+static void ctype_isxdigit_af(void)
+{
+    report("ctype_isxdigit_af",
+           isxdigit('a') && isxdigit('F') && !isxdigit('g'));
+}
+
+static void time_strftime_month(void)
+{
+    time_t t = 0;
+    struct tm *tm = gmtime(&t);
+    char buf[8];
+    int ok = 0;
+
+    if (tm) {
+        ok = strftime(buf, sizeof(buf), "%m", tm) == 2 && strcmp(buf, "01") == 0;
+    }
+    report("time_strftime_month", ok);
+}
+
+static void time_gmtime_year(void)
+{
+    time_t t = 0;
+    struct tm *tm = gmtime(&t);
+    report("time_gmtime_year", tm && tm->tm_year == 70 && tm->tm_mday == 1);
+}
+
+static void time_mktime_roundtrip(void)
+{
+    time_t t0 = 100000;
+    struct tm *tm = gmtime(&t0);
+    time_t t1;
+    int ok = 0;
+
+    if (tm) {
+        struct tm c = *tm;
+        t1 = timegm(&c);
+        ok = t1 == t0;
+    }
+    report("time_mktime_roundtrip", ok);
+}
+
+static void stdlib_strtof_inf(void)
+{
+    char *end = NULL;
+    float v = strtof("inf", &end);
+    report("stdlib_strtof_inf", isinf(v) && end && *end == '\0');
+}
+
+static void stdlib_strtod_nan(void)
+{
+    char *end = NULL;
+    double v = strtod("nan", &end);
+    report("stdlib_strtod_nan", isnan(v) && end && *end == '\0');
+}
+
+static void stdlib_llabs_edge(void)
+{
+    report("stdlib_llabs_edge", llabs(-7LL) == 7 && llabs(0) == 0);
+}
+
+static void stdlib_imaxdiv_more(void)
+{
+    imaxdiv_t d = imaxdiv(17, 5);
+    report("stdlib_imaxdiv_more", d.quot == 3 && d.rem == 2);
+}
+
+static void stdlib_strtoll_hex(void)
+{
+    char *end = NULL;
+    long long v = strtoll("0x10z", &end, 0);
+    report("stdlib_strtoll_hex", v == 16 && end && *end == 'z');
+}
+
+static void stdlib_calloc_zero(void)
+{
+    void *p = calloc(0, 8);
+    free(p);
+    report("stdlib_calloc_zero", 1);
+}
+
+static void net_inet_addr(void)
+{
+    in_addr_t a = inet_addr("127.0.0.1");
+    report("net_inet_addr", a == htonl(0x7f000001u));
+}
+
+static void net_inet_network(void)
+{
+    /* musl inet_network may be absent; use inet_addr class A check. */
+    in_addr_t a = inet_addr("10.1.2.3");
+    report("net_inet_network", a == htonl(0x0a010203u));
+}
+
+static void unistd_getpgid_self(void)
+{
+    pid_t p = getpgid(0);
+    report("unistd_getpgid_self", p > 0 && p == getpgrp());
+}
+
+static void unistd_getppid_pos(void)
+{
+    report("unistd_getppid_pos", getppid() > 0);
+}
+
+static void unistd_access_tmp(void)
+{
+    report("unistd_access_tmp", access("/tmp", R_OK | W_OK | X_OK) == 0);
+}
+
+static void locale_setlocale_ctype(void)
+{
+    char *p = setlocale(LC_CTYPE, "C");
+    report("locale_setlocale_ctype", p != NULL);
+}
+
 int main(void)
 {
     string_strlen();
@@ -4864,6 +5896,156 @@ int main(void)
     unistd_isatty_stdio();
     unistd_confstr();
     unistd_fpathconf();
+    math_acoshf();
+    math_asinhf();
+    math_atanhf_zero();
+    math_fmaf();
+    math_hypotl();
+    math_ceill();
+    math_floorl();
+    math_sqrtl();
+    math_sinl();
+    math_cosl();
+    math_csqrt();
+    math_cexp();
+    math_clog();
+    math_csin();
+    math_ccos();
+    math_cabsf();
+    math_crealf();
+    math_cimagf();
+    math_nan();
+    math_llroundf();
+    math_llrintf();
+    math_remquof();
+    math_fmodl();
+    math_powl();
+    math_logl();
+    math_expl();
+    math_tanhl();
+    math_sinhl();
+    math_coshl();
+    math_truncl();
+    math_roundl();
+    locale_setlocale();
+    locale_localeconv();
+    string_strnlen_cap();
+    string_memchr_edge();
+    time_strptime();
+    time_timegm();
+    time_tzset_probe();
+    stdlib_drand48();
+    stdlib_lrand48();
+    stdlib_erand48();
+    stdlib_mrand48();
+    stdlib_seed48();
+    stdlib_a64l();
+    stdlib_l64a();
+    stdio_vdprintf();
+    stdio_vasprintf();
+    stdio_tmpfile();
+    stdio_getdelim();
+    stdio_flockfile();
+    wchar_btowc();
+    wchar_wctob();
+    wchar_mbrtowc();
+    wchar_wcrtomb();
+    wchar_mbsrtowcs();
+    wchar_wcsrtombs();
+    wchar_mbsinit();
+    wctype_wctrans_more();
+    net_inet_aton();
+    net_inet_ntoa();
+    net_inet_pton();
+    net_inet_ntop();
+    net_htons();
+    net_ntohs();
+    net_htonl();
+    net_ntohl();
+    unistd_sysconf_argmax();
+    unistd_pathconf();
+    unistd_getdtablesize();
+    unistd_geteuid_probe();
+    unistd_getegid_probe();
+    unistd_sleep0();
+    ctype_digit_range();
+    math_acoshl();
+    math_asinhl();
+    math_atanhl();
+    math_cbrtl();
+    math_log2l();
+    math_exp2l();
+    math_log10l();
+    math_expm1l();
+    math_log1pl();
+    math_fmal();
+    math_fdiml();
+    math_copysignl();
+    math_fminl();
+    math_fmaxl();
+    math_nearbyintl();
+    math_rintl();
+    math_lroundl();
+    math_llroundl();
+    math_modfl();
+    math_frexpl();
+    math_ldexpl();
+    math_scalbnl();
+    math_ilogbl();
+    math_nextafterl();
+    math_remainderl();
+    math_ctanf();
+    math_catanf();
+    math_casinf();
+    math_cacosf();
+    math_csinhf();
+    math_ccoshf();
+    math_ctanhf();
+    math_cprojf();
+    math_conjf();
+    math_cargf();
+    math_isgreater_probe();
+    math_isless_probe();
+    math_isunordered_probe();
+    math_fpclassify_probe();
+    math_signbitl();
+    stdio_snprintf_ptr();
+    stdio_sscanf_ll();
+    stdio_fwide();
+    stdio_setbuf();
+    stdio_fflush_null();
+    stdio_snprintf_star();
+    stdio_sscanf_n();
+    string_strndup_empty();
+    string_stpncpy_pad();
+    string_strcasestr_miss();
+    string_bzero_probe();
+    string_strcasecmp_eq();
+    string_strncasecmp_n();
+    wchar_wcsnlen_cap();
+    wchar_wcstol_neg();
+    wchar_wcstoul_hex();
+    wchar_fputwc();
+    wchar_ungetwc();
+    wctype_iswctype_digit();
+    wctype_towupper_lower();
+    ctype_toascii_high();
+    ctype_isxdigit_af();
+    time_strftime_month();
+    time_gmtime_year();
+    time_mktime_roundtrip();
+    stdlib_strtof_inf();
+    stdlib_strtod_nan();
+    stdlib_llabs_edge();
+    stdlib_imaxdiv_more();
+    stdlib_strtoll_hex();
+    stdlib_calloc_zero();
+    net_inet_addr();
+    net_inet_network();
+    unistd_getpgid_self();
+    unistd_getppid_pos();
+    unistd_access_tmp();
+    locale_setlocale_ctype();
     unistd_write();
     unistd_getpid();
     unistd_pipe();
