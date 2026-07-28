@@ -79,6 +79,7 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.5l | curated round-11 + exit_group busybox reload | **DONE** | +24；exit_group 親 AS 復帰＋`load_elf_image(busybox)`＋`exec_transfer_rip`；**358**；ポストスイート PF 解消 |
 | B2.5m | curated round-12 pure libc | **DONE** | +24 math/wchar/stdio/string；**382** |
 | B2.5n | curated round-13 pure libc | **DONE** | +24 mathf/wchar/stdio/string；**406** |
+| B2.5o | curated round-14 bold pure libc | **DONE** | +71 mathf/complex/wchar/stdio/string/time/mkstemp；**477** |
 | B2.6 | `flock` / fcntl ロック | **DONE** | P8_FLOCK |
 | B2.7 | `clone` スレッドフラグ | partial（coop THREAD） | TLS + スケジューラ |
 | B2.8 | futex 深化 | 部分 stub | WAIT 実待ち・WAKE |
@@ -94,10 +95,10 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.18 | `membarrier` / `rseq` | **DONE（空成功）** | |
 | B2.19 | `getrandom` | **DONE** | 品質は簡易 |
 | B2.20 | 静的 hello/musl スモーク | **追加**（`/musl_hello.elf`） | B2_MUSL_HELLO_OK |
-| B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **406**） | `LIBC_TEST_CURATED_RESULT` |
+| B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **477**） | `LIBC_TEST_CURATED_RESULT` |
 
 **完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。  
-→ 2026-07-28: curated **406 TPASS** (round-13). Walls: thread/TCP/slots.
+→ 2026-07-28: curated **477 TPASS** (round-14 +71). Walls: thread/TCP/slots.
 
 ### B3 — Qt / デスクトップ向け（Phase 6 後半〜）〜15 項目
 

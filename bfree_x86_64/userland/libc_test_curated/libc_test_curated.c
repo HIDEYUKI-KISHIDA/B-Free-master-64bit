@@ -7,11 +7,14 @@
  */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
+#include <complex.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <float.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <libgen.h>
 #include <limits.h>
 #include <math.h>
@@ -4036,6 +4039,518 @@ static void stdlib_strtold(void)
     report("stdlib_strtold", v == 2.5L && end && *end == 'x');
 }
 
+/* --- round-14: bold pure libc growth (+72) --- */
+static void math_tanf(void)
+{
+    report("math_tanf", tanf(0.0f) == 0.0f);
+}
+
+static void math_atanf(void)
+{
+    report("math_atanf", math_near((double)atanf(0.0f), 0.0));
+}
+
+static void math_asinf(void)
+{
+    report("math_asinf", asinf(0.0f) == 0.0f);
+}
+
+static void math_acosf(void)
+{
+    report("math_acosf", acosf(1.0f) == 0.0f);
+}
+
+static void math_sinhf(void)
+{
+    report("math_sinhf", sinhf(0.0f) == 0.0f);
+}
+
+static void math_coshf(void)
+{
+    report("math_coshf", coshf(0.0f) == 1.0f);
+}
+
+static void math_tanhf(void)
+{
+    report("math_tanhf", tanhf(0.0f) == 0.0f);
+}
+
+static void math_logf(void)
+{
+    report("math_logf", math_near((double)logf(1.0f), 0.0));
+}
+
+static void math_log10f(void)
+{
+    report("math_log10f", math_near((double)log10f(1000.0f), 3.0));
+}
+
+static void math_expf(void)
+{
+    report("math_expf", math_near((double)expf(0.0f), 1.0));
+}
+
+static void math_expm1f(void)
+{
+    report("math_expm1f", expm1f(0.0f) == 0.0f);
+}
+
+static void math_log1pf(void)
+{
+    report("math_log1pf", log1pf(0.0f) == 0.0f);
+}
+
+static void math_fdimf(void)
+{
+    report("math_fdimf", fdimf(5.0f, 3.0f) == 2.0f && fdimf(2.0f, 5.0f) == 0.0f);
+}
+
+static void math_modff(void)
+{
+    float ip = 0;
+    float fr = modff(3.25f, &ip);
+    report("math_modff", ip == 3.0f && fr == 0.25f);
+}
+
+static void math_frexpf(void)
+{
+    int e = 0;
+    float m = frexpf(8.0f, &e);
+    report("math_frexpf", m == 0.5f && e == 4);
+}
+
+static void math_ilogbf(void)
+{
+    report("math_ilogbf", ilogbf(8.0f) == 3);
+}
+
+static void math_nextafterf(void)
+{
+    float n = nextafterf(1.0f, 2.0f);
+    report("math_nextafterf", n > 1.0f && n < 1.0001f);
+}
+
+static void math_nearbyintf(void)
+{
+    report("math_nearbyintf", nearbyintf(2.0f) == 2.0f);
+}
+
+static void math_rintf(void)
+{
+    report("math_rintf", rintf(2.0f) == 2.0f);
+}
+
+static void math_lroundf(void)
+{
+    report("math_lroundf", lroundf(2.6f) == 3 && lroundf(-2.6f) == -3);
+}
+
+static void math_scalbnf(void)
+{
+    report("math_scalbnf", scalbnf(1.5f, 1) == 3.0f);
+}
+
+static void math_erff(void)
+{
+    report("math_erff", erff(0.0f) == 0.0f);
+}
+
+static void math_erfcf(void)
+{
+    report("math_erfcf", erfcf(0.0f) == 1.0f);
+}
+
+static void math_tgammaf(void)
+{
+    report("math_tgammaf", math_near((double)tgammaf(5.0f), 24.0));
+}
+
+static void math_lgammaf(void)
+{
+    report("math_lgammaf", math_near((double)lgammaf(1.0f), 0.0));
+}
+
+static void math_j1(void)
+{
+    report("math_j1", math_near(j1(0.0), 0.0));
+}
+
+static void math_y1(void)
+{
+    report("math_y1", isfinite(y1(1.0)));
+}
+
+static void math_jn(void)
+{
+    report("math_jn", math_near(jn(0, 0.0), 1.0));
+}
+
+static void math_yn(void)
+{
+    report("math_yn", isfinite(yn(0, 1.0)));
+}
+
+static void math_cabs(void)
+{
+    double complex z = 3.0 + 4.0 * I;
+    report("math_cabs", math_near(cabs(z), 5.0));
+}
+
+static void math_carg(void)
+{
+    double complex z = 1.0 + 0.0 * I;
+    report("math_carg", math_near(carg(z), 0.0));
+}
+
+static void math_creal_cimag(void)
+{
+    double complex z = 2.0 + 3.0 * I;
+    report("math_creal_cimag", creal(z) == 2.0 && cimag(z) == 3.0);
+}
+
+static void math_conj(void)
+{
+    double complex z = conj(1.0 + 2.0 * I);
+    report("math_conj", creal(z) == 1.0 && cimag(z) == -2.0);
+}
+
+static void math_cproj(void)
+{
+    double complex z = cproj(1.0 + 0.0 * I);
+    report("math_cproj", creal(z) == 1.0 && cimag(z) == 0.0);
+}
+
+static void math_float_limits(void)
+{
+    report("math_float_limits",
+           FLT_RADIX >= 2 && DBL_MANT_DIG >= 53 && FLT_MAX > 1.0f);
+}
+
+static void wchar_wcpcpy(void)
+{
+    wchar_t d[8];
+    wchar_t *e = wcpcpy(d, L"ok");
+    report("wchar_wcpcpy", e == d + 2 && wcscmp(d, L"ok") == 0);
+}
+
+static void wchar_wcpncpy(void)
+{
+    wchar_t d[8];
+    wmemset(d, L'x', 8);
+    wchar_t *e = wcpncpy(d, L"hi", 8);
+    report("wchar_wcpncpy", e == d + 2 && d[0] == L'h' && d[2] == 0);
+}
+
+static void wchar_wcsstr(void)
+{
+    const wchar_t *s = L"foobar";
+    report("wchar_wcsstr", wcsstr(s, L"oba") == s + 2);
+}
+
+static void wchar_wcstok(void)
+{
+    wchar_t buf[] = L"a:b";
+    wchar_t *save = NULL;
+    wchar_t *a = wcstok(buf, L":", &save);
+    wchar_t *b = wcstok(NULL, L":", &save);
+    report("wchar_wcstok",
+           a && wcscmp(a, L"a") == 0 && b && wcscmp(b, L"b") == 0);
+}
+
+static void wchar_wcsspn_more(void)
+{
+    report("wchar_wcsspn_more", wcsspn(L"xyz", L"xy") == 2);
+}
+
+static void wchar_wcscspn_more(void)
+{
+    report("wchar_wcscspn_more", wcscspn(L"abc", L"c") == 2);
+}
+
+static void wctype_wctype(void)
+{
+    wctype_t t = wctype("alpha");
+    report("wctype_wctype", t != (wctype_t)0 && iswctype(L'A', t));
+}
+
+static void wctype_iswalnum(void)
+{
+    report("wctype_iswalnum", iswalnum(L'9') && !iswalnum(L'!'));
+}
+
+static void wctype_iswspace(void)
+{
+    report("wctype_iswspace", iswspace(L' ') && !iswspace(L'a'));
+}
+
+static int vsscanf_helper(const char *s, const char *fmt, ...)
+{
+    va_list ap;
+    int r;
+
+    va_start(ap, fmt);
+    r = vsscanf(s, fmt, ap);
+    va_end(ap);
+    return r;
+}
+
+static void stdio_vsscanf(void)
+{
+    int a = 0, b = 0;
+    report("stdio_vsscanf",
+           vsscanf_helper("1 2", "%d %d", &a, &b) == 2 && a == 1 && b == 2);
+}
+
+static void stdio_asprintf(void)
+{
+    char *p = NULL;
+    int n = asprintf(&p, "%d", 42);
+    int ok = n == 2 && p && strcmp(p, "42") == 0;
+    free(p);
+    report("stdio_asprintf", ok);
+}
+
+static void stdio_fmemopen(void)
+{
+    char buf[16] = "hello";
+    FILE *fp = fmemopen(buf, sizeof(buf), "r");
+    char out[8] = {0};
+    int ok = 0;
+
+    if (fp) {
+        ok = fgets(out, sizeof(out), fp) != NULL && strcmp(out, "hello") == 0;
+        fclose(fp);
+    }
+    report("stdio_fmemopen", ok);
+}
+
+static void stdio_open_memstream(void)
+{
+    char *ptr = NULL;
+    size_t sz = 0;
+    FILE *fp = open_memstream(&ptr, &sz);
+    int ok = 0;
+
+    if (fp) {
+        fputs("xy", fp);
+        fflush(fp);
+        ok = sz == 2 && ptr && memcmp(ptr, "xy", 2) == 0;
+        fclose(fp);
+        free(ptr);
+    }
+    report("stdio_open_memstream", ok);
+}
+
+static void stdio_dprintf(void)
+{
+    int fd = open("/tmp/libc_dprintf", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    char buf[8] = {0};
+    int ok = 0;
+
+    if (fd >= 0) {
+        ok = dprintf(fd, "%d", 7) == 1 &&
+             lseek(fd, 0, SEEK_SET) == 0 &&
+             read(fd, buf, sizeof(buf)) == 1 && buf[0] == '7';
+        close(fd);
+        unlink("/tmp/libc_dprintf");
+    }
+    report("stdio_dprintf", ok);
+}
+
+static void stdio_getline(void)
+{
+    FILE *fp = fopen("/tmp/libc_getline", "w+");
+    char *line = NULL;
+    size_t n = 0;
+    int ok = 0;
+
+    if (fp) {
+        fputs("line1\n", fp);
+        rewind(fp);
+        ok = getline(&line, &n, fp) == 6 && line && strcmp(line, "line1\n") == 0;
+        free(line);
+        fclose(fp);
+        unlink("/tmp/libc_getline");
+    }
+    report("stdio_getline", ok);
+}
+
+static void string_memmem(void)
+{
+    const char *s = "foobar";
+    report("string_memmem", memmem(s, 6, "oba", 3) == s + 2);
+}
+
+static void string_strcasestr(void)
+{
+    const char *s = "FooBar";
+    report("string_strcasestr", strcasestr(s, "oba") == s + 2);
+}
+
+static void string_mempcpy(void)
+{
+    char d[8];
+    void *e = mempcpy(d, "ab", 2);
+    report("string_mempcpy", e == d + 2 && d[0] == 'a' && d[1] == 'b');
+}
+
+static void string_strverscmp(void)
+{
+    report("string_strverscmp",
+           strverscmp("a2", "a10") < 0 && strverscmp("a2", "a2") == 0);
+}
+
+static void string_ffsll(void)
+{
+    report("string_ffsll", ffsll(0) == 0 && ffsll(8) == 4);
+}
+
+static void string_ffsl(void)
+{
+    report("string_ffsl", ffsl(0) == 0 && ffsl(8) == 4);
+}
+
+static void ctype_tolower_table(void)
+{
+    report("ctype_tolower_table",
+           tolower('Z') == 'z' && tolower('9') == '9');
+}
+
+static void ctype_toupper_table(void)
+{
+    report("ctype_toupper_table",
+           toupper('z') == 'Z' && toupper('9') == '9');
+}
+
+static void time_timespec_get(void)
+{
+    struct timespec ts;
+    report("time_timespec_get",
+           timespec_get(&ts, TIME_UTC) == TIME_UTC && ts.tv_sec >= 0);
+}
+
+static void time_strftime_year(void)
+{
+    time_t t = 0;
+    struct tm *tm = gmtime(&t);
+    char buf[8];
+    int ok = 0;
+
+    if (tm) {
+        ok = strftime(buf, sizeof(buf), "%Y", tm) == 4 &&
+             strcmp(buf, "1970") == 0;
+    }
+    report("time_strftime_year", ok);
+}
+
+static void time_strftime_pct(void)
+{
+    time_t t = 0;
+    struct tm *tm = gmtime(&t);
+    char buf[8];
+    int ok = 0;
+
+    if (tm) {
+        ok = strftime(buf, sizeof(buf), "%%", tm) == 1 && buf[0] == '%';
+    }
+    report("time_strftime_pct", ok);
+}
+
+static int int_cmp_r(const void *a, const void *b, void *arg)
+{
+    (void)arg;
+    return *(const int *)a - *(const int *)b;
+}
+
+static void stdlib_qsort_r_probe(void)
+{
+    int a[] = {3, 1, 2};
+    qsort_r(a, 3, sizeof(int), int_cmp_r, NULL);
+    report("stdlib_qsort_r_probe", a[0] == 1 && a[1] == 2 && a[2] == 3);
+}
+
+static void stdlib_bsearch_miss(void)
+{
+    int a[] = {1, 3, 5};
+    int key = 4;
+    report("stdlib_bsearch_miss",
+           bsearch(&key, a, 3, sizeof(int), int_cmp) == NULL);
+}
+
+static void stdlib_reallocarray(void)
+{
+    void *p = reallocarray(NULL, 4, 16);
+    int ok = p != NULL;
+    free(p);
+    report("stdlib_reallocarray", ok);
+}
+
+static void stdlib_wcstol_base(void)
+{
+    wchar_t *end = NULL;
+    long v = wcstol(L"0xffz", &end, 16);
+    report("stdlib_wcstol_base", v == 255 && end && *end == L'z');
+}
+
+static void stdlib_mkstemp(void)
+{
+    char tmpl[] = "/tmp/libc_mkXXXXXX";
+    int fd = mkstemp(tmpl);
+    int ok = fd >= 0;
+    if (ok) {
+        close(fd);
+        unlink(tmpl);
+    }
+    report("stdlib_mkstemp", ok);
+}
+
+static void stdlib_mkdtemp(void)
+{
+    char tmpl[] = "/tmp/libc_mdXXXXXX";
+    char *d = mkdtemp(tmpl);
+    int ok = d != NULL;
+    if (ok) {
+        rmdir(tmpl);
+    }
+    report("stdlib_mkdtemp", ok);
+}
+
+static void unistd_swab(void)
+{
+    char in[4] = {1, 2, 3, 4};
+    char out[4] = {0};
+    swab(in, out, 4);
+    report("unistd_swab", out[0] == 2 && out[1] == 1 && out[2] == 4 && out[3] == 3);
+}
+
+static void unistd_isatty_stdio(void)
+{
+    /* Guest may or may not attach a TTY; probe call doesn't crash. */
+    int r0 = isatty(0);
+    report("unistd_isatty_stdio", r0 == 0 || r0 == 1);
+}
+
+static void unistd_confstr(void)
+{
+    char buf[64];
+    size_t n = confstr(_CS_PATH, buf, sizeof(buf));
+    report("unistd_confstr", n > 0 && buf[0] != '\0');
+}
+
+static void unistd_fpathconf(void)
+{
+    int fd = open("/tmp", O_RDONLY | O_DIRECTORY);
+    long n;
+    int ok = 0;
+
+    if (fd >= 0) {
+        n = fpathconf(fd, _PC_NAME_MAX);
+        ok = n > 0 || n == -1;
+        close(fd);
+    }
+    report("unistd_fpathconf", ok);
+}
+
 int main(void)
 {
     string_strlen();
@@ -4278,6 +4793,77 @@ int main(void)
     time_strftime_time();
     stdlib_lldiv_neg();
     stdlib_strtold();
+    math_tanf();
+    math_atanf();
+    math_asinf();
+    math_acosf();
+    math_sinhf();
+    math_coshf();
+    math_tanhf();
+    math_logf();
+    math_log10f();
+    math_expf();
+    math_expm1f();
+    math_log1pf();
+    math_fdimf();
+    math_modff();
+    math_frexpf();
+    math_ilogbf();
+    math_nextafterf();
+    math_nearbyintf();
+    math_rintf();
+    math_lroundf();
+    math_scalbnf();
+    math_erff();
+    math_erfcf();
+    math_tgammaf();
+    math_lgammaf();
+    math_j1();
+    math_y1();
+    math_jn();
+    math_yn();
+    math_cabs();
+    math_carg();
+    math_creal_cimag();
+    math_conj();
+    math_cproj();
+    math_float_limits();
+    wchar_wcpcpy();
+    wchar_wcpncpy();
+    wchar_wcsstr();
+    wchar_wcstok();
+    wchar_wcsspn_more();
+    wchar_wcscspn_more();
+    wctype_wctype();
+    wctype_iswalnum();
+    wctype_iswspace();
+    stdio_vsscanf();
+    stdio_asprintf();
+    stdio_fmemopen();
+    stdio_open_memstream();
+    stdio_dprintf();
+    stdio_getline();
+    string_memmem();
+    string_strcasestr();
+    string_mempcpy();
+    string_strverscmp();
+    string_ffsll();
+    string_ffsl();
+    ctype_tolower_table();
+    ctype_toupper_table();
+    time_timespec_get();
+    time_strftime_year();
+    time_strftime_pct();
+    stdlib_qsort_r_probe();
+    stdlib_bsearch_miss();
+    stdlib_reallocarray();
+    stdlib_wcstol_base();
+    stdlib_mkstemp();
+    stdlib_mkdtemp();
+    unistd_swab();
+    unistd_isatty_stdio();
+    unistd_confstr();
+    unistd_fpathconf();
     unistd_write();
     unistd_getpid();
     unistd_pipe();
