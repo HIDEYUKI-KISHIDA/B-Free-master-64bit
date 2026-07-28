@@ -40,12 +40,12 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 - **Updated:** 2026-07-28
 - **Desktop 本線:** W0–W3.5 + FB authority + Explorer 実用。wm smoke GREEN
-- **musl libc-test サブセット:** **334 TPASS**（round-10 +32: math/wchar/stdio/string/time/ctype）
-- **穴埋め（本ラウンド）:** round-10 純 libc 拡張（`wcsncmp` 期待値修正含む）
+- **musl libc-test サブセット:** **358 TPASS**（round-11 +24 純 libc）
+- **穴埋め（本ラウンド）:** round-11 拡張 + exit_group で親 AS 復帰＋busybox 再ロード（ポストスイート curated 再入場 PF 修正）
 - **天井（どこまで広げられるか）:**
   - **まだ伸ばせる:** 純 libc、既存 stub の組み合わせ、UDP/UNIX の浅いケース
-  - **すぐ壁:** clone スレッド、双方向 TCP 深化、フル POSIX ファイル属性、pipe/UNIX スロット枯渇、ash vfork 親 PF（スイート後・スモークは無視）
+  - **すぐ壁:** clone スレッド、双方向 TCP 深化、フル POSIX ファイル属性、pipe/UNIX スロット枯渇
   - **本セット一括:** まだ不可。curated は「穴発見用サブセット」が役割
-- **既知ノイズ:** スイート PASS 後の ash vfork 親 PF。スモークは RESULT PASS 後を無視
-- **保留:** ash vfork 親 PF 本線（スイート外）
-- **Next:** さらに天井を伸ばすか、ash vfork 親 PF。Desktop は並行可
+- **既知ノイズ:** ポストスイート PF は exit_group busybox 再入場で解消（スモーク `PASS no_panic`）
+- **保留:** ネスト fork 状態の完全保存（ash パイプライン深化）
+- **Next:** さらに天井を伸ばすか、clone/スレッド。Desktop は並行可

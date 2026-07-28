@@ -3559,6 +3559,167 @@ static void ctype_toascii(void)
     report("ctype_toascii", toascii('A' | 0x80) == 'A' && toascii('@') == '@');
 }
 
+/* --- round-11: pure libc growth (+24) --- */
+static void math_log2(void)
+{
+    report("math_log2", math_near(log2(8.0), 3.0) && math_near(log2(1.0), 0.0));
+}
+
+static void math_cbrt_neg(void)
+{
+    report("math_cbrt_neg", math_near(cbrt(-8.0), -2.0));
+}
+
+static void math_fma(void)
+{
+    report("math_fma", math_near(fma(2.0, 3.0, 4.0), 10.0));
+}
+
+static void math_nextafter(void)
+{
+    double n = nextafter(1.0, 2.0);
+    report("math_nextafter", n > 1.0 && n < 1.0000001);
+}
+
+static void math_nearbyint(void)
+{
+    report("math_nearbyint", nearbyint(2.3) == 2.0 && nearbyint(-2.3) == -2.0);
+}
+
+static void math_rint(void)
+{
+    report("math_rint", rint(2.0) == 2.0);
+}
+
+static void math_tgamma(void)
+{
+    report("math_tgamma", math_near(tgamma(5.0), 24.0));
+}
+
+static void math_lgamma(void)
+{
+    report("math_lgamma", math_near(lgamma(1.0), 0.0));
+}
+
+static void math_floorf_ceilf(void)
+{
+    report("math_floorf_ceilf", floorf(2.9f) == 2.0f && ceilf(2.1f) == 3.0f);
+}
+
+static void math_atanhf(void)
+{
+    report("math_atanhf", atanhf(0.0f) == 0.0f);
+}
+
+static void wchar_wcscasecmp(void)
+{
+    report("wchar_wcscasecmp",
+           wcscasecmp(L"Ab", L"aB") == 0 && wcscasecmp(L"a", L"b") < 0);
+}
+
+static void wchar_wcsnlen(void)
+{
+    report("wchar_wcsnlen", wcsnlen(L"abcdef", 3) == 3 && wcsnlen(L"hi", 8) == 2);
+}
+
+static void wchar_wmemset_probe(void)
+{
+    wchar_t b[4];
+    wmemset(b, L'z', 4);
+    report("wchar_wmemset_probe", b[0] == L'z' && b[3] == L'z');
+}
+
+static void wchar_wcstoul(void)
+{
+    wchar_t *end = NULL;
+    unsigned long v = wcstoul(L"99q", &end, 10);
+    report("wchar_wcstoul", v == 99UL && end && *end == L'q');
+}
+
+static void wctype_iswxdigit(void)
+{
+    report("wctype_iswxdigit", iswxdigit(L'a') && iswxdigit(L'F') && !iswxdigit(L'g'));
+}
+
+static void wctype_iswpunct(void)
+{
+    report("wctype_iswpunct", iswpunct(L'!') && !iswpunct(L'a'));
+}
+
+static void stdlib_putenv_unset(void)
+{
+    int ok = putenv((char *)"BFREE_PE=1") == 0 &&
+             getenv("BFREE_PE") != NULL &&
+             unsetenv("BFREE_PE") == 0;
+    report("stdlib_putenv_unset", ok);
+}
+
+static void stdlib_imaxdiv(void)
+{
+    imaxdiv_t d = imaxdiv(17, 5);
+    report("stdlib_imaxdiv", d.quot == 3 && d.rem == 2);
+}
+
+static void stdio_fwrite_size(void)
+{
+    FILE *fp = fopen("/tmp/libc_fwsz", "w+b");
+    char buf[4] = {1, 2, 3, 4};
+    int ok = 0;
+
+    if (fp) {
+        ok = fwrite(buf, 2, 2, fp) == 2 && ftell(fp) == 4;
+        fclose(fp);
+        unlink("/tmp/libc_fwsz");
+    }
+    report("stdio_fwrite_size", ok);
+}
+
+static void stdio_fseeko_ftello(void)
+{
+    FILE *fp = fopen("/tmp/libc_fseeko", "w+");
+    int ok = 0;
+
+    if (fp) {
+        ok = fputs("abcd", fp) >= 0 && fseeko(fp, 2, SEEK_SET) == 0 &&
+             ftello(fp) == 2;
+        fclose(fp);
+        unlink("/tmp/libc_fseeko");
+    }
+    report("stdio_fseeko_ftello", ok);
+}
+
+static void string_memrchr(void)
+{
+    const char *s = "abaca";
+    report("string_memrchr", memrchr(s, 'a', 5) == s + 4);
+}
+
+static void string_strsignal(void)
+{
+    const char *s = strsignal(9);
+    report("string_strsignal", s != NULL && s[0] != '\0');
+}
+
+static void time_asctime_r(void)
+{
+    time_t t = 0;
+    struct tm *tm = gmtime(&t);
+    char buf[64];
+    int ok = 0;
+
+    if (tm) {
+        ok = asctime_r(tm, buf) == buf && strlen(buf) > 10;
+    }
+    report("time_asctime_r", ok);
+}
+
+static void time_ctime_r(void)
+{
+    time_t t = 1;
+    char buf[64];
+    report("time_ctime_r", ctime_r(&t, buf) == buf && strlen(buf) > 10);
+}
+
 int main(void)
 {
     string_strlen();
@@ -3729,6 +3890,30 @@ int main(void)
     time_gmtime_r();
     time_localtime_r();
     ctype_toascii();
+    math_log2();
+    math_cbrt_neg();
+    math_fma();
+    math_nextafter();
+    math_nearbyint();
+    math_rint();
+    math_tgamma();
+    math_lgamma();
+    math_floorf_ceilf();
+    math_atanhf();
+    wchar_wcscasecmp();
+    wchar_wcsnlen();
+    wchar_wmemset_probe();
+    wchar_wcstoul();
+    wctype_iswxdigit();
+    wctype_iswpunct();
+    stdlib_putenv_unset();
+    stdlib_imaxdiv();
+    stdio_fwrite_size();
+    stdio_fseeko_ftello();
+    string_memrchr();
+    string_strsignal();
+    time_asctime_r();
+    time_ctime_r();
     unistd_write();
     unistd_getpid();
     unistd_pipe();
