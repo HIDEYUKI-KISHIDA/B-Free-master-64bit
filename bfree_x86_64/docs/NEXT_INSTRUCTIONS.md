@@ -40,8 +40,8 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 - **Updated:** 2026-07-28
 - **Desktop 本線:** W0–W3.5 + FB authority + Explorer 実用。wm smoke GREEN
-- **musl libc-test サブセット:** **302 TPASS**（+41 純 libc: math/wchar/stdio/string/ctype；fork 指紋チェックを非 fatal 化）
-- **穴埋め（本ラウンド）:** commit で fork+261 を固め → round-9 純 libc 拡張
+- **musl libc-test サブセット:** **334 TPASS**（round-10 +32: math/wchar/stdio/string/time/ctype）
+- **穴埋め（本ラウンド）:** round-10 純 libc 拡張（`wcsncmp` 期待値修正含む）
 - **天井（どこまで広げられるか）:**
   - **まだ伸ばせる:** 純 libc、既存 stub の組み合わせ、UDP/UNIX の浅いケース
   - **すぐ壁:** clone スレッド、双方向 TCP 深化、フル POSIX ファイル属性、pipe/UNIX スロット枯渇、ash vfork 親 PF（スイート後・スモークは無視）

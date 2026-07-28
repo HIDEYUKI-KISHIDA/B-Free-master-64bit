@@ -3329,6 +3329,236 @@ static void unistd_isatty_stderr(void)
     report("unistd_isatty_stderr", r == 0 || r == 1);
 }
 
+/* --- round-10: pure libc growth (+32) --- */
+static void math_log10_exp2(void)
+{
+    report("math_log10_exp2",
+           math_near(log10(1000.0), 3.0) && math_near(exp2(3.0), 8.0));
+}
+
+static void math_expm1_log1p(void)
+{
+    report("math_expm1_log1p",
+           math_near(expm1(0.0), 0.0) && math_near(log1p(0.0), 0.0) &&
+               math_near(log1p(1.0), 0.6931471805599453));
+}
+
+static void math_scalbn(void)
+{
+    report("math_scalbn", math_near(scalbn(1.5, 1), 3.0));
+}
+
+static void math_ilogb(void)
+{
+    report("math_ilogb", ilogb(8.0) == 3 && ilogb(1.0) == 0);
+}
+
+static void math_fdim(void)
+{
+    report("math_fdim", fdim(5.0, 3.0) == 2.0 && fdim(2.0, 5.0) == 0.0);
+}
+
+static void math_lround(void)
+{
+    report("math_lround", lround(2.6) == 3 && lround(-2.6) == -3);
+}
+
+static void math_erf(void)
+{
+    report("math_erf", math_near(erf(0.0), 0.0));
+}
+
+static void math_erfc(void)
+{
+    report("math_erfc", math_near(erfc(0.0), 1.0));
+}
+
+static void math_powf(void)
+{
+    report("math_powf", powf(2.0f, 3.0f) == 8.0f);
+}
+
+static void math_sinf_cosf(void)
+{
+    report("math_sinf_cosf", sinf(0.0f) == 0.0f && cosf(0.0f) == 1.0f);
+}
+
+static void math_fabsl(void)
+{
+    report("math_fabsl", fabsl(-5.5L) == 5.5L);
+}
+
+static void math_isfinite_probe(void)
+{
+    report("math_isfinite_probe", isfinite(1.0) && isfinite(0.0) && !isfinite(1.0 / 0.0));
+}
+
+static void wchar_wcsncmp(void)
+{
+    report("wchar_wcsncmp",
+           wcsncmp(L"ab", L"ab", 2) == 0 && wcsncmp(L"ab", L"ac", 2) < 0);
+}
+
+static void wchar_wcspbrk(void)
+{
+    const wchar_t *s = L"hello";
+    report("wchar_wcspbrk", wcspbrk(s, L"aeiou") == s + 1);
+}
+
+static void wchar_wcsspn(void)
+{
+    report("wchar_wcsspn", wcsspn(L"123abc", L"0123456789") == 3);
+}
+
+static void wchar_wcscspn(void)
+{
+    report("wchar_wcscspn", wcscspn(L"abc123", L"0123456789") == 3);
+}
+
+static void wchar_wcstol(void)
+{
+    wchar_t *end = NULL;
+    long v = wcstol(L"42x", &end, 10);
+    report("wchar_wcstol", v == 42 && end && *end == L'x');
+}
+
+static void wchar_wcstod(void)
+{
+    wchar_t *end = NULL;
+    double v = wcstod(L"3.5x", &end);
+    report("wchar_wcstod", math_near(v, 3.5) && end && *end == L'x');
+}
+
+static void wchar_wcsncat(void)
+{
+    wchar_t d[8] = L"ab";
+    wcsncat(d, L"cdefgh", 2);
+    report("wchar_wcsncat", wcscmp(d, L"abcd") == 0);
+}
+
+static void wctype_iswlower(void)
+{
+    report("wctype_iswlower", iswlower(L'a') && !iswlower(L'A'));
+}
+
+static void wctype_iswupper(void)
+{
+    report("wctype_iswupper", iswupper(L'Z') && !iswupper(L'z'));
+}
+
+static void stdlib_rand_srand(void)
+{
+    unsigned a, b;
+
+    srand(12345u);
+    a = (unsigned)rand();
+    srand(12345u);
+    b = (unsigned)rand();
+    report("stdlib_rand_srand", a == b && a != 0);
+}
+
+static void stdlib_aligned_alloc(void)
+{
+    void *p = aligned_alloc(64, 128);
+    int ok = p != NULL && (((uintptr_t)p) & 63U) == 0;
+    free(p);
+    report("stdlib_aligned_alloc", ok);
+}
+
+static void stdlib_random(void)
+{
+    long a, b;
+
+    srandom(99u);
+    a = random();
+    srandom(99u);
+    b = random();
+    report("stdlib_random", a == b);
+}
+
+static void stdio_fileno(void)
+{
+    FILE *fp = fopen("/tmp/libc_fileno", "w+");
+    int ok = 0;
+
+    if (fp) {
+        ok = fileno(fp) >= 0;
+        fclose(fp);
+        unlink("/tmp/libc_fileno");
+    }
+    report("stdio_fileno", ok);
+}
+
+static void stdio_freopen(void)
+{
+    FILE *fp = fopen("/tmp/libc_fre_a", "w");
+    int ok = 0;
+
+    if (fp) {
+        fputs("x", fp);
+        fclose(fp);
+        fp = fopen("/tmp/libc_fre_a", "r");
+        if (fp) {
+            FILE *fp2 = freopen("/tmp/libc_fre_b", "w+", fp);
+            ok = fp2 != NULL && fputc('y', fp2) == 'y';
+            if (fp2) {
+                fclose(fp2);
+            }
+            unlink("/tmp/libc_fre_a");
+            unlink("/tmp/libc_fre_b");
+        }
+    }
+    report("stdio_freopen", ok);
+}
+
+static void stdio_remove(void)
+{
+    int fd = open("/tmp/libc_remove_me", O_RDWR | O_CREAT | O_TRUNC, 0644);
+    int ok = 0;
+
+    if (fd >= 0) {
+        close(fd);
+        ok = remove("/tmp/libc_remove_me") == 0 &&
+             access("/tmp/libc_remove_me", F_OK) != 0;
+    }
+    report("stdio_remove", ok);
+}
+
+static void string_explicit_bzero(void)
+{
+    char b[4] = {1, 2, 3, 4};
+    explicit_bzero(b, sizeof(b));
+    report("string_explicit_bzero",
+           b[0] == 0 && b[1] == 0 && b[2] == 0 && b[3] == 0);
+}
+
+static void string_strchrnul(void)
+{
+    const char *s = "abc";
+    report("string_strchrnul", strchrnul(s, 'z') == s + 3);
+}
+
+static void time_gmtime_r(void)
+{
+    time_t t = 0;
+    struct tm tm;
+    struct tm *p = gmtime_r(&t, &tm);
+    report("time_gmtime_r", p == &tm && tm.tm_year >= 70);
+}
+
+static void time_localtime_r(void)
+{
+    time_t t = 100000;
+    struct tm tm;
+    struct tm *p = localtime_r(&t, &tm);
+    report("time_localtime_r", p == &tm);
+}
+
+static void ctype_toascii(void)
+{
+    report("ctype_toascii", toascii('A' | 0x80) == 'A' && toascii('@') == '@');
+}
+
 int main(void)
 {
     string_strlen();
@@ -3467,6 +3697,38 @@ int main(void)
     time_strftime_weekday();
     unistd_getpagesize_match();
     unistd_isatty_stderr();
+    math_log10_exp2();
+    math_expm1_log1p();
+    math_scalbn();
+    math_ilogb();
+    math_fdim();
+    math_lround();
+    math_erf();
+    math_erfc();
+    math_powf();
+    math_sinf_cosf();
+    math_fabsl();
+    math_isfinite_probe();
+    wchar_wcsncmp();
+    wchar_wcspbrk();
+    wchar_wcsspn();
+    wchar_wcscspn();
+    wchar_wcstol();
+    wchar_wcstod();
+    wchar_wcsncat();
+    wctype_iswlower();
+    wctype_iswupper();
+    stdlib_rand_srand();
+    stdlib_aligned_alloc();
+    stdlib_random();
+    stdio_fileno();
+    stdio_freopen();
+    stdio_remove();
+    string_explicit_bzero();
+    string_strchrnul();
+    time_gmtime_r();
+    time_localtime_r();
+    ctype_toascii();
     unistd_write();
     unistd_getpid();
     unistd_pipe();
