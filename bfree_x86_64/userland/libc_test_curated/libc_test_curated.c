@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <libgen.h>
 #include <limits.h>
 #include <math.h>
 #include <netinet/in.h>
@@ -3720,6 +3721,171 @@ static void time_ctime_r(void)
     report("time_ctime_r", ctime_r(&t, buf) == buf && strlen(buf) > 10);
 }
 
+/* --- round-12: pure libc growth (+24) --- */
+static void math_logb(void)
+{
+    report("math_logb", logb(8.0) == 3.0 && logb(1.0) == 0.0);
+}
+
+static void math_significand(void)
+{
+    /* significand is glibc; use frexp mantissa instead for portability. */
+    int e = 0;
+    double m = frexp(12.0, &e);
+    report("math_significand", math_near(m, 0.75) && e == 4);
+}
+
+static void math_j0(void)
+{
+    report("math_j0", math_near(j0(0.0), 1.0));
+}
+
+static void math_y0(void)
+{
+    /* y0(1) is finite negative-ish; just require finite. */
+    double v = y0(1.0);
+    report("math_y0", isfinite(v));
+}
+
+static void math_acosh(void)
+{
+    report("math_acosh", math_near(acosh(1.0), 0.0));
+}
+
+static void math_asinh(void)
+{
+    report("math_asinh", math_near(asinh(0.0), 0.0));
+}
+
+static void math_fmodf(void)
+{
+    report("math_fmodf", fmodf(5.5f, 2.0f) == 1.5f);
+}
+
+static void math_truncf(void)
+{
+    report("math_truncf", truncf(3.9f) == 3.0f && truncf(-3.9f) == -3.0f);
+}
+
+static void math_roundf(void)
+{
+    report("math_roundf", roundf(2.5f) == 3.0f && roundf(2.4f) == 2.0f);
+}
+
+static void math_isnanf(void)
+{
+    report("math_isnanf", isnan(nanf("")) && !isnan(1.0f));
+}
+
+static void wchar_wcscoll(void)
+{
+    report("wchar_wcscoll",
+           wcscoll(L"a", L"a") == 0 && wcscoll(L"a", L"b") < 0);
+}
+
+static void wchar_wcsxfrm(void)
+{
+    wchar_t buf[32];
+    size_t n = wcsxfrm(buf, L"hi", 32);
+    report("wchar_wcsxfrm", n < 32 && buf[0] != 0);
+}
+
+static void wchar_wmemchr(void)
+{
+    const wchar_t s[] = L"hello";
+    report("wchar_wmemchr", wmemchr(s, L'e', 5) == s + 1);
+}
+
+static void wchar_wcstoll(void)
+{
+    wchar_t *end = NULL;
+    long long v = wcstoll(L"-99x", &end, 10);
+    report("wchar_wcstoll", v == -99LL && end && *end == L'x');
+}
+
+static void wctype_iswgraph(void)
+{
+    report("wctype_iswgraph", iswgraph(L'A') && !iswgraph(L' '));
+}
+
+static void wctype_iswblank(void)
+{
+    report("wctype_iswblank", iswblank(L' ') && iswblank(L'\t') && !iswblank(L'\n'));
+}
+
+static void stdio_fgetpos_fsetpos(void)
+{
+    FILE *fp = fopen("/tmp/libc_fpos", "w+");
+    fpos_t pos;
+    int ok = 0;
+
+    if (fp) {
+        ok = fputs("abcd", fp) >= 0 && fgetpos(fp, &pos) == 0 &&
+             fseek(fp, 0, SEEK_SET) == 0 && fsetpos(fp, &pos) == 0 &&
+             ftell(fp) == 4;
+        fclose(fp);
+        unlink("/tmp/libc_fpos");
+    }
+    report("stdio_fgetpos_fsetpos", ok);
+}
+
+static void stdio_snprintf_trunc(void)
+{
+    char buf[4];
+    int n = snprintf(buf, sizeof(buf), "abcdef");
+    report("stdio_snprintf_trunc", n == 6 && strcmp(buf, "abc") == 0);
+}
+
+static void string_strtok_r(void)
+{
+    char buf[] = "a,b,c";
+    char *save = NULL;
+    char *a = strtok_r(buf, ",", &save);
+    char *b = strtok_r(NULL, ",", &save);
+    report("string_strtok_r",
+           a && strcmp(a, "a") == 0 && b && strcmp(b, "b") == 0);
+}
+
+static void string_basename_dirname(void)
+{
+    char p1[] = "/tmp/foo";
+    char p2[] = "/tmp/bar";
+    char *b = basename(p1);
+    char *d = dirname(p2);
+    report("string_basename_dirname",
+           b && strcmp(b, "foo") == 0 && d && strcmp(d, "/tmp") == 0);
+}
+
+static void ctype_isascii(void)
+{
+    report("ctype_isascii", isascii('Z') && !isascii(0x80));
+}
+
+static void time_strftime_iso(void)
+{
+    time_t t = 0;
+    struct tm *tm = gmtime(&t);
+    char buf[32];
+    int ok = 0;
+
+    if (tm) {
+        ok = strftime(buf, sizeof(buf), "%Y%m%d", tm) == 8 &&
+             strcmp(buf, "19700101") == 0;
+    }
+    report("time_strftime_iso", ok);
+}
+
+static void stdlib_abs_edge(void)
+{
+    report("stdlib_abs_edge", abs(0) == 0 && abs(INT_MAX) == INT_MAX);
+}
+
+static void stdlib_div_neg(void)
+{
+    div_t d = div(-17, 5);
+    report("stdlib_div_neg", d.quot == -3 && d.rem == -2);
+}
+
 int main(void)
 {
     string_strlen();
@@ -3914,6 +4080,30 @@ int main(void)
     string_strsignal();
     time_asctime_r();
     time_ctime_r();
+    math_logb();
+    math_significand();
+    math_j0();
+    math_y0();
+    math_acosh();
+    math_asinh();
+    math_fmodf();
+    math_truncf();
+    math_roundf();
+    math_isnanf();
+    wchar_wcscoll();
+    wchar_wcsxfrm();
+    wchar_wmemchr();
+    wchar_wcstoll();
+    wctype_iswgraph();
+    wctype_iswblank();
+    stdio_fgetpos_fsetpos();
+    stdio_snprintf_trunc();
+    string_strtok_r();
+    string_basename_dirname();
+    ctype_isascii();
+    time_strftime_iso();
+    stdlib_abs_edge();
+    stdlib_div_neg();
     unistd_write();
     unistd_getpid();
     unistd_pipe();
