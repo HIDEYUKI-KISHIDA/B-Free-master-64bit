@@ -3886,6 +3886,156 @@ static void stdlib_div_neg(void)
     report("stdlib_div_neg", d.quot == -3 && d.rem == -2);
 }
 
+/* --- round-13: pure libc growth (+24) --- */
+static void math_hypotf(void)
+{
+    report("math_hypotf", hypotf(3.0f, 4.0f) == 5.0f);
+}
+
+static void math_cbrtf(void)
+{
+    report("math_cbrtf", cbrtf(27.0f) == 3.0f);
+}
+
+static void math_log2f(void)
+{
+    report("math_log2f", log2f(8.0f) == 3.0f);
+}
+
+static void math_exp2f(void)
+{
+    report("math_exp2f", exp2f(3.0f) == 8.0f);
+}
+
+static void math_fminf_fmaxf(void)
+{
+    report("math_fminf_fmaxf", fminf(1.0f, 2.0f) == 1.0f && fmaxf(1.0f, 2.0f) == 2.0f);
+}
+
+static void math_copysignf(void)
+{
+    report("math_copysignf", copysignf(1.0f, -2.0f) == -1.0f);
+}
+
+static void math_remainderf(void)
+{
+    float r = remainderf(5.0f, 3.0f);
+    report("math_remainderf", r == -1.0f || r == 2.0f);
+}
+
+static void math_ldexpf(void)
+{
+    report("math_ldexpf", ldexpf(1.5f, 1) == 3.0f);
+}
+
+static void math_isinf_probe(void)
+{
+    report("math_isinf_probe", isinf(1.0 / 0.0) && !isinf(1.0));
+}
+
+static void math_signbit(void)
+{
+    report("math_signbit", signbit(-1.0) && !signbit(1.0));
+}
+
+static void wchar_wcsncasecmp(void)
+{
+    report("wchar_wcsncasecmp",
+           wcsncasecmp(L"AB", L"ab", 2) == 0 && wcsncasecmp(L"a", L"b", 1) < 0);
+}
+
+static void wchar_wcstoull(void)
+{
+    wchar_t *end = NULL;
+    unsigned long long v = wcstoull(L"99q", &end, 10);
+    report("wchar_wcstoull", v == 99ULL && end && *end == L'q');
+}
+
+static void wchar_wcsdup(void)
+{
+    wchar_t *p = wcsdup(L"xy");
+    int ok = p && wcscmp(p, L"xy") == 0;
+    free(p);
+    report("wchar_wcsdup", ok);
+}
+
+static void wchar_wcswidth(void)
+{
+    report("wchar_wcswidth", wcswidth(L"ab", 2) == 2);
+}
+
+static void wctype_iswcntrl(void)
+{
+    report("wctype_iswcntrl", iswcntrl(L'\n') && !iswcntrl(L'A'));
+}
+
+static void wctype_towctrans(void)
+{
+    wctrans_t t = wctrans("tolower");
+    report("wctype_towctrans",
+           t != (wctrans_t)0 && towctrans(L'B', t) == L'b');
+}
+
+static void stdio_sscanf_float(void)
+{
+    double v = 0;
+    report("stdio_sscanf_float",
+           sscanf("3.5", "%lf", &v) == 1 && math_near(v, 3.5));
+}
+
+static void stdio_sprintf_hex(void)
+{
+    char buf[16];
+    int n = sprintf(buf, "%x", 255);
+    report("stdio_sprintf_hex", n == 2 && strcmp(buf, "ff") == 0);
+}
+
+static void string_strlcpy(void)
+{
+    char d[4];
+    size_t n = strlcpy(d, "abcdef", sizeof(d));
+    report("string_strlcpy", n == 6 && strcmp(d, "abc") == 0);
+}
+
+static void string_strlcat(void)
+{
+    char d[8] = "ab";
+    size_t n = strlcat(d, "cdef", sizeof(d));
+    report("string_strlcat", n == 6 && strcmp(d, "abcdef") == 0);
+}
+
+static void ctype_ispunct_more(void)
+{
+    report("ctype_ispunct_more", ispunct('.') && ispunct(',') && !ispunct('0'));
+}
+
+static void time_strftime_time(void)
+{
+    time_t t = 0;
+    struct tm *tm = gmtime(&t);
+    char buf[16];
+    int ok = 0;
+
+    if (tm) {
+        ok = strftime(buf, sizeof(buf), "%H:%M:%S", tm) == 8 &&
+             strcmp(buf, "00:00:00") == 0;
+    }
+    report("time_strftime_time", ok);
+}
+
+static void stdlib_lldiv_neg(void)
+{
+    lldiv_t d = lldiv(-17LL, 5LL);
+    report("stdlib_lldiv_neg", d.quot == -3 && d.rem == -2);
+}
+
+static void stdlib_strtold(void)
+{
+    char *end = NULL;
+    long double v = strtold("2.5x", &end);
+    report("stdlib_strtold", v == 2.5L && end && *end == 'x');
+}
+
 int main(void)
 {
     string_strlen();
@@ -4104,6 +4254,30 @@ int main(void)
     time_strftime_iso();
     stdlib_abs_edge();
     stdlib_div_neg();
+    math_hypotf();
+    math_cbrtf();
+    math_log2f();
+    math_exp2f();
+    math_fminf_fmaxf();
+    math_copysignf();
+    math_remainderf();
+    math_ldexpf();
+    math_isinf_probe();
+    math_signbit();
+    wchar_wcsncasecmp();
+    wchar_wcstoull();
+    wchar_wcsdup();
+    wchar_wcswidth();
+    wctype_iswcntrl();
+    wctype_towctrans();
+    stdio_sscanf_float();
+    stdio_sprintf_hex();
+    string_strlcpy();
+    string_strlcat();
+    ctype_ispunct_more();
+    time_strftime_time();
+    stdlib_lldiv_neg();
+    stdlib_strtold();
     unistd_write();
     unistd_getpid();
     unistd_pipe();
