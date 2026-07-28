@@ -2399,15 +2399,14 @@ static void sys_sigaltstack(void)
 
 static void sys_membarrier(void)
 {
-    report("sys_membarrier",
-           syscall(SYS_membarrier, 0, 0) >= 0 || errno == ENOSYS || errno == EINVAL);
+    /* Kernel stub returns 0 (empty success). Do not treat ENOSYS as PASS. */
+    report("sys_membarrier", syscall(SYS_membarrier, 0, 0) >= 0);
 }
 
 static void sys_rseq_query(void)
 {
-    /* Registration may soft-succeed; unregister with flags=1 is best-effort. */
-    long rc = syscall(SYS_rseq, (void *)0, 0L, 0L, 0L);
-    report("sys_rseq_query", rc == 0 || rc == -1);
+    /* Kernel stub returns 0. Require real success — no soft fail PASS. */
+    report("sys_rseq_query", syscall(SYS_rseq, (void *)0, 0L, 0L, 0L) == 0);
 }
 
 static void sys_setuid_getuid(void)
