@@ -34,14 +34,20 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 ## 常設方針（エージェント用・スマホでは触らなくてよい）
 
 **正本:** `C:\Users\h_kis\Desktop\B-Free-master`（詳細: `docs/CANONICAL.md`）。`J:\B-Free-master` は古いコピー・使わない。
-本線: `work/posix-holes-redo`。**B1→B2→B3 ABI 完了** + **Desktop 本線 GREEN（W3.5 + QML ready hybrid）**。
+本線: `work/posix-holes-redo`。**実用 Desktop = FB 画素権威**（W3.5 hybrid）。SG／DesktopShell 本読は別トラック。
 
 ## 現在の状態（エージェントが更新）
 
 - **Updated:** 2026-07-28
-- **Phase5 (B1):** sticky-fork／waitall；SIGCHLD CATCH+restorer；SIGPIPE；seq-fork；NOFORK_ALL=0。`phase3` **ALL PASS**
-- **Phase6 (B2):** mremap／membarrier／rseq；MAP_SHARED；`/musl_hello.elf`
-- **B3:** epoll←timerfd；poll/eventfd 既存；socket は B4 方式
-- **Desktop 本線（B3c）:** `QML ready (hybrid stack)` + W0–W3.5 + FB 画素権威。Smoke KEY: processEvents…w35 + **qml_ready** + start/wm + no_panic
-- **ブロッカー 1:** `g_w3_sg_pixels=1` および attach 後 Quick 幾何 sync は早期 PF（CR2 可変）。host `DesktopShell.qml` 本読み込みは TypeCompiler hang 歴あり → **次の単独課題**
-- **Next:** 安全な SG 画素権威（または DesktopShell 本読）を **単独** で掘る。FAT32／AHCI／futex 深化は後段。
+- **Desktop 本線:** W0–W3.5 + FB authority + Explorer 実用。wm smoke GREEN
+- **musl libc-test サブセット:** **261 TPASS**（純 libc 拡張 + 実 `fork`+`waitpid`）
+- **穴埋め（本ラウンド）:** Phase1 純 libc → Phase2 fork PF 修正
+  - `exit_from_fork`: wait 完了を mode-2 + status/reap、親 PT を強制復帰、wait 後は SIGCHLD pending を落とす
+  - curated `proc_fork_wait` を実 `fork`/`waitpid`/`WEXITSTATUS==42` に復帰
+- **天井（どこまで広げられるか）:**
+  - **まだ伸ばせる:** 純 libc、既存 stub の組み合わせ、UDP/UNIX の浅いケース
+  - **すぐ壁:** clone スレッド、双方向 TCP 深化、フル POSIX ファイル属性、pipe/UNIX スロット枯渇、ash vfork 親 PF（スイート後・スモークは無視）
+  - **本セット一括:** まだ不可。curated は「穴発見用サブセット」が役割
+- **既知ノイズ:** スイート PASS 後の ash vfork 親 PF。スモークは RESULT PASS 後を無視
+- **保留:** ash vfork 親 PF 本線（スイート外）
+- **Next:** 天井までさらに広げるか、ash vfork 親 PF。Desktop は並行可

@@ -317,7 +317,7 @@ static int g_sigalt_disable = 1;
 #endif
 #ifndef BFREE_UNIX_SLOTS
 #define BFREE_LINUX_AF_UNIX 1
-#define BFREE_UNIX_SLOTS 8
+#define BFREE_UNIX_SLOTS 16
 #define BFREE_UNIX_FD_BASE 0x3900
 typedef struct {
     int used;
@@ -1272,6 +1272,11 @@ static long bfree_guest_exit_from_fork(long status)
     size_t i;
 
     int as_copy = g_guest_fork_was_as_copy;
+    /* Capture before exit_restore_as clears parent_pt / has_private_as. */
+    page_table_t *resume_pt = bfree_process_parent_pt();
+    if (!resume_pt && knl_current_task) {
+        resume_pt = (page_table_t *)knl_current_task->page_table_base;
+    }
 
     bfree_process_exit_child((int)status);
     g_guest_fork_active = 0;
@@ -1325,31 +1330,80 @@ static long bfree_guest_exit_from_fork(long status)
      * Parent may have been mid-syscall (pipe write/wait) when it yielded to the
      * child. publish_child_resume overwrote fork_saved_* with the child frame;
      * restore the frozen parent frame before FORK_PARENT sysret.
+     *
+     * Mid-waitpid must complete as mode-2 (post-syscall RIP + wait result):
+     * yield_to_child arms mode-1 (restart), but child exit clobbers RDI/RSI so
+     * a restart is unsafe. Reap + write *status here, then arm mode-2.
      */
-    if (as_copy && g_coop_parent_started) {
-        bfree_coop_publish_parent_resume();
-        if (g_coop_parent_resume_mode == 2) {
-            g_bfree_fork_parent_ret = g_coop_parent_resume_rax;
-            g_coop_parent_resume_mode = 0;
-        } else {
-            g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
-            g_coop_parent_resume_mode = 0;
+    {
+        int parent_waiting =
+            (g_coop_parent_in_wait || g_guest_wait_status_ptr != 0) ? 1 : 0;
+        int st = 0;
+        long wr = 0;
+
+        /* Ensure status write hits the parent's stack pages. */
+        if (resume_pt && knl_current_task) {
+            knl_current_task->page_table_base = resume_pt;
+            __asm__ volatile("mov %0, %%cr3" :: "r"(resume_pt) : "memory");
         }
-    } else {
-        g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
-        g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
-        g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
-        g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+
+        if (parent_waiting) {
+            wr = bfree_process_wait4(
+                g_guest_fork_pid > 0 ? (long)g_guest_fork_pid : -1L, &st, 0);
+            if (g_guest_wait_status_ptr != 0) {
+                /* Stack slot from waitpid; do not depend on walk during AS churn. */
+                *(int *)(uintptr_t)g_guest_wait_status_ptr =
+                    (wr > 0) ? st : (((int)(status & 0xff)) << 8);
+            }
+            uart_puts("[VFORK] wait reap wr=");
+            uart_puthex64((uint64_t)(unsigned long)wr);
+            uart_puts(" st=");
+            uart_puthex64((uint64_t)(unsigned)(unsigned int)st);
+            uart_puts("\n");
+        }
+
+        if (as_copy && g_coop_parent_started) {
+            bfree_coop_publish_parent_resume();
+            if (parent_waiting) {
+                g_coop_parent_resume_rax =
+                    (uint64_t)(wr > 0 ? wr : (long)g_guest_fork_pid);
+                g_coop_parent_resume_mode = 2;
+            }
+            bfree_coop_arm_parent_resume();
+        } else {
+            g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
+            g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
+            g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
+            g_bfree_fork_parent_ret =
+                parent_waiting && wr > 0
+                    ? (uint64_t)wr
+                    : (uint64_t)(long)g_guest_fork_pid;
+        }
+        uart_puts("[VFORK] parent resume rip=");
+        uart_puthex64(g_bfree_fork_saved_rcx);
+        uart_puts(" rsp=");
+        uart_puthex64(g_bfree_fork_saved_rsp);
+        uart_puts(" rax=");
+        uart_puthex64(g_bfree_fork_parent_ret);
+        uart_puts(" wsp=");
+        uart_puthex64((uint64_t)(unsigned long)g_guest_wait_status_ptr);
+        uart_puts(" fs=");
+        uart_puthex64(g_guest_fork_saved_fsbase);
+        uart_puts(" pt=");
+        uart_puthex64((uint64_t)(uintptr_t)resume_pt);
+        uart_puts("\n");
     }
-    uart_puts("[VFORK] parent resume rip=");
-    uart_puthex64(g_bfree_fork_saved_rcx);
-    uart_puts(" rsp=");
-    uart_puthex64(g_bfree_fork_saved_rsp);
-    uart_puts(" rax=");
-    uart_puthex64(g_bfree_fork_parent_ret);
-    uart_puts(" fs=");
-    uart_puthex64(g_guest_fork_saved_fsbase);
-    uart_puts("\n");
+    /* Force parent AS: exit path / reap must not leave TCB on task_page_tables. */
+    if (resume_pt && knl_current_task) {
+        knl_current_task->page_table_base = resume_pt;
+        __asm__ volatile("mov %0, %%cr3" :: "r"(resume_pt) : "memory");
+    }
+    g_bfree_sysret_exec_cr3 = 0;
+    /*
+     * Parent completed wait via FORK_PARENT: drop SIGCHLD so a stale CATCH
+     * (bad sa_handler) cannot fire on the next normal syscall (printf).
+     */
+    g_guest_sig_pending &= ~(1ULL << 16); /* SIGCHLD = 17 */
     g_coop_parent_started = 0;
     g_coop_parent_in_wait = 0;
     g_guest_wait_status_ptr = 0;
@@ -2346,6 +2400,33 @@ static long sys_linux_madvise(long addr, long length, long advice)
     return 0;
 }
 
+/* Linux 27: mincore — report pages present (guest anon/vfile always "in core"). */
+static long sys_linux_mincore(long addr, long length, long vec)
+{
+    size_t pages;
+    size_t i;
+    uint8_t *out;
+
+    if (length < 0) {
+        return -22;
+    }
+    if (vec == 0 || !bfree_user_ptr_mapped(vec)) {
+        return -14;
+    }
+    if (addr != 0 && !bfree_user_vaddr_mapped((uint64_t)(uintptr_t)addr)) {
+        return -12; /* ENOMEM for unmapped start — soft */
+    }
+    pages = ((size_t)length + 4095U) / 4096U;
+    if (pages == 0) {
+        pages = 1;
+    }
+    out = (uint8_t *)(uintptr_t)vec;
+    for (i = 0; i < pages; ++i) {
+        out[i] = 1;
+    }
+    return 0;
+}
+
 /* Linux 25: mremap — grow/shrink anonymous guest heap mapping (no move). */
 static long sys_linux_mremap(long old_addr, long old_size, long new_size, long flags,
                              long new_addr)
@@ -2768,6 +2849,31 @@ static bfree_guest_pipe_slot_t *bfree_guest_pipe_slot_from_fd(int fd)
     return &g_guest_pipes[slot];
 }
 
+/* MSG_PEEK: copy without draining the pipe buffer. */
+static long bfree_guest_pipe_peek(int fd, long buf, long count)
+{
+    bfree_guest_pipe_slot_t *ps = bfree_guest_pipe_slot_from_fd(fd);
+    uint8_t *dst;
+    size_t n;
+    size_t i;
+
+    if (!ps || buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    if (ps->len == 0) {
+        return ps->wr_open <= 0 ? 0 : -11;
+    }
+    dst = (uint8_t *)(uintptr_t)buf;
+    n = (size_t)count;
+    if (n > ps->len) {
+        n = ps->len;
+    }
+    for (i = 0; i < n; ++i) {
+        dst[i] = ps->buf[i];
+    }
+    return (long)n;
+}
+
 static void bfree_guest_pipe_ref(int resolved, int delta)
 {
     int slot;
@@ -2874,7 +2980,7 @@ static int bfree_guest_eventfd_index(int fd)
 #define BFREE_GUEST_GROUP_FD        0x3704
 #define BFREE_GUEST_PROFILE_FD      0x3705
 #define BFREE_GUEST_BUSYBOX_FD      0x3706
-#define BFREE_GUEST_VFILE_SLOTS     16
+#define BFREE_GUEST_VFILE_SLOTS     64
 #define BFREE_GUEST_VFILE_SIZE      16384
 #define BFREE_GUEST_VFILE_FD_BASE   0x3710
 #define BFREE_GUEST_ROOT_DIR_FD     0x3720
@@ -2908,7 +3014,7 @@ static int bfree_guest_eventfd_index(int fd)
 #define BFREE_LINUX_O_CLOEXEC       02000000
 #define BFREE_LINUX_O_NONBLOCK      04000
 #define BFREE_LINUX_FD_CLOEXEC      1
-#define BFREE_LINUX_O_DIRECTORY     040000
+#define BFREE_LINUX_O_DIRECTORY     0200000
 
 
 typedef struct {
@@ -3191,6 +3297,7 @@ static int bfree_guest_fd_publish(int target)
     for (i = start; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
         if (g_guest_fd_target[i] < 0 && g_guest_fd_dup_save[i] < 0) {
             g_guest_fd_target[i] = target;
+            g_guest_fd_cloexec[i] = 0;
             return i;
         }
     }
@@ -4312,13 +4419,65 @@ static const char g_guest_busybox_exe_path[] = "/busybox.elf";
 static size_t g_guest_busybox_off;
 
 static size_t g_guest_memfd_size;
+static unsigned g_guest_memfd_seq;
 
 static long sys_linux_memfd_create(long name_ptr, long flags)
 {
+    char vname[48];
+    const char *tag = "mfd";
+    size_t i = 0;
+    int target;
+    bfree_guest_vfile_t *dir;
+    unsigned seq;
+
     (void)name_ptr;
     (void)flags;
+    seq = g_guest_memfd_seq++;
+    /* vfile name: memfd/<seq> under /tmp namespace */
+    vname[0] = 'm';
+    vname[1] = 'e';
+    vname[2] = 'm';
+    vname[3] = 'f';
+    vname[4] = 'd';
+    vname[5] = '/';
+    {
+        char num[16];
+        size_t n = 0;
+        unsigned v = seq;
+
+        if (v == 0U) {
+            num[n++] = '0';
+        } else {
+            while (v > 0U && n < sizeof(num)) {
+                num[n++] = (char)('0' + (v % 10U));
+                v /= 10U;
+            }
+        }
+        while (n > 0U && i + 7U < sizeof(vname)) {
+            vname[6 + i] = num[--n];
+            ++i;
+        }
+    }
+    vname[6 + i] = '\0';
+    (void)tag;
+
+    dir = bfree_guest_vfile_find_by_name("memfd");
+    if (!dir) {
+        int dfd = bfree_guest_vfile_alloc_slot("memfd", 1);
+        if (dfd < 0) {
+            return dfd;
+        }
+        dir = bfree_guest_vfile_from_fd(dfd);
+        if (dir) {
+            dir->is_dir = 1;
+        }
+    }
+    target = bfree_guest_vfile_alloc_slot(vname, 1);
+    if (target < 0) {
+        return target;
+    }
     g_guest_memfd_size = 0;
-    return (long)BFREE_GUEST_MEMFD_FD;
+    return bfree_guest_vfile_publish_open(target, 2 /* O_RDWR */, 0);
 }
 
 static long sys_linux_ftruncate(long fd, long length)
@@ -4358,6 +4517,66 @@ static long sys_linux_ftruncate(long fd, long length)
         return 0;
     }
     return 0;
+}
+
+static long sys_linux_truncate(long path_ptr, long length)
+{
+    char path[192];
+    char vname[64];
+    bfree_guest_vfile_t *vf;
+    long path_err;
+    size_t new_len;
+
+    if (length < 0) {
+        return -22;
+    }
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    path_err = bfree_guest_path_at(BFREE_LINUX_AT_FDCWD, path, sizeof(path));
+    if (path_err != 0) {
+        return path_err;
+    }
+    if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) || vname[0] == '\0') {
+        return -30; /* EROFS outside /tmp */
+    }
+    vf = bfree_guest_vfile_find_by_name(vname);
+    if (!vf || vf->orphaned) {
+        return -2;
+    }
+    if (vf->is_dir) {
+        return -21;
+    }
+    if (vf->is_symlink) {
+        return -22;
+    }
+    new_len = (size_t)(unsigned long)length;
+    if (new_len > BFREE_GUEST_VFILE_SIZE) {
+        return -28;
+    }
+    if (new_len > vf->len) {
+        size_t i;
+
+        for (i = vf->len; i < new_len; ++i) {
+            vf->data[i] = 0;
+        }
+    }
+    vf->len = new_len;
+    if (vf->pos > vf->len) {
+        vf->pos = vf->len;
+    }
+    bfree_persist_maybe_flush(vf);
+    return 0;
+}
+
+static unsigned g_guest_umask = 022;
+
+static long sys_linux_umask(long mask)
+{
+    unsigned old = g_guest_umask;
+
+    g_guest_umask = (unsigned)mask & 0777U;
+    return (long)old;
 }
 
 static const char g_guest_proc_maps_desktop[] =
@@ -4789,10 +5008,42 @@ static long sys_linux_fstatfs(long fd, long buf)
 
 static long sys_linux_prlimit64(long pid, long resource, long new_limit, long old_limit)
 {
+    typedef struct {
+        uint64_t rlim_cur;
+        uint64_t rlim_max;
+    } bfree_rlimit64_t;
+    bfree_rlimit64_t soft;
+    uint8_t *dst;
+    const uint8_t *src;
+    size_t i;
+
     (void)pid;
     (void)resource;
-    (void)new_limit;
-    (void)old_limit;
+    soft.rlim_cur = 1024;
+    soft.rlim_max = 4096;
+    if (resource == 3) { /* RLIMIT_STACK */
+        soft.rlim_cur = 8ULL * 1024ULL * 1024ULL;
+        soft.rlim_max = 16ULL * 1024ULL * 1024ULL;
+    } else if (resource == 7) { /* RLIMIT_NOFILE */
+        soft.rlim_cur = 1024;
+        soft.rlim_max = 4096;
+    }
+    if (old_limit != 0) {
+        if (!bfree_user_ptr_mapped(old_limit)) {
+            return -14;
+        }
+        dst = (uint8_t *)(uintptr_t)old_limit;
+        src = (const uint8_t *)&soft;
+        for (i = 0; i < sizeof(soft); ++i) {
+            dst[i] = src[i];
+        }
+    }
+    if (new_limit != 0) {
+        if (!bfree_user_ptr_mapped(new_limit)) {
+            return -14;
+        }
+        /* Accept and ignore new limits for now. */
+    }
     return 0;
 }
 
@@ -4842,6 +5093,21 @@ static long sys_linux_read(long fd, long buf, long count)
                 net_runtime_poll();
             }
             return -11;
+        }
+    }
+    {
+        int uidx = bfree_unix_from_fd((int)fd);
+        if (uidx >= 0 && g_unix_socks[uidx].connected) {
+            int mag = g_unix_socks[uidx].accept_rd;
+            if (mag < 0 && g_unix_socks[uidx].pipe_magic >= 0) {
+                mag = g_unix_socks[uidx].pipe_magic;
+                if (bfree_guest_pipe_is_wr_magic(mag)) {
+                    mag = mag - 1;
+                }
+            }
+            if (mag >= 0) {
+                return sys_linux_read(mag, buf, count);
+            }
         }
     }
     if (fd == 0) {
@@ -5369,6 +5635,20 @@ static long sys_linux_write(long fd, long buf, long count)
         }
         return (long)n;
     }
+    {
+        int iidx2 = bfree_inet_from_fd((int)fd);
+        if (iidx2 >= 0 && g_inet_socks[iidx2].connected &&
+            g_inet_socks[iidx2].pipe_magic >= 0) {
+            return sys_linux_write(g_inet_socks[iidx2].pipe_magic, buf, count);
+        }
+    }
+    {
+        int uidx = bfree_unix_from_fd((int)fd);
+        if (uidx >= 0 && g_unix_socks[uidx].connected &&
+            g_unix_socks[uidx].pipe_magic >= 0) {
+            return sys_linux_write(g_unix_socks[uidx].pipe_magic, buf, count);
+        }
+    }
     /* eventfd handled at top of sys_linux_write */
     if (orig_fd == 1 || orig_fd == 2) {
         /* stdout/stderr resolved to a stale/garbage target; heal back to the
@@ -5407,6 +5687,7 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     int want_dir;
     int want_create;
     int want_trunc;
+    int want_excl;
     bfree_guest_vfile_t *vf;
     long path_err;
 
@@ -5419,6 +5700,41 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     if (path_err != 0) {
         return path_err;
     }
+    /* musl shm_open → open("/dev/shm/<name>"); map into /tmp/shm/ vfiles. */
+    if (strncmp(path, "/dev/shm/", 9) == 0 && path[9] != '\0') {
+        char alt[192];
+        size_t i;
+        bfree_guest_vfile_t *dir;
+
+        dir = bfree_guest_vfile_find_by_name("shm");
+        if (!dir) {
+            int dfd = bfree_guest_vfile_alloc_slot("shm", 1);
+            if (dfd < 0) {
+                return dfd;
+            }
+            dir = bfree_guest_vfile_from_fd(dfd);
+            if (dir) {
+                dir->is_dir = 1;
+            }
+        }
+        alt[0] = '/';
+        alt[1] = 't';
+        alt[2] = 'm';
+        alt[3] = 'p';
+        alt[4] = '/';
+        alt[5] = 's';
+        alt[6] = 'h';
+        alt[7] = 'm';
+        alt[8] = '/';
+        for (i = 0; path[9 + i] != '\0' && i + 10U < sizeof(alt); ++i) {
+            alt[9 + i] = path[9 + i];
+        }
+        alt[9 + i] = '\0';
+        for (i = 0; alt[i] != '\0' && i + 1U < sizeof(path); ++i) {
+            path[i] = alt[i];
+        }
+        path[i] = '\0';
+    }
     if (path[0] == '/' && path[1] == 'r' && path[2] == 'o' && path[3] == 'o' &&
         path[4] == 't' && path[5] == '/') {
         return -2; /* ENOENT — Qt embeds build-machine paths (qtlogging.ini) */
@@ -5427,6 +5743,7 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     want_dir = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_DIRECTORY) != 0UL;
     want_create = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CREAT) != 0UL;
     want_trunc = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_TRUNC) != 0UL;
+    want_excl = ((unsigned long)flags & 0200UL) != 0UL; /* O_EXCL */
 
     if (bfree_linux_path_is_dot_or_slash(path) ||
         (want_dir && bfree_linux_path_is_dot_or_slash(path))) {
@@ -5467,6 +5784,9 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     }
     if (bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) && vname[0] != '\0') {
         vf = bfree_guest_vfile_find_by_name(vname);
+        if (vf && want_create && want_excl) {
+            return -17; /* EEXIST */
+        }
         if (vf && vf->is_symlink) {
             /* Follow one level: only /tmp targets can exist here anyway. */
             char lname[64];
@@ -5812,6 +6132,87 @@ static long sys_linux_access(long path_ptr, long mode)
     return -2;
 }
 
+/* Path-based access after dirfd resolution (Linux faccessat). */
+static long sys_linux_faccessat(long dirfd, long path_ptr, long mode, long flags)
+{
+    char path[256];
+    long path_err;
+
+    (void)flags;
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    path_err = bfree_guest_path_at(dirfd, path, sizeof(path));
+    if (path_err != 0) {
+        return path_err;
+    }
+    /* Reuse access checks via a temporary absolute path in g_guest_cwd style:
+     * sys_linux_access reads from user memory, so inline the same checks. */
+    (void)mode;
+    {
+        char vname[64];
+
+        if (bfree_linux_path_is_dot_or_slash(path) || strcmp(path, "/") == 0) {
+            return 0;
+        }
+        if (strcmp(path, "/tmp") == 0 || strcmp(path, "/bin") == 0 ||
+            strcmp(path, "/usr") == 0 || strcmp(path, "/var") == 0 ||
+            strcmp(path, "/home") == 0 || strcmp(path, "/persist") == 0 ||
+            strcmp(path, "/dev") == 0 || strcmp(path, "/proc") == 0) {
+            return 0;
+        }
+        if (bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) &&
+            vname[0] != '\0') {
+            return bfree_guest_vfile_find_by_name(vname) ? 0 : -2;
+        }
+        return -2;
+    }
+}
+
+static long sys_linux_fchdir(long fd)
+{
+    char path[256];
+    size_t len;
+    long path_err;
+
+    path[0] = '.';
+    path[1] = '\0';
+    path_err = bfree_guest_path_at(fd, path, sizeof(path));
+    if (path_err != 0) {
+        return path_err;
+    }
+    if (bfree_linux_path_is_dot_or_slash(path) || strcmp(path, "/") == 0) {
+        g_guest_cwd[0] = '/';
+        g_guest_cwd[1] = '\0';
+        return 0;
+    }
+    if (strcmp(path, "/tmp") != 0 && strcmp(path, "/bin") != 0 &&
+        strcmp(path, "/usr") != 0 && strcmp(path, "/usr/bin") != 0 &&
+        strcmp(path, "/var") != 0 && strcmp(path, "/home") != 0 &&
+        strcmp(path, "/persist") != 0 && strcmp(path, "/proc") != 0 &&
+        strcmp(path, "/dev") != 0 && strcmp(path, "/root") != 0 &&
+        strcmp(path, "/etc") != 0) {
+        char vname[64];
+        bfree_guest_vfile_t *vf;
+
+        if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) ||
+            vname[0] == '\0') {
+            return -20; /* ENOTDIR */
+        }
+        vf = bfree_guest_vfile_find_by_name(vname);
+        if (!vf || !vf->is_dir) {
+            return -20;
+        }
+    }
+    len = 0;
+    while (path[len] != '\0' && len + 1U < sizeof(g_guest_cwd)) {
+        g_guest_cwd[len] = path[len];
+        ++len;
+    }
+    g_guest_cwd[len] = '\0';
+    return 0;
+}
+
 static long sys_linux_close(long fd)
 {
     int orig = (int)fd;
@@ -5823,6 +6224,7 @@ static long sys_linux_close(long fd)
     if (orig >= 0 && orig < BFREE_GUEST_FD_TABLE_SIZE) {
         g_guest_fd_target[orig] = -1;
         g_guest_fd_dup_save[orig] = -1;
+        g_guest_fd_cloexec[orig] = 0;
     }
     /* BusyBox ping xmove_fd(sock,0): dup2 then close(old). Keep inet sock
      * alive while another published fd still resolves to it. */
@@ -5838,6 +6240,27 @@ static long sys_linux_close(long fd)
         }
     } else {
         bfree_inet_sock_release(resolved);
+    }
+    /* Free AF_UNIX socketpair/connect slots when last published fd closes. */
+    {
+        int uidx = bfree_unix_from_fd(resolved);
+        if (uidx >= 0) {
+            refs = 0;
+            for (i = 0; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+                if (g_guest_fd_target[i] == resolved) {
+                    refs++;
+                }
+            }
+            if (refs == 0) {
+                g_unix_socks[uidx].used = 0;
+                g_unix_socks[uidx].listening = 0;
+                g_unix_socks[uidx].connected = 0;
+                g_unix_socks[uidx].accept_rd = -1;
+                g_unix_socks[uidx].pipe_magic = -1;
+                g_unix_socks[uidx].path[0] = '\0';
+                bfree_guest_pipe_reclaim_dead_slots();
+            }
+        }
     }
     /* Absolute recount (live + inactive coop snap) — do not pipe_ref±1 here;
      * a parent close must not drop the child's still-parked endpoint to 0. */
@@ -5911,6 +6334,24 @@ static long sys_linux_fcntl(long fd, long cmd, long arg)
         if (bfree_guest_is_vfile_fd(resolved)) {
             return 1;
         }
+        {
+            int pslot = bfree_guest_pipe_slot_from_magic(resolved);
+
+            if (pslot >= 0 && g_guest_pipes[pslot].used &&
+                g_guest_pipes[pslot].nonblock) {
+                return (long)BFREE_LINUX_O_NONBLOCK;
+            }
+        }
+        return 0;
+    case 4: /* F_SETFL */
+        {
+            int pslot = bfree_guest_pipe_slot_from_magic(resolved);
+
+            if (pslot >= 0 && g_guest_pipes[pslot].used) {
+                g_guest_pipes[pslot].nonblock =
+                    ((unsigned long)arg & (unsigned long)BFREE_LINUX_O_NONBLOCK) != 0UL;
+            }
+        }
         return 0;
     default:
         return 0;
@@ -5969,6 +6410,12 @@ static long sys_linux_setuid(long uid)
 {
     g_guest_uid = (uint32_t)uid;
     g_guest_euid = (uint32_t)uid;
+    return 0;
+}
+static long sys_linux_setgid(long gid)
+{
+    g_guest_gid = (uint32_t)gid;
+    g_guest_egid = (uint32_t)gid;
     return 0;
 }
 static long sys_linux_getuid(void)
@@ -6056,6 +6503,47 @@ static long sys_linux_writev(long fd, long iov_ptr, long iovcnt)
         chunk = sys_linux_write(fd, (long)vec.iov_base, (long)vec.iov_len);
         if (chunk < 0) {
             return total > 0 ? total : chunk;
+        }
+        total += chunk;
+        if (chunk < (long)vec.iov_len) {
+            break;
+        }
+    }
+    return total;
+}
+
+static long sys_linux_readv(long fd, long iov_ptr, long iovcnt)
+{
+    long total = 0;
+    long i;
+
+    if (iovcnt <= 0 || iovcnt > 1024) {
+        return -22; /* EINVAL */
+    }
+    if (iov_ptr == 0 || !bfree_user_ptr_mapped(iov_ptr)) {
+        return -14; /* EFAULT */
+    }
+    for (i = 0; i < iovcnt; ++i) {
+        bfree_linux_iovec_t vec;
+        uint64_t vec_addr = (uint64_t)(uintptr_t)(iov_ptr + i * (long)sizeof(vec));
+        long chunk;
+
+        if (!bfree_user_buf_mapped(vec_addr, sizeof(vec))) {
+            return -14;
+        }
+        memcpy(&vec, (const void *)(uintptr_t)vec_addr, sizeof(vec));
+        if (vec.iov_len == 0) {
+            continue;
+        }
+        if (!bfree_user_buf_mapped(vec.iov_base, vec.iov_len)) {
+            return -14;
+        }
+        chunk = sys_linux_read(fd, (long)vec.iov_base, (long)vec.iov_len);
+        if (chunk < 0) {
+            return total > 0 ? total : chunk;
+        }
+        if (chunk == 0) {
+            break; /* EOF */
         }
         total += chunk;
         if (chunk < (long)vec.iov_len) {
@@ -7703,7 +8191,8 @@ static void bfree_us_to_timespec(uint64_t value_us, struct timespec *ts)
 
 static bfree_timerfd_entry_t *bfree_find_timerfd(int fd)
 {
-    int index = fd - BFREE_TIMERFD_FD_BASE;
+    int resolved = bfree_guest_fd_resolve(fd);
+    int index = resolved - BFREE_TIMERFD_FD_BASE;
     if (index < 0 || index >= BFREE_MAX_TIMERFD) {
         return 0;
     }
@@ -8045,6 +8534,9 @@ long sys_input_event_pending(long arg1) {
     return mouse_has_data();
 }
 long sys_timerfd_create(long clockid, long flags) {
+    int pub;
+    int cloexec = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
+
     (void)clockid;
     for (int index = 0; index < BFREE_MAX_TIMERFD; ++index) {
         if (!g_timerfd_entries[index].used) {
@@ -8056,7 +8548,15 @@ long sys_timerfd_create(long clockid, long flags) {
             g_timerfd_entries[index].next_expire_us = 0;
             g_timerfd_entries[index].interval_us = 0;
             g_timerfd_entries[index].expirations = 0;
-            return g_timerfd_entries[index].fd;
+            pub = bfree_guest_fd_publish(g_timerfd_entries[index].fd);
+            if (pub < 0) {
+                g_timerfd_entries[index].used = 0;
+                return -1;
+            }
+            if (cloexec && pub >= 0 && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+                g_guest_fd_cloexec[pub] = 1;
+            }
+            return pub;
         }
     }
     return -1;
@@ -8929,6 +9429,8 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
             img = "musl_hello.elf";
         } else if (bfree_guest_basename_eq(path, "ltp_curated.elf")) {
             img = "ltp_curated.elf";
+        } else if (bfree_guest_basename_eq(path, "libc_test_curated.elf")) {
+            img = "libc_test_curated.elf";
         }
         exec_img = img;
     }
@@ -9415,9 +9917,11 @@ static int bfree_guest_is_pipe_wr(int fd)
 static bfree_guest_epoll_inst_t *bfree_guest_find_epoll(int epfd)
 {
     int i;
+    int resolved = bfree_guest_fd_resolve(epfd);
 
     for (i = 0; i < BFREE_MAX_GUEST_EPOLL; ++i) {
-        if (g_guest_epoll[i].used && g_guest_epoll[i].fd == epfd) {
+        if (g_guest_epoll[i].used &&
+            (g_guest_epoll[i].fd == epfd || g_guest_epoll[i].fd == resolved)) {
             return &g_guest_epoll[i];
         }
     }
@@ -9454,6 +9958,7 @@ static long sys_linux_pipe2(long pipefd_ptr, long flags)
     int i;
     int rd;
     int wr;
+    int cloexec = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
 
     if (pipefd == 0 || !bfree_user_ptr_mapped(pipefd_ptr)) {
         return -14;
@@ -9463,7 +9968,8 @@ static long sys_linux_pipe2(long pipefd_ptr, long flags)
         if (!g_guest_pipes[i].used) {
             g_guest_pipes[i].used = 1;
             g_guest_pipes[i].len = 0;
-            g_guest_pipes[i].nonblock = ((unsigned long)flags & 020000UL) != 0UL;
+            g_guest_pipes[i].nonblock =
+                ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_NONBLOCK) != 0UL;
             g_guest_pipes[i].wr_open = 1;
             g_guest_pipes[i].rd_open = 1;
             rd = bfree_guest_pipe_magic_fd(i, 0);
@@ -9471,8 +9977,22 @@ static long sys_linux_pipe2(long pipefd_ptr, long flags)
             pipefd[0] = bfree_guest_fd_publish(rd);
             pipefd[1] = bfree_guest_fd_publish(wr);
             if (pipefd[0] < 0 || pipefd[1] < 0) {
+                if (pipefd[0] >= 0) {
+                    (void)sys_linux_close(pipefd[0]);
+                }
+                if (pipefd[1] >= 0) {
+                    (void)sys_linux_close(pipefd[1]);
+                }
                 g_guest_pipes[i].used = 0;
                 return -24;
+            }
+            if (cloexec) {
+                if (pipefd[0] >= 0 && pipefd[0] < BFREE_GUEST_FD_TABLE_SIZE) {
+                    g_guest_fd_cloexec[pipefd[0]] = 1;
+                }
+                if (pipefd[1] >= 0 && pipefd[1] < BFREE_GUEST_FD_TABLE_SIZE) {
+                    g_guest_fd_cloexec[pipefd[1]] = 1;
+                }
             }
             return 0;
         }
@@ -9482,21 +10002,127 @@ static long sys_linux_pipe2(long pipefd_ptr, long flags)
 
 static long sys_linux_socketpair(long domain, long type, long protocol, long sv_ptr)
 {
+    int *sv = (int *)(uintptr_t)sv_ptr;
+    int a = -1;
+    int b = -1;
+    int slot0 = -1;
+    int slot1 = -1;
+    int i;
+    int rd0, wr0, rd1, wr1;
+    int pub0, pub1;
+    int cloexec = ((unsigned long)type & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
+    int nonblock = ((unsigned long)type & (unsigned long)BFREE_LINUX_O_NONBLOCK) != 0UL;
+
     (void)domain;
-    (void)type;
     (void)protocol;
-    return sys_linux_pipe2(sv_ptr, 0);
+    if (sv == 0 || !bfree_user_ptr_mapped(sv_ptr)) {
+        return -14;
+    }
+    for (i = 0; i < BFREE_UNIX_SLOTS; ++i) {
+        if (!g_unix_socks[i].used) {
+            if (a < 0) {
+                a = i;
+            } else {
+                b = i;
+                break;
+            }
+        }
+    }
+    if (a < 0 || b < 0) {
+        return -24;
+    }
+    bfree_guest_pipe_reclaim_dead_slots();
+    for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
+        if (!g_guest_pipes[i].used) {
+            if (slot0 < 0) {
+                slot0 = i;
+            } else {
+                slot1 = i;
+                break;
+            }
+        }
+    }
+    if (slot0 < 0 || slot1 < 0) {
+        return -24;
+    }
+    g_guest_pipes[slot0].used = 1;
+    g_guest_pipes[slot0].len = 0;
+    g_guest_pipes[slot0].nonblock = nonblock;
+    g_guest_pipes[slot0].wr_open = 1;
+    g_guest_pipes[slot0].rd_open = 1;
+    g_guest_pipes[slot1].used = 1;
+    g_guest_pipes[slot1].len = 0;
+    g_guest_pipes[slot1].nonblock = nonblock;
+    g_guest_pipes[slot1].wr_open = 1;
+    g_guest_pipes[slot1].rd_open = 1;
+    rd0 = bfree_guest_pipe_magic_fd(slot0, 0);
+    wr0 = bfree_guest_pipe_magic_fd(slot0, 1);
+    rd1 = bfree_guest_pipe_magic_fd(slot1, 0);
+    wr1 = bfree_guest_pipe_magic_fd(slot1, 1);
+
+    g_unix_socks[a].used = 1;
+    g_unix_socks[a].listening = 0;
+    g_unix_socks[a].connected = 1;
+    g_unix_socks[a].pipe_magic = wr0; /* write → peer reads rd0 */
+    g_unix_socks[a].accept_rd = rd1;  /* read ← peer writes wr1 */
+    g_unix_socks[a].path[0] = '\0';
+
+    g_unix_socks[b].used = 1;
+    g_unix_socks[b].listening = 0;
+    g_unix_socks[b].connected = 1;
+    g_unix_socks[b].pipe_magic = wr1;
+    g_unix_socks[b].accept_rd = rd0;
+    g_unix_socks[b].path[0] = '\0';
+
+    pub0 = bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + a);
+    pub1 = bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + b);
+    if (pub0 < 0 || pub1 < 0) {
+        if (pub0 >= 0) {
+            (void)sys_linux_close(pub0);
+        }
+        if (pub1 >= 0) {
+            (void)sys_linux_close(pub1);
+        }
+        g_unix_socks[a].used = 0;
+        g_unix_socks[b].used = 0;
+        g_guest_pipes[slot0].used = 0;
+        g_guest_pipes[slot1].used = 0;
+        return -24;
+    }
+    sv[0] = pub0;
+    sv[1] = pub1;
+    if (cloexec) {
+        if (pub0 >= 0 && pub0 < BFREE_GUEST_FD_TABLE_SIZE) {
+            g_guest_fd_cloexec[pub0] = 1;
+        }
+        if (pub1 >= 0 && pub1 < BFREE_GUEST_FD_TABLE_SIZE) {
+            g_guest_fd_cloexec[pub1] = 1;
+        }
+    }
+    return 0;
 }
 
 static long sys_linux_eventfd2(long count, long flags)
 {
-    (void)count;
-    (void)flags;
+    int magic;
+    int pub;
+    int cloexec = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
+
     if (g_guest_eventfd_next >= BFREE_MAX_GUEST_EVENTFD) {
         return -24;
     }
     g_guest_eventfd_val[g_guest_eventfd_next] = (count != 0) ? (uint64_t)count : 0ULL;
-    return (int)BFREE_GUEST_EVENTFD_BASE + g_guest_eventfd_next++;
+    magic = (int)BFREE_GUEST_EVENTFD_BASE + g_guest_eventfd_next++;
+    pub = bfree_guest_fd_publish(magic);
+    if (pub < 0) {
+        g_guest_eventfd_next--;
+        g_guest_eventfd_val[g_guest_eventfd_next] = 0;
+        return -24;
+    }
+    if (cloexec && pub >= 0 && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+        g_guest_fd_cloexec[pub] = 1;
+    }
+    return pub;
 }
 
 /* S3-02: readiness for pipe-backed AF_INET/AF_UNIX (fd bases 0x3A00/0x3900). */
@@ -9590,12 +10216,15 @@ static long sys_linux_shutdown(long fd, long how)
 static long sys_linux_getsockname(long sockfd, long addr, long addrlen_ptr)
 {
     int idx;
+    int uidx;
     int *alen;
     uint8_t *raw;
     uint16_t port_be;
     uint32_t addr_be;
     uint32_t a;
     int want;
+    size_t n;
+    size_t path_len;
 
     if (addr == 0 || addrlen_ptr == 0 || !bfree_user_ptr_mapped(addrlen_ptr)) {
         return -14;
@@ -9606,6 +10235,34 @@ static long sys_linux_getsockname(long sockfd, long addr, long addrlen_ptr)
         return -22;
     }
     sockfd = bfree_guest_fd_resolve((int)sockfd);
+    uidx = bfree_unix_from_fd((int)sockfd);
+    if (uidx >= 0) {
+        /* Unnamed AF_UNIX (socketpair) or bound path. */
+        if (want < 2 || !bfree_user_ptr_mapped(addr)) {
+            return -14;
+        }
+        raw = (uint8_t *)(uintptr_t)addr;
+        raw[0] = (uint8_t)(BFREE_LINUX_AF_UNIX & 0xff);
+        raw[1] = (uint8_t)((BFREE_LINUX_AF_UNIX >> 8) & 0xff);
+        path_len = 0;
+        while (path_len < sizeof(g_unix_socks[uidx].path) &&
+               g_unix_socks[uidx].path[path_len] != '\0') {
+            ++path_len;
+        }
+        if (path_len == 0) {
+            *alen = 2; /* sa_family only */
+            return 0;
+        }
+        n = path_len + 1U; /* include NUL */
+        if ((size_t)want < 2U + n) {
+            n = (size_t)want > 2U ? (size_t)want - 2U : 0U;
+        }
+        for (path_len = 0; path_len < n; ++path_len) {
+            raw[2 + path_len] = (uint8_t)g_unix_socks[uidx].path[path_len];
+        }
+        *alen = (int)(2U + n);
+        return 0;
+    }
     idx = bfree_inet_from_fd((int)sockfd);
     if (idx < 0) {
         return -88; /* ENOTSOCK */
@@ -9637,11 +10294,14 @@ static long sys_linux_getsockname(long sockfd, long addr, long addrlen_ptr)
 static long sys_linux_getpeername(long sockfd, long addr, long addrlen_ptr)
 {
     int idx;
+    int uidx;
     int *alen;
     uint8_t *raw;
     uint16_t port_be;
     uint32_t addr_be;
     int want;
+    size_t n;
+    size_t path_len;
 
     if (addr == 0 || addrlen_ptr == 0 || !bfree_user_ptr_mapped(addrlen_ptr)) {
         return -14;
@@ -9652,6 +10312,36 @@ static long sys_linux_getpeername(long sockfd, long addr, long addrlen_ptr)
         return -22;
     }
     sockfd = bfree_guest_fd_resolve((int)sockfd);
+    uidx = bfree_unix_from_fd((int)sockfd);
+    if (uidx >= 0) {
+        if (!g_unix_socks[uidx].connected) {
+            return -107; /* ENOTCONN */
+        }
+        if (want < 2 || !bfree_user_ptr_mapped(addr)) {
+            return -14;
+        }
+        raw = (uint8_t *)(uintptr_t)addr;
+        raw[0] = (uint8_t)(BFREE_LINUX_AF_UNIX & 0xff);
+        raw[1] = (uint8_t)((BFREE_LINUX_AF_UNIX >> 8) & 0xff);
+        path_len = 0;
+        while (path_len < sizeof(g_unix_socks[uidx].path) &&
+               g_unix_socks[uidx].path[path_len] != '\0') {
+            ++path_len;
+        }
+        if (path_len == 0) {
+            *alen = 2;
+            return 0;
+        }
+        n = path_len + 1U;
+        if ((size_t)want < 2U + n) {
+            n = (size_t)want > 2U ? (size_t)want - 2U : 0U;
+        }
+        for (path_len = 0; path_len < n; ++path_len) {
+            raw[2 + path_len] = (uint8_t)g_unix_socks[uidx].path[path_len];
+        }
+        *alen = (int)(2U + n);
+        return 0;
+    }
     idx = bfree_inet_from_fd((int)sockfd);
     if (idx < 0 || !g_inet_socks[idx].connected) {
         return -107; /* ENOTCONN */
@@ -9679,24 +10369,41 @@ static long sys_linux_getpeername(long sockfd, long addr, long addrlen_ptr)
 static long sys_linux_epoll_create1(long flags)
 {
     int i;
+    int published;
+    int cloexec = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
 
-    (void)flags;
     for (i = 0; i < BFREE_MAX_GUEST_EPOLL; ++i) {
         if (!g_guest_epoll[i].used) {
             g_guest_epoll[i].used = 1;
             g_guest_epoll[i].fd = (int)BFREE_GUEST_EPOLL_FD_BASE + i;
-            return g_guest_epoll[i].fd;
+            published = bfree_guest_fd_publish(g_guest_epoll[i].fd);
+            if (published < 0) {
+                g_guest_epoll[i].used = 0;
+                return -24;
+            }
+            if (cloexec && published >= 0 && published < BFREE_GUEST_FD_TABLE_SIZE) {
+                g_guest_fd_cloexec[published] = 1;
+            }
+            return published;
         }
     }
     return -24; /* EMFILE */
 }
 
+/* Linux x86_64 epoll_event is packed (events@0, data@4). */
+typedef struct __attribute__((packed)) {
+    uint32_t events;
+    uint64_t data;
+} bfree_linux_epoll_event_t;
+
 static long sys_linux_epoll_ctl(long epfd, long op, long fd, long event_ptr)
 {
-    bfree_guest_epoll_inst_t *inst = bfree_guest_find_epoll(epfd);
-    struct epoll_event *ev = (struct epoll_event *)(uintptr_t)event_ptr;
+    bfree_guest_epoll_inst_t *inst = bfree_guest_find_epoll((int)epfd);
+    bfree_linux_epoll_event_t lev;
     bfree_guest_epoll_watch_t *watch;
     int i;
+    const uint8_t *src;
+    size_t n;
 
     if (!inst) {
         return -9;
@@ -9709,8 +10416,12 @@ static long sys_linux_epoll_ctl(long epfd, long op, long fd, long event_ptr)
         watch->used = 0;
         return 0;
     }
-    if (ev == 0 || !bfree_user_ptr_mapped(event_ptr)) {
+    if (event_ptr == 0 || !bfree_user_ptr_mapped(event_ptr)) {
         return -14;
+    }
+    src = (const uint8_t *)(uintptr_t)event_ptr;
+    for (n = 0; n < sizeof(lev); ++n) {
+        ((uint8_t *)&lev)[n] = src[n];
     }
     watch = bfree_guest_find_epoll_watch(inst, (int)fd);
     if (!watch) {
@@ -9726,35 +10437,39 @@ static long sys_linux_epoll_ctl(long epfd, long op, long fd, long event_ptr)
         watch->used = 1;
         watch->fd = (int)fd;
     }
-    watch->events = ev->events;
-    watch->data = ev->data;
+    watch->events = lev.events;
+    watch->data.u64 = lev.data;
     return 0;
 }
 
 static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, long timeout_ms)
 {
-    bfree_guest_epoll_inst_t *inst = bfree_guest_find_epoll(epfd);
-    struct epoll_event *out = (struct epoll_event *)(uintptr_t)events_ptr;
+    bfree_guest_epoll_inst_t *inst = bfree_guest_find_epoll((int)epfd);
     int ready = 0;
     int i;
+    uint8_t *outb;
 
     if (!inst) {
         return -9;
     }
-    if (out == 0 || maxevents <= 0 || !bfree_user_ptr_mapped(events_ptr)) {
+    if (events_ptr == 0 || maxevents <= 0 || !bfree_user_ptr_mapped(events_ptr)) {
         return -14;
     }
+    outb = (uint8_t *)(uintptr_t)events_ptr;
     for (i = 0; i < BFREE_MAX_GUEST_EPOLL_WATCHES && ready < (int)maxevents; ++i) {
         bfree_guest_epoll_watch_t *w = &inst->watches[i];
         uint32_t revents = 0;
+        bfree_linux_epoll_event_t lev;
+        size_t n;
 
         if (!w->used) {
             continue;
         }
         if (bfree_guest_is_pipe_rd(w->fd) && bfree_guest_pipe_readable(w->fd)) {
             revents = EPOLLIN;
-        } else if (bfree_guest_is_eventfd(w->fd)
-                   && g_guest_eventfd_val[bfree_guest_eventfd_index(w->fd)] != 0) {
+        } else if (bfree_guest_is_eventfd(bfree_guest_fd_resolve(w->fd))
+                   && g_guest_eventfd_val[bfree_guest_eventfd_index(
+                          bfree_guest_fd_resolve(w->fd))] != 0) {
             revents = EPOLLIN;
         } else if (bfree_find_timerfd(w->fd) && sys_timerfd_pending(w->fd) > 0) {
             revents = EPOLLIN;
@@ -9762,8 +10477,11 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
             revents = bfree_guest_sock_ready_mask(w->fd);
         }
         if ((revents & w->events) != 0) {
-            out[ready].events = revents & w->events;
-            out[ready].data = w->data;
+            lev.events = revents & w->events;
+            lev.data = w->data.u64;
+            for (n = 0; n < sizeof(lev); ++n) {
+                outb[(size_t)ready * sizeof(lev) + n] = ((const uint8_t *)&lev)[n];
+            }
             ++ready;
         }
     }
@@ -9791,14 +10509,17 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
             for (i = 0; i < BFREE_MAX_GUEST_EPOLL_WATCHES && ready < (int)maxevents; ++i) {
                 bfree_guest_epoll_watch_t *w = &inst->watches[i];
                 uint32_t revents = 0;
+                bfree_linux_epoll_event_t lev;
+                size_t n;
 
                 if (!w->used) {
                     continue;
                 }
                 if (bfree_guest_is_pipe_rd(w->fd) && bfree_guest_pipe_readable(w->fd)) {
                     revents = EPOLLIN;
-                } else if (bfree_guest_is_eventfd(w->fd)
-                           && g_guest_eventfd_val[bfree_guest_eventfd_index(w->fd)] != 0) {
+                } else if (bfree_guest_is_eventfd(bfree_guest_fd_resolve(w->fd))
+                           && g_guest_eventfd_val[bfree_guest_eventfd_index(
+                                  bfree_guest_fd_resolve(w->fd))] != 0) {
                     revents = EPOLLIN;
                 } else if (bfree_find_timerfd(w->fd) && sys_timerfd_pending(w->fd) > 0) {
                     revents = EPOLLIN;
@@ -9806,8 +10527,11 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
                     revents = bfree_guest_sock_ready_mask(w->fd);
                 }
                 if ((revents & w->events) != 0) {
-                    out[ready].events = revents & w->events;
-                    out[ready].data = w->data;
+                    lev.events = revents & w->events;
+                    lev.data = w->data.u64;
+                    for (n = 0; n < sizeof(lev); ++n) {
+                        outb[(size_t)ready * sizeof(lev) + n] = ((const uint8_t *)&lev)[n];
+                    }
                     ++ready;
                 }
             }
@@ -9842,8 +10566,8 @@ static short bfree_guest_poll_revents(int fd, short events)
             revents |= POLLOUT;
         }
     }
-    if ((events & POLLIN) && bfree_guest_is_eventfd(fd)) {
-        int idx = bfree_guest_eventfd_index(fd);
+    if ((events & POLLIN) && bfree_guest_is_eventfd(bfree_guest_fd_resolve(fd))) {
+        int idx = bfree_guest_eventfd_index(bfree_guest_fd_resolve(fd));
 
         if (idx >= 0 && g_guest_eventfd_val[idx] != 0) {
             revents |= POLLIN;
@@ -9972,14 +10696,36 @@ static long sys_linux_ppoll(long fds_ptr, long nfds, long timeout_ptr, long sigm
     }
 }
 
+static char g_guest_prctl_name[16] = "bfree";
+
 static long sys_linux_prctl(long option, long arg2, long arg3, long arg4, long arg5)
 {
-    (void)arg2;
+    size_t i;
+
     (void)arg3;
     (void)arg4;
     (void)arg5;
-    /* musl/Qt probe thread naming, dumpable, etc. — no-op on single-thread guest. */
-    if (option == 15 || option == 16) { /* PR_SET_NAME / PR_GET_NAME */
+    if (option == 15) { /* PR_SET_NAME — copy up to 15 chars + NUL */
+        if (arg2 == 0 || !bfree_user_ptr_mapped(arg2)) {
+            return -14;
+        }
+        for (i = 0; i < sizeof(g_guest_prctl_name) - 1U; ++i) {
+            char c = ((const char *)(uintptr_t)arg2)[i];
+            g_guest_prctl_name[i] = c;
+            if (c == '\0') {
+                break;
+            }
+        }
+        g_guest_prctl_name[sizeof(g_guest_prctl_name) - 1U] = '\0';
+        return 0;
+    }
+    if (option == 16) { /* PR_GET_NAME — write 16-byte TASK_COMM_LEN buffer */
+        if (arg2 == 0 || !bfree_user_ptr_mapped(arg2)) {
+            return -14;
+        }
+        for (i = 0; i < sizeof(g_guest_prctl_name); ++i) {
+            ((char *)(uintptr_t)arg2)[i] = g_guest_prctl_name[i];
+        }
         return 0;
     }
     return 0;
@@ -10691,7 +11437,11 @@ static long bfree_guest_exit_from_fork_signal(int sig)
 {
     int as_copy = g_guest_fork_was_as_copy;
     int st = sig & 0x7f;
+    page_table_t *resume_pt = bfree_process_parent_pt();
 
+    if (!resume_pt && knl_current_task) {
+        resume_pt = (page_table_t *)knl_current_task->page_table_base;
+    }
     if (st == 0) {
         st = 9;
     }
@@ -10725,13 +11475,45 @@ static long bfree_guest_exit_from_fork_signal(int sig)
     }
     bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, g_guest_fork_saved_fsbase);
     g_bfree_sysret_exec_cr3 = 0;
-    if (as_copy && g_coop_parent_started) {
-        bfree_coop_publish_parent_resume();
+    {
+        int parent_waiting =
+            (g_coop_parent_in_wait || g_guest_wait_status_ptr != 0) ? 1 : 0;
+        int wst = 0;
+        long wr = 0;
+
+        if (parent_waiting) {
+            wr = bfree_process_wait4(
+                g_guest_fork_pid > 0 ? (long)g_guest_fork_pid : -1L, &wst, 0);
+            if (g_guest_wait_status_ptr != 0 &&
+                bfree_user_ptr_mapped(g_guest_wait_status_ptr)) {
+                *(int *)(uintptr_t)g_guest_wait_status_ptr =
+                    (wr > 0) ? wst : (st & 0x7f);
+            }
+        }
+        if (as_copy && g_coop_parent_started) {
+            bfree_coop_publish_parent_resume();
+            if (parent_waiting) {
+                g_coop_parent_resume_rax =
+                    (uint64_t)(wr > 0 ? wr : (long)g_guest_fork_pid);
+                g_coop_parent_resume_mode = 2;
+            }
+            bfree_coop_arm_parent_resume();
+        } else {
+            g_bfree_fork_parent_ret =
+                parent_waiting && wr > 0
+                    ? (uint64_t)wr
+                    : (uint64_t)(long)g_guest_fork_pid;
+        }
     }
-    g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
     g_coop_parent_started = 0;
     g_coop_parent_in_wait = 0;
     g_guest_wait_status_ptr = 0;
+    if (resume_pt && knl_current_task) {
+        knl_current_task->page_table_base = resume_pt;
+        __asm__ volatile("mov %0, %%cr3" :: "r"(resume_pt) : "memory");
+    }
+    g_bfree_sysret_exec_cr3 = 0;
+    g_guest_sig_pending &= ~(1ULL << 16); /* SIGCHLD */
     uart_puts("[VFORK] signal exit sig=");
     uart_puthex64((uint64_t)(unsigned)st);
     uart_puts("\n");
@@ -10814,6 +11596,9 @@ static long sys_linux_socket(long domain, long type, long protocol)
 {
     int i;
     int stype = (int)(type & 0xFF);
+    int cloexec = ((unsigned long)type & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
+    int pub;
+
     if (domain == BFREE_LINUX_AF_INET) {
         for (i = 0; i < BFREE_INET_SLOTS; ++i) {
             if (!g_inet_socks[i].used) {
@@ -10833,7 +11618,11 @@ static long sys_linux_socket(long domain, long type, long protocol)
                 g_inet_socks[i].peer_port = 0;
                 g_inet_socks[i].dg_head = 0;
                 g_inet_socks[i].dg_count = 0;
-                return bfree_guest_fd_publish((int)BFREE_INET_FD_BASE + i);
+                pub = bfree_guest_fd_publish((int)BFREE_INET_FD_BASE + i);
+                if (pub >= 0 && cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+                    g_guest_fd_cloexec[pub] = 1;
+                }
+                return pub;
             }
         }
         return -24;
@@ -10849,7 +11638,11 @@ static long sys_linux_socket(long domain, long type, long protocol)
             g_unix_socks[i].accept_rd = -1;
             g_unix_socks[i].pipe_magic = -1;
             g_unix_socks[i].path[0] = '\0';
-            return bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + i);
+            pub = bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + i);
+            if (pub >= 0 && cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+                g_guest_fd_cloexec[pub] = 1;
+            }
+            return pub;
         }
     }
     return -24;
@@ -11617,7 +12410,7 @@ static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr,
 static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long addr, long addrlen)
 {
     int idx;
-    (void)flags;
+    int peek = ((unsigned long)flags & 2UL) != 0UL; /* MSG_PEEK */
     (void)addrlen;
     fd = bfree_guest_fd_resolve((int)fd);
     idx = bfree_inet_from_fd((int)fd);
@@ -11672,8 +12465,10 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
             memcpy(sa + 4, &abe, 4);
             memset(sa + 8, 0, 8);
         }
-        s->dg_head = (h + 1) % BFREE_INET_DGRAMS;
-        s->dg_count--;
+        if (!peek) {
+            s->dg_head = (h + 1) % BFREE_INET_DGRAMS;
+            s->dg_count--;
+        }
         return (long)n;
     }
     if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
@@ -11681,16 +12476,22 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
         if (bfree_guest_pipe_is_wr_magic(mag)) {
             mag = mag - 1;
         }
-        return sys_linux_read(mag, buf, len);
+        return peek ? bfree_guest_pipe_peek(mag, buf, len) : sys_linux_read(mag, buf, len);
     }
     idx = bfree_unix_from_fd((int)fd);
     if (idx >= 0 && g_unix_socks[idx].connected && g_unix_socks[idx].pipe_magic >= 0) {
-        /* Client sendto uses wr; client recv should use rd of same slot. */
-        int mag = g_unix_socks[idx].pipe_magic;
-        if (bfree_guest_pipe_is_wr_magic(mag)) {
-            mag = mag - 1;
+        /* Prefer peer read end (socketpair); else same-slot rd (connect client). */
+        int mag = g_unix_socks[idx].accept_rd;
+        if (mag < 0) {
+            mag = g_unix_socks[idx].pipe_magic;
+            if (bfree_guest_pipe_is_wr_magic(mag)) {
+                mag = mag - 1;
+            }
         }
-        return sys_linux_read(mag, buf, len);
+        return peek ? bfree_guest_pipe_peek(mag, buf, len) : sys_linux_read(mag, buf, len);
+    }
+    if (peek && bfree_guest_is_pipe_rd((int)fd)) {
+        return bfree_guest_pipe_peek((int)fd, buf, len);
     }
     return sys_linux_read(fd, buf, len);
 }
@@ -12156,6 +12957,12 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
     if (num == 77) {
         return sys_linux_ftruncate(arg1, arg2);
     }
+    if (num == 76) {
+        return sys_linux_truncate(arg1, arg2);
+    }
+    if (num == 95) {
+        return sys_linux_umask(arg1);
+    }
     switch (num) {
     case 0:
         return sys_linux_read(arg1, arg2, arg3);
@@ -12192,8 +12999,16 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_listen(arg1, arg2);
     case 73: /* flock */
         return sys_linux_flock(arg1, arg2);
+    case 74: /* fsync */
+        return sys_linux_fsync(arg1);
+    case 75: /* fdatasync */
+        return sys_linux_fsync(arg1);
+    case 162: /* sync */
+        return 0;
     case 105: /* setuid */
         return sys_linux_setuid(arg1);
+    case 106: /* setgid */
+        return sys_linux_setgid(arg1);
     case 4:
         return sys_linux_stat(arg1, arg2);
     case 5:
@@ -12252,6 +13067,42 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_eventfd2(arg1, arg2);
     case 290: /* musl __NR_eventfd2 (284 is __NR_eventfd v1) */
         return sys_linux_eventfd2(arg1, arg2);
+    case 283: /* timerfd_create */
+        {
+            long tfd = sys_timerfd_create(arg1, arg2);
+            return tfd < 0 ? -24 : tfd;
+        }
+    case 286: /* timerfd_settime */
+        {
+            struct itimerspec neu;
+            struct itimerspec old;
+            long rc;
+
+            if (arg3 == 0 || !bfree_user_ptr_mapped(arg3)) {
+                return -14;
+            }
+            {
+                const uint8_t *src = (const uint8_t *)(uintptr_t)arg3;
+                uint8_t *dst = (uint8_t *)&neu;
+                size_t i;
+                for (i = 0; i < sizeof(neu); ++i) {
+                    dst[i] = src[i];
+                }
+            }
+            rc = bfree_timerfd_schedule(bfree_find_timerfd((int)arg1), (int)arg2, &neu,
+                                        arg4 != 0 ? &old : 0);
+            if (rc == 0 && arg4 != 0 && bfree_user_ptr_mapped(arg4)) {
+                const uint8_t *src = (const uint8_t *)&old;
+                uint8_t *dst = (uint8_t *)(uintptr_t)arg4;
+                size_t i;
+                for (i = 0; i < sizeof(old); ++i) {
+                    dst[i] = src[i];
+                }
+            }
+            return rc < 0 ? -22 : rc;
+        }
+    case 287: /* timerfd_gettime */
+        return sys_timerfd_gettime(arg1, arg2) < 0 ? -22 : 0;
     case 291:
         return sys_linux_epoll_create1(arg1);
     case 293:
@@ -12268,6 +13119,10 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_mprotect(arg1, arg2, arg3);
     case 25: /* mremap */
         return sys_linux_mremap(arg1, arg2, arg3, arg4, arg5);
+    case 26: /* msync — anonymous/vfile: soft success */
+        return 0;
+    case 27: /* mincore */
+        return sys_linux_mincore(arg1, arg2, arg3);
     case 28:
         return sys_linux_madvise(arg1, arg2, arg3);
     case 11:
@@ -12282,10 +13137,14 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_rt_sigreturn();
     case 16:
         return sys_linux_ioctl(arg1, arg2, arg3);
+    case 19: /* readv */
+        return sys_linux_readv(arg1, arg2, arg3);
     case 20:
         return sys_linux_writev(arg1, arg2, arg3);
     case 21:
         return sys_linux_access(arg1, arg2);
+    case 269: /* faccessat */
+        return sys_linux_faccessat(arg1, arg2, arg3, arg4);
     case 22:
         return sys_linux_pipe2(arg1, 0);
     case 32:
@@ -12369,6 +13228,8 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_getcwd(arg1, arg2);
     case 80:
         return sys_linux_chdir(arg1);
+    case 81: /* fchdir */
+        return sys_linux_fchdir(arg1);
     case 83:
         return sys_linux_mkdir(BFREE_LINUX_AT_FDCWD, arg1, arg2);
     case 82:
@@ -12417,8 +13278,57 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_gettimeofday(arg1, arg2);
     case 97:
         return sys_getrlimit(arg1, arg2);
+    case 98: /* getrusage — soft-0 fill */
+        {
+            uint8_t *dst;
+            size_t i;
+            if (arg2 == 0 || !bfree_user_ptr_mapped(arg2)) {
+                return -14;
+            }
+            dst = (uint8_t *)(uintptr_t)arg2;
+            for (i = 0; i < 144; ++i) { /* sizeof(struct rusage) on x86_64 musl ≈ 144 */
+                dst[i] = 0;
+            }
+            return 0;
+        }
+    case 100: /* times */
+        {
+            typedef struct {
+                long tms_utime;
+                long tms_stime;
+                long tms_cutime;
+                long tms_cstime;
+            } bfree_tms_t;
+            bfree_tms_t *t;
+            if (arg1 != 0) {
+                if (!bfree_user_ptr_mapped(arg1)) {
+                    return -14;
+                }
+                t = (bfree_tms_t *)(uintptr_t)arg1;
+                t->tms_utime = 0;
+                t->tms_stime = 0;
+                t->tms_cutime = 0;
+                t->tms_cstime = 0;
+            }
+            return (long)(knl_get_current_time() / 10000ULL); /* rough ticks */
+        }
     case 99: /* sysinfo */
         return sys_linux_sysinfo(arg1);
+    case 140: /* getpriority */
+        (void)arg1;
+        (void)arg2;
+        return 0; /* nice 0 */
+    case 141: /* setpriority */
+        (void)arg1;
+        (void)arg2;
+        (void)arg3;
+        return 0;
+    case 160: /* setrlimit — accept, store ignored (prlimit64 preferred by musl) */
+        (void)arg1;
+        if (arg2 != 0 && !bfree_user_ptr_mapped(arg2)) {
+            return -14;
+        }
+        return 0;
     case 102:
         return sys_linux_getuid();
     case 104:
@@ -12510,9 +13420,7 @@ static long bfree_dispatch_app_role_syscall(long num, long arg1, long arg2, long
         }
         return 0; /* Linux sched_yield */
     }
-    if (num == 26) {
-        return sys_mmap(arg1, arg2, arg3, arg4, arg5);
-    }
+    /* Linux x86_64: 26=msync, 9=mmap. Do not steal 26 for legacy B-Free mmap. */
     if (num == 1001) {
         return sys_get_framebuffer_info(arg1);
     }
@@ -12723,6 +13631,7 @@ static void bfree_guest_pipe_reclaim_dead_slots(void)
 {
     int i;
     int t;
+    int u;
 
     for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
         int rd_refs;
@@ -12737,6 +13646,37 @@ static void bfree_guest_pipe_reclaim_dead_slots(void)
         wr_magic = bfree_guest_pipe_magic_fd(i, 1);
         rd_refs = bfree_guest_pipe_count_magic(rd_magic);
         wr_refs = bfree_guest_pipe_count_magic(wr_magic);
+        /* socketpair / connected AF_UNIX keep magics in sock structs, not the fd table. */
+        for (u = 0; u < BFREE_UNIX_SLOTS; ++u) {
+            if (!g_unix_socks[u].used) {
+                continue;
+            }
+            if (g_unix_socks[u].pipe_magic == wr_magic) {
+                ++wr_refs;
+            } else if (g_unix_socks[u].pipe_magic == rd_magic) {
+                ++rd_refs;
+            }
+            if (g_unix_socks[u].accept_rd == wr_magic) {
+                ++wr_refs;
+            } else if (g_unix_socks[u].accept_rd == rd_magic) {
+                ++rd_refs;
+            }
+        }
+        for (u = 0; u < BFREE_INET_SLOTS; ++u) {
+            if (!g_inet_socks[u].used || g_inet_socks[u].pipe_magic < 0) {
+                continue;
+            }
+            if (g_inet_socks[u].pipe_magic == wr_magic) {
+                ++wr_refs;
+            } else if (g_inet_socks[u].pipe_magic == rd_magic) {
+                ++rd_refs;
+            }
+            if (g_inet_socks[u].accept_rd == wr_magic) {
+                ++wr_refs;
+            } else if (g_inet_socks[u].accept_rd == rd_magic) {
+                ++rd_refs;
+            }
+        }
         g_guest_pipes[i].rd_open = rd_refs;
         g_guest_pipes[i].wr_open = wr_refs;
         if (rd_refs > 0 || wr_refs > 0) {

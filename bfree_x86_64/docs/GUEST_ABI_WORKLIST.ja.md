@@ -64,8 +64,16 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.1 | file-backed `mmap` | **DONE（簡易）** | = A5 + SHARED |
 | B2.2 | `mremap` | **DONE（簡易・非 MAYMOVE）** | in-place grow/shrink |
 | B2.3 | `pread64` / `pwrite64` | **DONE** | P8_PREAD |
-| B2.4 | `readv` / 強化 `writev` | 部分 | iovec 完走 |
-| B2.5 | `fsync` / `fdatasync` | **DONE（no-op）** | 明示成功 |
+| B2.4 | `readv` / 強化 `writev` | **DONE（簡易）** | `sys_linux_readv` + 既存 `writev`；curated `fs_writev_readv` PASS |
+| B2.5 | `fsync` / `fdatasync` | **DONE（no-op）** | stub あり・dispatch 欠落だった → case 74/75 配線；curated `fs_fsync` PASS |
+| B2.5b | `umask` / path `truncate` | **DONE** | case 95 / 76；curated PASS。併せて vfile slots 16→64、`O_DIRECTORY=0200000` |
+| B2.5c | `fchdir` / `faccessat` / `timerfd` / memfd·shm·socketpair | **DONE（簡易）** | 81/269/283–287；memfd vfile；`/dev/shm` マップ；双方向 socketpair |
+| B2.5d | `prlimit64` / `msync` / `sync` / epoll packed | **DONE** | old rlimit 書き込み；26/162；legacy nr26→mmap 撤去；x86_64 packed epoll_event |
+| B2.5e | `mincore` / AF_UNIX close リーク | **DONE** | case 27；close で unix slot+pipe reclaim。UNIX slots 16 |
+| B2.5f | `prctl` name / eventfd CLOEXEC / getsockname UNIX / pipe2 flags | **DONE** | SET/GET_NAME；eventfd publish+CLOEXEC；AF_UNIX getsockname；O_NONBLOCK/O_CLOEXEC（誤 020000 修正） |
+| B2.5g | getpeername UNIX / MSG_PEEK / O_EXCL / CLOEXEC / rusage·times | **DONE** | AF_UNIX getpeername；pipe MSG_PEEK；open O_EXCL；socket/epoll/timerfd CLOEXEC；getrusage/times/getpriority stub |
+| B2.5h | inet write pipe / setgid / socketpair CLOEXEC / round-8 curated | **DONE** | inet `write`→pipe_magic；setgid；socketpair CLOEXEC；curated **215** |
+| B2.5i | pure libc + fork/waitpid PF | **DONE** | curated **261**；`exit_from_fork` mode-2 wait+reap+parent PT+drop SIGCHLD；実 `proc_fork_wait` |
 | B2.6 | `flock` / fcntl ロック | **DONE** | P8_FLOCK |
 | B2.7 | `clone` スレッドフラグ | partial（coop THREAD） | TLS + スケジューラ |
 | B2.8 | futex 深化 | 部分 stub | WAIT 実待ち・WAKE |
@@ -81,8 +89,10 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.18 | `membarrier` / `rseq` | **DONE（空成功）** | |
 | B2.19 | `getrandom` | **DONE** | 品質は簡易 |
 | B2.20 | 静的 hello/musl スモーク | **追加**（`/musl_hello.elf`） | B2_MUSL_HELLO_OK |
+| B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **261**；実 fork+wait） | `LIBC_TEST_CURATED_RESULT` |
 
-**完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。
+**完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。  
+→ 2026-07-28: curated **261 TPASS** (pure libc + real fork/waitpid). Ceiling: thread/TCP/slots/ash-vfork (post-suite) remain walls.
 
 ### B3 — Qt / デスクトップ向け（Phase 6 後半〜）〜15 項目
 
