@@ -38,11 +38,12 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-07-29（curated round-17）
-- **ゲート:** curated **679 PASS** / phase3 **ALL PASS** / desktop 意図しない ENOSYS **0**
+- **Updated:** 2026-07-29（LTP curated ABI hole suite）
+- **ゲート:** curated **679 PASS** / LTP curated **PASS n=38** / phase3 **ALL PASS** / desktop 意図しない ENOSYS **0**
+- **LTP curated:** FS 基本 + process/wait（fork/exit/wait/waitpid/vfork/getppid）+ pipe/fd（dup2/dup3/fcntl/close/writev/readv/pread）+ signals（kill/sigaction/sigprocmask/alarm/SIGPIPE）；スモークは busybox AUTO_LOGIN
 - **スタブ実体化:** `setitimer`/`getitimer`（alarm 共用）・`sched_getaffinity`；policy 94 は未着手のまま
 - **wait 安定化:** ash `wait`（WNOHANG+sigsuspend）向け soft-zombie；`waitpid` は 1 子/呼出し；blocking `-1` は runnable へ yield；`rt_sigsuspend` 配線
 - **phase3 ハーネス:** 後期 `cat|grep` / `$(pwd)` を回避（`true & wait $!` で waitall）
 - **Desktop 本線:** W0–W3.5 + FB authority + Explorer。wm smoke GREEN
-- **天井の壁（次へ回す）:** clone 本スレッド、`cat FILE|grep` 後期楔、双方向 TCP、コマンド置換 PF
+- **天井の壁（次へ回す）:** clone 本スレッド、`cat FILE|grep` 後期楔、双方向 TCP、コマンド置換 PF；LTP 次ラウンドは mmap／深い socket
 - **Next:** clone THREAD 深化、または `cat|grep` 後期パイプライン修繕。Desktop 並行可

@@ -101,6 +101,7 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **679**） | `LIBC_TEST_CURATED_RESULT` |
 | B2.22 | `setitimer`/`getitimer`/`sched_getaffinity` | **DONE**（2026-07-29；ITIMER_REAL↔alarm；affinity=CPU0） | curated ENOSYS 0 |
 | B2.23 | ash wait / waitpid heal | **DONE**（soft-zombie；1-reap；blocking `-1` yield；phase3 ALL PASS） | `cat FILE\|grep` 後期はハーネス回避・本修繕は次 |
+| B2.24 | LTP curated ABI hole suite | **DONE**（2026-07-29；**n=38**） | process/wait + pipe/fd + signals；`_f3_ltp_curated_smoke` PASS；mmap/TCP は次 |
 
 **完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。  
 → 2026-07-29: curated **679** + phase3 **ALL PASS** + desktop ENOSYS **0**（round-17 +52）。Walls: thread / `cat FILE|grep` 後期 / TCP / cmdsubst PF.
