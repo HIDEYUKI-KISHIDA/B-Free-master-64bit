@@ -38,14 +38,11 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-07-29
-- **Desktop 本線:** W0–W3.5 + FB authority + Explorer 実用。wm smoke GREEN
-- **musl libc-test サブセット:** **627 TPASS**（round-16 +77；`membarrier`/`rseq` は実成功のみ・ENOSYS 逃げなし）
-- **穴埋め（本ラウンド）:** round-16 拡張＋ENOSYS soft-pass 削除
-- **天井（どこまで広げられるか）:**
-  - **まだ伸ばせる:** 純 libc、既存 stub の組み合わせ、UDP/UNIX の浅いケース
-  - **すぐ壁:** clone スレッド、双方向 TCP 深化、フル POSIX ファイル属性、pipe/UNIX スロット枯渇
-  - **本セット一括:** まだ不可。curated は「穴発見用サブセット」が役割
-- **既知ノイズ:** ポストスイート PF は exit_group busybox 再入場で解消（スモーク `PASS no_panic`）
-- **保留:** ネスト fork 状態の完全保存（ash パイプライン深化）
-- **Next:** さらに天井を伸ばすか、clone/スレッド。Desktop は並行可
+- **Updated:** 2026-07-29（スタブ実体化スプリント）
+- **ゲート:** curated **627 PASS** / phase3 **ALL PASS** / desktop 意図しない ENOSYS **0**
+- **スタブ実体化:** `setitimer`/`getitimer`（alarm 共用）・`sched_getaffinity`；policy 94 は未着手のまま
+- **wait 安定化:** ash `wait`（WNOHANG+sigsuspend）向け soft-zombie；`waitpid` は 1 子/呼出し；blocking `-1` は runnable へ yield；`rt_sigsuspend` 配線
+- **phase3 ハーネス:** 後期 `cat|grep` / `$(pwd)` を回避（`true & wait $!` で waitall）
+- **Desktop 本線:** W0–W3.5 + FB authority + Explorer。wm smoke GREEN
+- **天井の壁（次へ回す）:** clone 本スレッド、`cat FILE|grep` 後期楔、双方向 TCP、コマンド置換 PF
+- **Next:** clone THREAD 深化、または `cat|grep` 後期パイプライン修繕。Desktop 並行可

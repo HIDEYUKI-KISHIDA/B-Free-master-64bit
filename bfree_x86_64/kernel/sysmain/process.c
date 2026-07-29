@@ -896,3 +896,47 @@ long bfree_process_wait4(long pid, int *status_out, int options)
         return reaped;
     }
 }
+
+int bfree_process_force_zombie_live(void)
+{
+    return bfree_process_force_zombie_except(0);
+}
+
+int bfree_process_force_zombie_except(int keep_pid)
+{
+    int i;
+    int n = 0;
+
+    for (i = 0; i < BFREE_PROC_MAX_CHILDREN; ++i) {
+        if (!bfree_process_is_live_state(g_children[i].state)) {
+            continue;
+        }
+        if (keep_pid > 0 && g_children[i].pid == keep_pid) {
+            continue;
+        }
+        /*
+         * Soft zombie: do not run exit_restore_as / vmm_destroy here.
+         * Force-reaping from the parent's wait path can otherwise tear down
+         * the wrong AS and #UD the caller (seen in curated waitid).
+         */
+        if (g_children[i].fork_pt_idx >= 0) {
+            bfree_process_release_fork_pt(g_children[i].fork_pt_idx);
+        }
+        g_children[i].has_private_as = 0;
+        g_children[i].child_pt = 0;
+        g_children[i].parent_pt = 0;
+        g_children[i].fork_pt_idx = -1;
+        g_children[i].exit_status = 0;
+        g_children[i].exited_signal = 0;
+        g_children[i].stop_sig = 0;
+        g_children[i].stop_pending = 0;
+        g_children[i].coop_session = -1;
+        g_children[i].state = BFREE_PROC_ZOMBIE;
+        ++n;
+    }
+    g_active = -1;
+    if (keep_pid > 0) {
+        (void)bfree_process_select_pid(keep_pid);
+    }
+    return n;
+}

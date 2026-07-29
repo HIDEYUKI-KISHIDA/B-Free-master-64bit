@@ -378,6 +378,7 @@ static int g_guest_waitid_active;
 static long g_guest_waitid_infop;
 static long g_guest_wait_status_ptr;
 static int g_coop_parent_in_wait; /* seq-fork: parent blocked in waitpid */
+static int g_last_waitpid_status; /* for waitid after waitpid(status_ptr=0) */
 static int g_guest_tty_pgrp = 1;
 static int g_guest_sid = 1;
 static uint8_t g_guest_sig_disp[BFREE_NSIG];
@@ -1414,40 +1415,100 @@ static long sys_linux_waitpid(long pid, long status_ptr, long options)
 {
     int status = 0;
     long rc;
+    int blocking = (((unsigned)options & 1U) == 0U);
 
     for (;;) {
-        rc = bfree_process_wait4(pid,
-            (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) ? &status : 0,
-            (int)options);
+        /*
+         * Ash `wait` uses waitpid(-1, WNOHANG) + sigsuspend. LIVE orphans
+         * never deliver SIGCHLD → hang. Only heal on WNOHANG broad waits —
+         * blocking waitpid(-1) must not kill in-flight pipeline children.
+         */
+        if (pid == -1 && !blocking) {
+            if (bfree_process_live_count() > 0) {
+                (void)bfree_process_force_zombie_live();
+                g_guest_fork_active = 0;
+                g_coop_parent_started = 0;
+                g_guest_fork_was_as_copy = 0;
+                g_coop_parent_in_wait = 0;
+            }
+        } else if (blocking && pid > 0) {
+            if (bfree_process_force_zombie_except((int)pid) > 0) {
+                if (bfree_process_child_pid() != (int)pid) {
+                    g_guest_fork_active = 0;
+                    g_coop_parent_started = 0;
+                    g_guest_fork_was_as_copy = 0;
+                }
+            }
+        }
+        rc = bfree_process_wait4(pid, &status, (int)options);
         if (rc > 0) {
             g_guest_fork_status_ready = 0;
             g_coop_parent_in_wait = 0;
             g_guest_wait_status_ptr = 0;
+            g_last_waitpid_status = status;
             if (status_ptr != 0 && bfree_user_ptr_mapped(status_ptr)) {
                 *(int *)(uintptr_t)status_ptr = status;
             }
+            /* Linux waitpid reaps one child per call — do not drain. */
             return rc;
         }
         if (rc < 0) {
             return rc; /* ECHILD */
         }
-        if (((unsigned)options & 1U) != 0U) { /* WNOHANG */
+        if (!blocking) { /* WNOHANG */
             return 0;
         }
-        /* H02: live AS-copy child — schedule it instead of sti;hlt forever. */
-        if (g_guest_fork_was_as_copy || g_coop_parent_started) {
-            if (bfree_process_child_active() || g_guest_fork_active) {
+        /* Blocking wait-any: yield whenever a runnable child exists. */
+        if (pid == -1) {
+            if (bfree_process_runnable_count() > 0) {
                 g_guest_fork_active = 1;
                 g_guest_wait_status_ptr = status_ptr;
                 g_guest_waitid_active = 0;
                 g_coop_parent_in_wait = 1;
+                if (bfree_process_first_live_pid() > 0) {
+                    (void)bfree_process_select_pid(bfree_process_first_live_pid());
+                }
                 return bfree_coop_yield_to_child();
             }
+            if (bfree_process_force_zombie_live() > 0) {
+                g_guest_fork_active = 0;
+                g_coop_parent_started = 0;
+                g_guest_fork_was_as_copy = 0;
+                continue;
+            }
+            {
+                int er = bfree_guest_sig_take_eintr();
+                if (er < 0) {
+                    return er;
+                }
+            }
+            return -10; /* ECHILD */
         }
-        if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {
-            g_guest_wait_status_ptr = status_ptr;
-            g_coop_parent_in_wait = 1;
-            return bfree_coop_yield_to_child();
+        /* Specific-pid: yield only to the focused child matching pid. */
+        if (pid > 0 && (g_guest_fork_was_as_copy || g_coop_parent_started ||
+                        g_guest_fork_active)) {
+            int focus = bfree_process_child_pid();
+            if (focus == (int)pid && bfree_process_child_active() &&
+                bfree_process_runnable_count() > 0) {
+                g_guest_fork_active = 1;
+                g_guest_wait_status_ptr = status_ptr;
+                g_guest_waitid_active = 0;
+                g_coop_parent_in_wait = 1;
+                (void)bfree_process_select_pid((int)pid);
+                return bfree_coop_yield_to_child();
+            }
+            /* Target live but not a healthy coop focus → force-reap it. */
+            (void)bfree_process_force_zombie_live();
+            g_guest_fork_active = 0;
+            g_coop_parent_started = 0;
+            g_guest_fork_was_as_copy = 0;
+            continue;
+        }
+        if (bfree_process_force_zombie_live() > 0) {
+            g_guest_fork_active = 0;
+            g_coop_parent_started = 0;
+            g_guest_fork_was_as_copy = 0;
+            continue;
         }
         {
             int er = bfree_guest_sig_take_eintr();
@@ -1455,7 +1516,7 @@ static long sys_linux_waitpid(long pid, long status_ptr, long options)
                 return er;
             }
         }
-        __asm__ volatile("sti; hlt" ::: "memory");
+        return -10; /* ECHILD */
     }
 }
 
@@ -1484,12 +1545,14 @@ static long sys_linux_waitid(long idtype, long id, long infop, long options)
     } else {
         return -22; /* EINVAL: P_PGID not supported yet */
     }
-    /* Require WEXITED for this stub; ignore WSTOPPED/WCONTINUED. */
-    if ((options & BFREE_WEXITED) == 0 && (options & 0x00000002) == 0 &&
-        (options & 0x00000008) == 0) {
-        /* Some callers pass only WNOHANG; treat as wait for exit. */
-    }
     wopts = ((options & BFREE_WNOHANG_ID) != 0) ? 1 : 0;
+    /* Keep waitid on wait4 — do not route through waitpid (coop SYSRET). */
+    if (pid == -1 && wopts != 0 && bfree_process_live_count() > 0) {
+        (void)bfree_process_force_zombie_live();
+        g_guest_fork_active = 0;
+        g_coop_parent_started = 0;
+        g_guest_fork_was_as_copy = 0;
+    }
     rc = bfree_process_wait4(pid, &status, wopts);
     if (rc < 0) {
         return rc;
@@ -1497,6 +1560,7 @@ static long sys_linux_waitid(long idtype, long id, long infop, long options)
     if (rc == 0) {
         return 0; /* WNOHANG, nothing ready */
     }
+    g_last_waitpid_status = status;
     g_guest_fork_status_ready = 0;
     if (infop != 0 && bfree_user_ptr_mapped(infop)) {
         si = (bfree_siginfo_wait_t *)(uintptr_t)infop;
@@ -12858,6 +12922,101 @@ static long sys_linux_alarm(long sec)
     return prev;
 }
 
+/* Linux itimerval: two timeval {tv_sec, tv_usec} (ITIMER_REAL only). */
+typedef struct {
+    int64_t tv_sec;
+    int64_t tv_usec;
+} bfree_timeval64_t;
+
+typedef struct {
+    bfree_timeval64_t it_interval;
+    bfree_timeval64_t it_value;
+} bfree_itimerval64_t;
+
+static long sys_linux_getitimer(long which, long curr)
+{
+    bfree_itimerval64_t out;
+
+    if (which != 0) { /* only ITIMER_REAL */
+        return -22;
+    }
+    if (curr != 0 && !bfree_user_range_mapped((uint64_t)(uintptr_t)curr, sizeof(out))) {
+        return -14;
+    }
+    memset(&out, 0, sizeof(out));
+    if (g_guest_alarm_armed) {
+        uint64_t now = knl_get_current_time();
+        if (g_guest_alarm_deadline_us > now) {
+            uint64_t left = g_guest_alarm_deadline_us - now;
+            out.it_value.tv_sec = (int64_t)(left / 1000000ULL);
+            out.it_value.tv_usec = (int64_t)(left % 1000000ULL);
+        }
+    }
+    if (curr != 0) {
+        *(bfree_itimerval64_t *)(uintptr_t)curr = out;
+    }
+    return 0;
+}
+
+static long sys_linux_setitimer(long which, long newv, long oldv)
+{
+    bfree_itimerval64_t neu;
+    long prev_sec;
+
+    if (which != 0) { /* only ITIMER_REAL */
+        return -22;
+    }
+    if (oldv != 0) {
+        long gr = sys_linux_getitimer(which, oldv);
+        if (gr < 0) {
+            return gr;
+        }
+    }
+    if (newv == 0) {
+        return 0;
+    }
+    if (!bfree_user_range_mapped((uint64_t)(uintptr_t)newv, sizeof(neu))) {
+        return -14;
+    }
+    neu = *(const bfree_itimerval64_t *)(uintptr_t)newv;
+    /* Interval reload not implemented; one-shot via it_value (musl alarm). */
+    (void)neu.it_interval;
+    prev_sec = (long)neu.it_value.tv_sec;
+    if (neu.it_value.tv_usec > 0 && prev_sec >= 0) {
+        /* Round up partial seconds so alarm(1)-style doesn't vanish. */
+        if (prev_sec < 0x7fffffffL) {
+            prev_sec += 1;
+        }
+    }
+    if (prev_sec <= 0 && neu.it_value.tv_usec <= 0) {
+        g_guest_alarm_armed = 0;
+        return 0;
+    }
+    if (prev_sec <= 0) {
+        prev_sec = 1;
+    }
+    (void)sys_linux_alarm(prev_sec);
+    return 0;
+}
+
+/* Linux 204: sched_getaffinity — report single online CPU 0. */
+static long sys_linux_sched_getaffinity(long pid, long len, long user_mask)
+{
+    uint64_t mask;
+
+    (void)pid;
+    if (len < (long)sizeof(mask) || user_mask == 0) {
+        return -22;
+    }
+    if (!bfree_user_range_mapped((uint64_t)(uintptr_t)user_mask, (size_t)len)) {
+        return -14;
+    }
+    mask = 1ULL; /* CPU0 */
+    memset((void *)(uintptr_t)user_mask, 0, (size_t)len);
+    *(uint64_t *)(uintptr_t)user_mask = mask;
+    return (long)sizeof(mask);
+}
+
 
 static long sys_linux_sigaltstack(long uss, long uoss)
 {
@@ -12929,10 +13088,11 @@ static long sys_linux_chown(long dirfd, long path, long uid, long gid) { (void)d
 /* sys_linux_flock: real impl below */
 static long sys_linux_flock(long fd, long op);
 static long sys_linux_fsync(long fd) { (void)fd; return 0; }
-/* sys_linux_alarm: real impl below */
+/* sys_linux_alarm / getitimer / setitimer: real impls above */
 static long sys_linux_alarm(long sec);
-static long sys_linux_getitimer(long which, long curr) { (void)which;(void)curr; return 0; }
-static long sys_linux_setitimer(long which, long newv, long oldv) { (void)which;(void)newv;(void)oldv; return 0; }
+static long sys_linux_getitimer(long which, long curr);
+static long sys_linux_setitimer(long which, long newv, long oldv);
+static long sys_linux_sched_getaffinity(long pid, long len, long user_mask);
 static long sys_linux_getsid(long pid) {
     if (pid == 0) return (long)g_guest_sid;
     if (pid == 1 || (g_guest_fork_active && pid == g_guest_fork_pid)) return (long)g_guest_sid;
@@ -12977,8 +13137,12 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_select(arg1, arg2, arg3, arg4, arg5);
     case 270: /* pselect6 */
         return sys_linux_pselect6(arg1, arg2, arg3, arg4, arg5, 0);
+    case 36: /* getitimer */
+        return sys_linux_getitimer(arg1, arg2);
     case 37: /* alarm */
         return sys_linux_alarm(arg1);
+    case 38: /* setitimer — musl alarm() uses this */
+        return sys_linux_setitimer(arg1, arg2, arg3);
     case 41: /* socket */
         return sys_linux_socket(arg1, arg2, arg3);
     case 42: /* connect */
@@ -13153,6 +13317,17 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_dup2(arg1, arg2);
     case 35:
         return sys_linux_nanosleep(arg1, arg2);
+    case 130: /* rt_sigsuspend — ash wait uses this after WNOHANG waitpid */
+        /* Soft-reap LIVE orphans so the next waitpid can collect them, then
+         * return EINTR with SIGCHLD pending to wake ash's waitproc loop. */
+        if (bfree_process_live_count() > 0) {
+            (void)bfree_process_force_zombie_live();
+            g_guest_fork_active = 0;
+            g_coop_parent_started = 0;
+            g_guest_fork_was_as_copy = 0;
+        }
+        bfree_guest_sig_raise(17);
+        return -4; /* EINTR */
     case 230:
         return sys_linux_nanosleep(arg3, arg4);
     case 60:
@@ -13401,6 +13576,8 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_get_robust_list(arg1, arg2, arg3);
     case 202:
         return sys_futex(arg1, arg2, arg3, arg4, arg5, 0);
+    case 204: /* sched_getaffinity — musl sysconf(_SC_NPROCESSORS_ONLN) */
+        return sys_linux_sched_getaffinity(arg1, arg2, arg3);
     case 218:
         return sys_set_tid_address(arg1);
     case 228:

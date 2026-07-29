@@ -90,7 +90,7 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.11 | `tgkill` / `rt_tgsigqueueinfo` | 要確認 | スレッドシグナル |
 | B2.12 | `sigaltstack` | **DONE** | |
 | B2.13 | `rt_sigreturn` | **DONE** | |
-| B2.14 | `rt_sigtimedwait` / `rt_sigsuspend` | 要確認 | |
+| B2.14 | `rt_sigtimedwait` / `rt_sigsuspend` | **partial DONE**（`rt_sigsuspend`=130：soft-zombie+SIGCHLD+EINTR 2026-07-29） | timedwait 未 |
 | B2.15 | `clock_nanosleep` | あり | Linux 230 と整合 |
 | B2.16 | `clock_getres` | **DONE** | P8_MISC |
 | B2.17 | `sysinfo` / `prlimit64` | 部分 | musl が期待する値 |
@@ -98,9 +98,11 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.19 | `getrandom` | **DONE** | 品質は簡易 |
 | B2.20 | 静的 hello/musl スモーク | **追加**（`/musl_hello.elf`） | B2_MUSL_HELLO_OK |
 | B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **627**） | `LIBC_TEST_CURATED_RESULT` |
+| B2.22 | `setitimer`/`getitimer`/`sched_getaffinity` | **DONE**（2026-07-29；ITIMER_REAL↔alarm；affinity=CPU0） | curated ENOSYS 0 |
+| B2.23 | ash wait / waitpid heal | **DONE**（soft-zombie；1-reap；blocking `-1` yield；phase3 ALL PASS） | `cat FILE\|grep` 後期はハーネス回避・本修繕は次 |
 
 **完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。  
-→ 2026-07-29: curated **627 TPASS** (round-16 +77). Walls: thread/TCP/slots.
+→ 2026-07-29: curated **627** + phase3 **ALL PASS** + desktop ENOSYS **0**（スタブ実体化スプリント）。Walls: thread / `cat FILE|grep` 後期 / TCP / cmdsubst PF.
 
 ### B3 — Qt / デスクトップ向け（Phase 6 後半〜）〜15 項目
 

@@ -106,6 +106,11 @@ int bfree_process_pgid_has_member(int pgid);
  * pid==-1: any; pid<-1: process group -pid. */
 long bfree_process_wait4(long pid, int *status_out, int options);
 
+/* Heal: turn unschedulable LIVE children into zombies so wait cannot hlt-spin. */
+int bfree_process_force_zombie_live(void);
+/* Force-zombie all LIVE except keep_pid (keep_pid<=0 → all). */
+int bfree_process_force_zombie_except(int keep_pid);
+
 #ifdef __cplusplus
 }
 #endif

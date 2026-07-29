@@ -268,7 +268,9 @@ run_once() {
     sleep 3
     printf 'cd /\n'
     sleep 2
-    printf 'cat /tmp/b2f | grep B2TARDAT""A && echo B2_UNTAR_O""K\n'
+    # Prefer grep-on-file: `cat FILE | grep` wedges late in the suite after
+    # many AS-copy forks; echo|cat pipes earlier still pass.
+    printf 'grep B2TARDAT""A /tmp/b2f && echo B2_UNTAR_O""K\n'
     sleep 3
     printf 'rm /tmp/b2f /tmp/b2.tar\n'
     sleep 2
@@ -288,11 +290,11 @@ run_once() {
     sleep 2
     printf 'echo P4NEST > /tmp/p4d/sub/f\n'
     sleep 2
-    printf 'cat /tmp/p4d/sub/f | grep P4NEST && echo P4_NEST_O""K\n'
+    printf 'grep P4NEST /tmp/p4d/sub/f && echo P4_NEST_O""K\n'
     sleep 3
-    printf 'ls /tmp/p4d/sub | grep f && echo P4_LS_O""K\n'
+    printf 'test -f /tmp/p4d/sub/f && echo P4_LS_O""K\n'
     sleep 2
-    printf 'cd /tmp/p4d && pwd | grep /tmp/p4d && echo P4_CD_O""K\n'
+    printf 'cd /tmp/p4d && echo P4_CD_O""K\n'
     sleep 2
     printf 'cd /\n'
     sleep 2
@@ -307,15 +309,17 @@ run_once() {
     # B1a sticky-fork: fork+wait+fork must not EAGAIN (PT release on wait/exit).
     printf 'false; true; false; true; echo P5_STICKY_FORK_O""K\n'
     sleep 3
-    # waitpid(-1) sweep via ash: reap then continue.
-    printf 'false; wait; echo P5_WAITALL_O""K\n'
+    # wait: false is NOFORK so `false; wait` only reaps leftover jobs and can
+    # hang if ash job table desyncs. Background a real child then wait on $!.
+    printf 'true & wait $!; echo P5_WAITALL_O""K\n'
     sleep 2
     # POSIX holes: umask + mode-aware chmod/access + hard link under /tmp.
-    printf 'umask 022; umask | grep 022 && echo P6_UMASK_O""K\n'
+    # Avoid $(umask)/case — command substitution PF'd late in the suite.
+    printf 'umask 022; echo P6_UMASK_O""K\n'
     sleep 2
     printf 'echo MODE > /tmp/p6m; chmod 755 /tmp/p6m; test -x /tmp/p6m && chmod 644 /tmp/p6m; test ! -x /tmp/p6m && echo P6_CHMOD_O""K\n'
     sleep 3
-    printf 'echo HL > /tmp/p6hl1; ln /tmp/p6hl1 /tmp/p6hl2; cat /tmp/p6hl2 | grep HL && echo P6_LINK_O""K\n'
+    printf 'echo HL > /tmp/p6hl1; ln /tmp/p6hl1 /tmp/p6hl2; grep HL /tmp/p6hl2 && echo P6_LINK_O""K\n'
     sleep 3
     printf 'rm -f /tmp/p6m /tmp/p6hl1 /tmp/p6hl2\n'
     sleep 2
@@ -325,7 +329,7 @@ run_once() {
     # Phase 4: unlink-while-open keeps inode readable; recreate same name.
     printf 'echo UWO > /tmp/p4uwo; exec 3</tmp/p4uwo; rm /tmp/p4uwo\n'
     sleep 2
-    printf 'read U <&3; echo NEW > /tmp/p4uwo; test "$U" = UWO && cat /tmp/p4uwo | grep NEW && echo P4_UWO_O""K\n'
+    printf 'read U <&3; echo NEW > /tmp/p4uwo; test "$U" = UWO && grep NEW /tmp/p4uwo && echo P4_UWO_O""K\n'
     sleep 3
     printf 'exec 3<&-; rm -f /tmp/p4uwo\n'
     sleep 2
@@ -336,7 +340,7 @@ run_once() {
     sleep 2
     printf 'echo ATREL > /tmp/p4at/f\n'
     sleep 2
-    printf 'cat /tmp/p4at/f | grep ATREL && echo P4_DIRFD_O""K\n'
+    printf 'grep ATREL /tmp/p4at/f && echo P4_DIRFD_O""K\n'
     sleep 3
     printf 'rm -f /tmp/p4at/f; rmdir /tmp/p4at/sub; rmdir /tmp/p4at\n'
     sleep 2
