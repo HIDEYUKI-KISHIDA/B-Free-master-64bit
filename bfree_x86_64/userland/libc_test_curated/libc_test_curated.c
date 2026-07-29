@@ -15,6 +15,7 @@
 #include <float.h>
 #include <inttypes.h>
 #include <stdarg.h>
+#include <langinfo.h>
 #include <libgen.h>
 #include <limits.h>
 #include <locale.h>
@@ -5582,6 +5583,322 @@ static void locale_setlocale_ctype(void)
     report("locale_setlocale_ctype", p != NULL);
 }
 
+/* --- round-17: bold pure libc growth (+52) --- */
+static void math_tanl(void)
+{
+    report("math_tanl", tanl(0.0L) == 0.0L);
+}
+
+static void math_atanl(void)
+{
+    report("math_atanl", math_near((double)atanl(0.0L), 0.0));
+}
+
+static void math_asinl(void)
+{
+    report("math_asinl", asinl(0.0L) == 0.0L);
+}
+
+static void math_acosl(void)
+{
+    report("math_acosl", acosl(1.0L) == 0.0L);
+}
+
+static void math_atan2l(void)
+{
+    report("math_atan2l", math_near((double)atan2l(0.0L, 1.0L), 0.0));
+}
+
+static void math_remquo(void)
+{
+    int q = 0;
+    double r = remquo(5.0, 3.0, &q);
+    report("math_remquo", math_near(r, -1.0) || math_near(r, 2.0));
+}
+
+static void math_remquol(void)
+{
+    int q = 0;
+    long double r = remquol(5.0L, 3.0L, &q);
+    report("math_remquol",
+           math_near((double)r, -1.0) || math_near((double)r, 2.0));
+}
+
+static void math_nexttoward(void)
+{
+    report("math_nexttoward", nexttoward(1.0, 2.0) > 1.0);
+}
+
+static void math_nexttowardf(void)
+{
+    report("math_nexttowardf", nexttowardf(1.0f, 2.0f) > 1.0f);
+}
+
+static void math_nexttowardl(void)
+{
+    report("math_nexttowardl", nexttowardl(1.0L, 2.0L) > 1.0L);
+}
+
+static void math_scalbln(void)
+{
+    report("math_scalbln", math_near(scalbln(1.5, 1), 3.0));
+}
+
+static void math_scalblnl(void)
+{
+    report("math_scalblnl", scalblnl(1.5L, 1) == 3.0L);
+}
+
+static void math_erfl(void)
+{
+    report("math_erfl", erfl(0.0L) == 0.0L);
+}
+
+static void math_tgammal(void)
+{
+    report("math_tgammal", math_near((double)tgammal(5.0L), 24.0));
+}
+
+static void math_csinl(void)
+{
+    long double complex z = csinl(0.0L);
+    report("math_csinl",
+           math_near((double)creall(z), 0.0) &&
+               math_near((double)cimagl(z), 0.0));
+}
+
+static void math_ccosl(void)
+{
+    long double complex z = ccosl(0.0L);
+    report("math_ccosl", math_near((double)creall(z), 1.0));
+}
+
+static void math_ctanl(void)
+{
+    long double complex z = ctanl(0.0L);
+    report("math_ctanl", math_near((double)creall(z), 0.0));
+}
+
+static void math_cexpl(void)
+{
+    long double complex z = cexpl(0.0L);
+    report("math_cexpl", math_near((double)creall(z), 1.0));
+}
+
+static void math_clogl(void)
+{
+    long double complex z = clogl(1.0L);
+    report("math_clogl", math_near((double)creall(z), 0.0));
+}
+
+static void math_csqrtl(void)
+{
+    long double complex z = csqrtl(4.0L);
+    report("math_csqrtl", math_near((double)creall(z), 2.0));
+}
+
+static void math_cabsl(void)
+{
+    long double complex z = 3.0L + 4.0L * I;
+    report("math_cabsl", cabsl(z) == 5.0L);
+}
+
+static void math_cpow(void)
+{
+    double complex z = cpow(2.0, 3.0);
+    report("math_cpow", math_near(creal(z), 8.0));
+}
+
+static void math_cexpf(void)
+{
+    float complex z = cexpf(0.0f);
+    report("math_cexpf", crealf(z) == 1.0f);
+}
+
+static void math_clogf(void)
+{
+    float complex z = clogf(1.0f);
+    report("math_clogf", crealf(z) == 0.0f);
+}
+
+static void math_csqrf(void)
+{
+    float complex z = csqrtf(4.0f);
+    report("math_csqrf", crealf(z) == 2.0f);
+}
+
+static void math_cpowf(void)
+{
+    float complex z = cpowf(2.0f, 3.0f);
+    report("math_cpowf", crealf(z) == 8.0f);
+}
+
+static void math_islessequal(void)
+{
+    report("math_islessequal",
+           islessequal(1.0, 1.0) && islessequal(1.0, 2.0));
+}
+
+static void math_isgreaterequal(void)
+{
+    report("math_isgreaterequal", isgreaterequal(2.0, 1.0));
+}
+
+static void math_islessgreater(void)
+{
+    report("math_islessgreater",
+           islessgreater(1.0, 2.0) && !islessgreater(1.0, 1.0));
+}
+
+static void math_j0f(void)
+{
+    report("math_j0f", math_near((double)j0f(0.0f), 1.0));
+}
+
+static void math_j1f(void)
+{
+    report("math_j1f", j1f(0.0f) == 0.0f);
+}
+
+static void math_nanl(void)
+{
+    report("math_nanl", isnan(nanl("")));
+}
+
+static void math_llrint(void)
+{
+    report("math_llrint", llrint(2.0) == 2);
+}
+
+static void math_llrintl(void)
+{
+    report("math_llrintl", llrintl(2.0L) == 2);
+}
+
+static void math_lrintl(void)
+{
+    report("math_lrintl", lrintl(2.0L) == 2);
+}
+
+static void wchar_wcstof(void)
+{
+    wchar_t *end = NULL;
+    float v = wcstof(L"3.5x", &end);
+    report("wchar_wcstof", math_near((double)v, 3.5) && end && *end == L'x');
+}
+
+static void wchar_wcstold(void)
+{
+    wchar_t *end = NULL;
+    long double v = wcstold(L"2.5y", &end);
+    report("wchar_wcstold", v == 2.5L && end && *end == L'y');
+}
+
+static void wchar_mbrlen(void)
+{
+    mbstate_t st;
+    memset(&st, 0, sizeof(st));
+    report("wchar_mbrlen", mbrlen("A", 1, &st) == 1);
+}
+
+static void wchar_swprintf(void)
+{
+    wchar_t buf[8];
+    int n = swprintf(buf, 8, L"%d", 7);
+    report("wchar_swprintf", n == 1 && buf[0] == L'7' && buf[1] == L'\0');
+}
+
+static void wchar_wcwidth(void)
+{
+    report("wchar_wcwidth", wcwidth(L'A') == 1);
+}
+
+static void stdio_swscanf(void)
+{
+    int x = 0;
+    report("stdio_swscanf", swscanf(L"42", L"%d", &x) == 1 && x == 42);
+}
+
+static void stdio_snprintf_llu(void)
+{
+    char buf[16];
+    int n = snprintf(buf, sizeof(buf), "%llu", (unsigned long long)99);
+    report("stdio_snprintf_llu", n == 2 && strcmp(buf, "99") == 0);
+}
+
+static void stdio_getwc_putwc(void)
+{
+    FILE *fp = tmpfile();
+    wint_t w;
+    int ok = 0;
+
+    if (fp) {
+        if (putwc(L'Z', fp) == L'Z') {
+            rewind(fp);
+            w = getwc(fp);
+            ok = (w == L'Z');
+        }
+        fclose(fp);
+    }
+    report("stdio_getwc_putwc", ok);
+}
+
+static void string_strchr_nul(void)
+{
+    const char *s = "hi";
+    report("string_strchr_nul", strchr(s, '\0') == s + 2);
+}
+
+static void string_memcmp_len0(void)
+{
+    report("string_memcmp_len0", memcmp("a", "b", 0) == 0);
+}
+
+static void string_strnlen_zero(void)
+{
+    report("string_strnlen_zero", strnlen("", 5) == 0);
+}
+
+static void stdlib_ldiv(void)
+{
+    ldiv_t d = ldiv(17L, 5L);
+    report("stdlib_ldiv", d.quot == 3 && d.rem == 2);
+}
+
+static void ctype_isblank_tab(void)
+{
+    report("ctype_isblank_tab", isblank('\t') && !isblank('\n'));
+}
+
+static void locale_nl_langinfo(void)
+{
+    const char *cs;
+
+    setlocale(LC_ALL, "C");
+    cs = nl_langinfo(CODESET);
+    report("locale_nl_langinfo", cs != NULL && cs[0] != '\0');
+}
+
+static void locale_localeconv_decimal(void)
+{
+    struct lconv *lc;
+
+    setlocale(LC_ALL, "C");
+    lc = localeconv();
+    report("locale_localeconv_decimal",
+           lc != NULL && lc->decimal_point && lc->decimal_point[0] == '.');
+}
+
+static void math_erfcl(void)
+{
+    report("math_erfcl", erfcl(0.0L) == 1.0L);
+}
+
+static void math_logbl(void)
+{
+    report("math_logbl", logbl(8.0L) == 3.0L);
+}
+
 int main(void)
 {
     string_strlen();
@@ -6045,6 +6362,58 @@ int main(void)
     unistd_getppid_pos();
     unistd_access_tmp();
     locale_setlocale_ctype();
+    math_tanl();
+    math_atanl();
+    math_asinl();
+    math_acosl();
+    math_atan2l();
+    math_remquo();
+    math_remquol();
+    math_nexttoward();
+    math_nexttowardf();
+    math_nexttowardl();
+    math_scalbln();
+    math_scalblnl();
+    math_erfl();
+    math_tgammal();
+    math_csinl();
+    math_ccosl();
+    math_ctanl();
+    math_cexpl();
+    math_clogl();
+    math_csqrtl();
+    math_cabsl();
+    math_cpow();
+    math_cexpf();
+    math_clogf();
+    math_csqrf();
+    math_cpowf();
+    math_islessequal();
+    math_isgreaterequal();
+    math_islessgreater();
+    math_j0f();
+    math_j1f();
+    math_nanl();
+    math_llrint();
+    math_llrintl();
+    math_lrintl();
+    wchar_wcstof();
+    wchar_wcstold();
+    wchar_mbrlen();
+    wchar_swprintf();
+    wchar_wcwidth();
+    stdio_swscanf();
+    stdio_snprintf_llu();
+    stdio_getwc_putwc();
+    string_strchr_nul();
+    string_memcmp_len0();
+    string_strnlen_zero();
+    stdlib_ldiv();
+    ctype_isblank_tab();
+    locale_nl_langinfo();
+    locale_localeconv_decimal();
+    math_erfcl();
+    math_logbl();
     unistd_write();
     unistd_getpid();
     unistd_pipe();

@@ -82,6 +82,7 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.5o | curated round-14 bold pure libc | **DONE** | +71 mathf/complex/wchar/stdio/string/time/mkstemp；**477** |
 | B2.5p | curated round-15 bold pure libc | **DONE** | +73 mathl/complex/locale/*rand48/wchar mbr*/inet/stdio；**550** |
 | B2.5q | curated round-16 bold pure libc | **DONE** | +77 mathl/complexf/fpclassify/wchar/stdio/inet；**627** |
+| B2.5r | curated round-17 bold pure libc | **DONE** | +52 mathl/complex/fpclassify/wchar/stdio/string/locale；**679** |
 | B2.6 | `flock` / fcntl ロック | **DONE** | P8_FLOCK |
 | B2.7 | `clone` スレッドフラグ | partial（coop THREAD） | TLS + スケジューラ |
 | B2.8 | futex 深化 | 部分 stub | WAIT 実待ち・WAKE |
@@ -97,12 +98,12 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.18 | `membarrier` / `rseq` | **DONE（空成功）** | |
 | B2.19 | `getrandom` | **DONE** | 品質は簡易 |
 | B2.20 | 静的 hello/musl スモーク | **追加**（`/musl_hello.elf`） | B2_MUSL_HELLO_OK |
-| B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **627**） | `LIBC_TEST_CURATED_RESULT` |
+| B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **679**） | `LIBC_TEST_CURATED_RESULT` |
 | B2.22 | `setitimer`/`getitimer`/`sched_getaffinity` | **DONE**（2026-07-29；ITIMER_REAL↔alarm；affinity=CPU0） | curated ENOSYS 0 |
 | B2.23 | ash wait / waitpid heal | **DONE**（soft-zombie；1-reap；blocking `-1` yield；phase3 ALL PASS） | `cat FILE\|grep` 後期はハーネス回避・本修繕は次 |
 
 **完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。  
-→ 2026-07-29: curated **627** + phase3 **ALL PASS** + desktop ENOSYS **0**（スタブ実体化スプリント）。Walls: thread / `cat FILE|grep` 後期 / TCP / cmdsubst PF.
+→ 2026-07-29: curated **679** + phase3 **ALL PASS** + desktop ENOSYS **0**（round-17 +52）。Walls: thread / `cat FILE|grep` 後期 / TCP / cmdsubst PF.
 
 ### B3 — Qt / デスクトップ向け（Phase 6 後半〜）〜15 項目
 

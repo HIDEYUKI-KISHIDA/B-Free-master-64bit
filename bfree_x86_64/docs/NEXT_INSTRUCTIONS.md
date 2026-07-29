@@ -38,8 +38,8 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-07-29（スタブ実体化スプリント）
-- **ゲート:** curated **627 PASS** / phase3 **ALL PASS** / desktop 意図しない ENOSYS **0**
+- **Updated:** 2026-07-29（curated round-17）
+- **ゲート:** curated **679 PASS** / phase3 **ALL PASS** / desktop 意図しない ENOSYS **0**
 - **スタブ実体化:** `setitimer`/`getitimer`（alarm 共用）・`sched_getaffinity`；policy 94 は未着手のまま
 - **wait 安定化:** ash `wait`（WNOHANG+sigsuspend）向け soft-zombie；`waitpid` は 1 子/呼出し；blocking `-1` は runnable へ yield；`rt_sigsuspend` 配線
 - **phase3 ハーネス:** 後期 `cat|grep` / `$(pwd)` を回避（`true & wait $!` で waitall）
