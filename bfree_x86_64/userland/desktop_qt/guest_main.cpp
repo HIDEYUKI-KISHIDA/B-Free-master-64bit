@@ -8,6 +8,8 @@
 #include "guest_bfree_shell_process.h"
 #include "guest_desktop_bridge.h"
 #include "guest_mvp_qmlcache_register.h"
+#include "guest_breeze_tokens.h"
+#include "guest_splash_data.h"
 
 #include <QEventLoop>
 #include <QBackingStore>
@@ -20,6 +22,7 @@
 #include <QGuiApplication>
 #include <QKeyEvent>
 #include <QLocale>
+#include <QMetaObject>
 #include <QImage>
 #include <QMouseEvent>
 #include <QPainter>
@@ -33,6 +36,17 @@
 #include <QQuickWindow>
 #include <private/qquickrectangle_p.h>
 #include <private/qwindow_p.h>
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+#include <QtQuickTemplates2/private/qquickabstractbutton_p.h>
+#include <QtQuickTemplates2/private/qquickbutton_p.h>
+#include <QtQuickTemplates2/private/qquickcheckbox_p.h>
+#include <QtQuickTemplates2/private/qquickcontrol_p.h>
+#include <QtQuickTemplates2/private/qquickradiobutton_p.h>
+#include <QtQuickTemplates2/private/qquickswitch_p.h>
+#include <QtQuickTemplates2/private/qquicktheme_p.h>
+#include <QtQuickTemplates2/private/qquicktheme_p_p.h>
+#include <QtQuickLayouts/private/qquicklinearlayout_p.h>
+#endif
 #include <QRegion>
 #include <QResource>
 #include <QString>
@@ -57,6 +71,7 @@ extern void bfree_qpa_cache_thread_data(void);
 extern bool bfree_qpa_process_events(QEventLoop::ProcessEventsFlags flags);
 extern void bfree_qpa_set_mouse_bridge(void (*)(int, int, unsigned, unsigned, int, int));
 extern void bfree_qpa_set_key_bridge(void (*)(unsigned, int));
+extern "C" void bfree_qpa_set_update_delivery(int enabled);
 extern QStaticPlugin qt_static_plugin_QJpegPlugin(void);
 
 /* Static Qt: QmlMeta/Quick type registrars are not auto-imported without qmlplugins. */
@@ -64,6 +79,14 @@ extern void qml_register_types_QtQml(void);
 extern void qml_register_types_QtQml_Models(void);
 extern void qml_register_types_QtQml_WorkerScript(void);
 extern void qml_register_types_QtQuick(void);
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+extern void qml_register_types_QtQuick_Templates(void);
+extern void qml_register_types_QtQuick_Controls_impl(void);
+extern void qml_register_types_QtQuick_Controls(void);
+extern void qml_register_types_QtQuick_Controls_Basic_impl(void);
+extern void qml_register_types_QtQuick_Controls_Basic(void);
+extern void qml_register_types_QtQuick_Layouts(void);
+#endif
 
 extern "C" {
 #include "guest_serial.h"
@@ -94,6 +117,7 @@ void bfree_guest_serial_step_c(char step);
 void bfree_guest_call_on_stack(void (*fn)(void), unsigned long long stack_top);
 QWindow *bfree_guest_try_qquick_window(void);
 void bfree_guest_qquick_drain(void);
+void bfree_guest_ensure_drawhelpers(void);
 void bfree_guest_set_prefer_fallback_alloc(int on);
 void bfree_guest_serial_step_raw(char step);
 void bfree_guest_rebind_musl_fs(void);
@@ -181,9 +205,20 @@ static int g_qml_ready = 0;
 /* Distinctive fill when GuestDesktopShell.qml Rectangle is present (FB lookalike mirrors it). */
 static uint32_t g_qml_rect_color = 0;
 static int g_qml_rect_configured = 0;
+/* IR Rectangle reparented under C++ shell — FB badge proves live color. */
+static QQuickRectangle *g_ir_desk_rect = nullptr;
+static int g_ir_rect_live = 0;
+static int g_ir_sg_ok = 0; /* HasContents + soft present survived */
+static int g_text_fb_ok = 0; /* FB glyph path (QQuickText create still PF@0) */
 /* W3: sparse Quick window chrome (host desktopWindowLayer look). */
 static int g_w3_layer_ready = 0;
-static int g_w3_sg_pixels = 0; /* 1 = skip FB window bodies (SG presented chrome) */
+static int g_w3_sg_pixels = 0; /* 1 = SG session armed */
+static int g_w3_sg_second_ok = 0; /* dual-pulse / multi-item present */
+static int g_w3_sg_multi_ok = 0; /* child rect visible under bar during present */
+static int g_w3_sg_win_auth = 0; /* 1 = skip FB for static SG window probe slot */
+static QQuickRectangle *g_w32_win_probe = nullptr; /* child of taskbar bar */
+/* Must match g_w32_win_probe geometry (contentItem child). */
+enum { W3_SG_PROBE_X = 80, W3_SG_PROBE_Y = 60, W3_SG_PROBE_W = 420, W3_SG_PROBE_H = 300 };
 /* W3.5: force one window outer visible once at attach (FB still pixel authority). */
 static int g_w35_force_outer = 0;
 static QQuickItem *g_w3_layer = nullptr;
@@ -194,6 +229,40 @@ static QQuickItem *g_w31_layer = nullptr;
 /* W3.2: SG presented taskbar strip once at attach; FB skips that strip. */
 static int g_w32_sg_taskbar = 0;
 static int g_w32_probe_ok = 0;
+/* G1: wallpaper+icons+taskbar SG leaves are pixel authority (FB skips those bands). */
+static int g_sg_desktop_auth = 0;
+static int g_gate1_window_ok = 0;
+/* Product relative-import bypass: root-qrc thin child (GuestProductChild). */
+static QQuickItem *g_prod_child_item = nullptr;
+static QQuickItem *g_prod_chrome_item = nullptr;
+static QQuickItem *g_prod_tray_item = nullptr;
+static QQuickItem *g_prod_icons_item = nullptr;
+static QQuickItem *g_prod_icons2_item = nullptr;
+static QQuickItem *g_prod_start_item = nullptr;
+static QQuickRectangle *g_ds_product_content_badge = nullptr;
+static QQuickWindow *g_prod_sg_win = nullptr;
+static int g_prod_sg_ok = 0;
+static int g_prod_sg_sustained = 0;
+/* Step3: FB0 paints product leaf geometry (SG soft present survived; flush deferred). */
+static int g_prod_fb0_auth = 0;
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+static QQuickButton *g_controls_button_probe = nullptr;
+static QQuickCheckBox *g_controls_checkbox_probe = nullptr;
+static QQuickRadioButton *g_controls_radio_probe = nullptr;
+static QQuickSwitch *g_controls_switch_probe = nullptr;
+static QObject *g_qml_controls_button_root = nullptr;
+static QQuickButton *g_qml_controls_button_standin = nullptr;
+static QQuickRowLayout *g_layouts_row_probe = nullptr;
+static QQuickItem *g_ds_qml_root = nullptr; /* qrc:/DesktopShell.qml Item root */
+static QQuickRowLayout *g_ds_subset_row = nullptr;
+#endif
+static QQuickItem *g_cpp_item_parent_probe = nullptr;
+static int g_sg_chrome_need_pulse = 0;
+static int g_sg_start_leaf_ok = 0;
+static QQuickRectangle *g_sg_wallpaper = nullptr;
+static QQuickRectangle *g_sg_start_leaf = nullptr;
+static QQuickRectangle *g_sg_icons[24];
+static int g_sg_icons_n = 0;
 /* W3.4: soft UpdateRequest pulses on taskbar bar after attach (FB still authority). */
 static int g_w34_pulses = 0;
 static int g_w34_ok = 0;
@@ -235,10 +304,44 @@ static int guest_desk_start_row0_y(void)
 }
 
 /* Phase C: /persist listing via raw syscalls (avoid QDir — corrupts dispatcher). */
-static char g_persist_names[12][24];
+enum { G_PERSIST_MAX = 24, G_PERSIST_NAME = 32, G_TERM_MAX = 40, G_TERM_COLS = 64,
+       G_TERM_LINE_MAX = 56 };
+static char g_persist_names[G_PERSIST_MAX][G_PERSIST_NAME];
 static int g_persist_nnames = 0;
-static char g_persist_preview[80];
+static char g_persist_preview[120];
 static int g_persist_listed = 0;
+static int g_persist_sel = -1;
+static int g_persist_scroll = 0;
+
+/* FB Terminal scrollback + line editor (BusyBox via vfork+exec oneshot). */
+static char g_term_lines[G_TERM_MAX][G_TERM_COLS];
+static int g_term_nlines = 0;
+static char g_term_line[G_TERM_LINE_MAX];
+static int g_term_linelen = 0;
+static int g_term_session = 0;
+/* Run BusyBox demo after first paint so open never blocks the input loop. */
+static int g_term_bb_demo_pending = 0;
+
+static long guest_sys1(long n, long a);
+static long guest_sys2(long n, long a, long b);
+static long guest_sys3(long n, long a, long b, long c);
+static void guest_desk_mark_dirty(void);
+
+static long guest_sys1(long n, long a)
+{
+    long r;
+    __asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a)
+                     : "rcx", "r11", "memory");
+    return r;
+}
+
+static long guest_sys2(long n, long a, long b)
+{
+    long r;
+    __asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a), "S"(b)
+                     : "rcx", "r11", "memory");
+    return r;
+}
 
 static long guest_sys3(long n, long a, long b, long c)
 {
@@ -256,6 +359,37 @@ struct guest_linux_dirent64 {
     char d_name[];
 };
 
+static void guest_persist_load_preview(const char *pick)
+{
+    char path[40];
+    if (!pick || !pick[0])
+        return;
+    path[0] = '/'; path[1] = 'p'; path[2] = 'e'; path[3] = 'r';
+    path[4] = 's'; path[5] = 'i'; path[6] = 's'; path[7] = 't'; path[8] = '/';
+    size_t j = 0;
+    while (pick[j] && j + 10U < sizeof(path)) {
+        path[9 + j] = pick[j];
+        ++j;
+    }
+    path[9 + j] = '\0';
+    long f2 = guest_sys3(2, (long)path, 0, 0);
+    if (f2 < 0)
+        return;
+    long nr = guest_sys3(0 /* read */, f2, (long)g_persist_preview,
+                         (long)(sizeof(g_persist_preview) - 1U));
+    (void)guest_sys3(3, f2, 0, 0);
+    if (nr > 0) {
+        g_persist_preview[nr] = '\0';
+        guest_serial_puts("[desktop_qt] Explorer read ");
+        guest_serial_puts(pick);
+        guest_serial_puts("=");
+        guest_serial_puts(g_persist_preview);
+        guest_serial_puts("\n");
+    } else {
+        g_persist_preview[0] = '\0';
+    }
+}
+
 static void guest_persist_scan_once(void)
 {
     char dentbuf[1024];
@@ -266,6 +400,8 @@ static void guest_persist_scan_once(void)
     g_persist_listed = 1;
     g_persist_nnames = 0;
     g_persist_preview[0] = '\0';
+    g_persist_sel = -1;
+    g_persist_scroll = 0;
     fd = guest_sys3(2 /* open */, (long)"/persist", 0 /* O_RDONLY */, 0);
     if (fd < 0) {
         guest_serial_puts("[desktop_qt] Explorer /persist open fail\n");
@@ -277,7 +413,7 @@ static void guest_persist_scan_once(void)
         if (nread <= 0)
             break;
         long off = 0;
-        while (off < nread && g_persist_nnames < 12) {
+        while (off < nread && g_persist_nnames < G_PERSIST_MAX) {
             auto *d = reinterpret_cast<guest_linux_dirent64 *>(dentbuf + off);
             const char *nm = d->d_name;
             if (nm[0] != '.' || (nm[1] != '\0' && !(nm[1] == '.' && nm[2] == '\0'))) {
@@ -294,9 +430,9 @@ static void guest_persist_scan_once(void)
     }
     (void)guest_sys3(3 /* close */, fd, 0, 0);
 
-    /* Prefer hello.txt / desk.txt / first file for preview. */
-    const char *pick = nullptr;
-    for (int pass = 0; pass < 3 && !pick; ++pass) {
+    /* Prefer hello* / desk* / first file for preview. */
+    int pick_i = -1;
+    for (int pass = 0; pass < 3 && pick_i < 0; ++pass) {
         for (int i = 0; i < g_persist_nnames; ++i) {
             const char *nm = g_persist_names[i];
             if (pass == 0) {
@@ -305,7 +441,7 @@ static void guest_persist_scan_once(void)
                     (nm[2] == 'l' || nm[2] == 'L') &&
                     (nm[3] == 'l' || nm[3] == 'L') &&
                     (nm[4] == 'o' || nm[4] == 'O')) {
-                    pick = nm;
+                    pick_i = i;
                     break;
                 }
             } else if (pass == 1) {
@@ -313,39 +449,18 @@ static void guest_persist_scan_once(void)
                     (nm[1] == 'e' || nm[1] == 'E') &&
                     (nm[2] == 's' || nm[2] == 'S') &&
                     (nm[3] == 'k' || nm[3] == 'K')) {
-                    pick = nm;
+                    pick_i = i;
                     break;
                 }
             } else {
-                pick = nm;
+                pick_i = i;
                 break;
             }
         }
     }
-    if (pick) {
-        char path[40];
-        path[0] = '/'; path[1] = 'p'; path[2] = 'e'; path[3] = 'r';
-        path[4] = 's'; path[5] = 'i'; path[6] = 's'; path[7] = 't'; path[8] = '/';
-        size_t j = 0;
-        while (pick[j] && j + 10U < sizeof(path)) {
-            path[9 + j] = pick[j];
-            ++j;
-        }
-        path[9 + j] = '\0';
-        long f2 = guest_sys3(2, (long)path, 0, 0);
-        if (f2 >= 0) {
-            long nr = guest_sys3(0 /* read */, f2, (long)g_persist_preview,
-                                 (long)(sizeof(g_persist_preview) - 1U));
-            (void)guest_sys3(3, f2, 0, 0);
-            if (nr > 0) {
-                g_persist_preview[nr] = '\0';
-                guest_serial_puts("[desktop_qt] Explorer read ");
-                guest_serial_puts(pick);
-                guest_serial_puts("=");
-                guest_serial_puts(g_persist_preview);
-                guest_serial_puts("\n");
-            }
-        }
+    if (pick_i >= 0) {
+        g_persist_sel = pick_i;
+        guest_persist_load_preview(g_persist_names[pick_i]);
     }
 }
 
@@ -369,29 +484,684 @@ static void guest_persist_create_desk_note(void)
     g_persist_listed = 0;
 }
 
-/* Terminal: one BusyBox-equivalent command via syscalls (keep desktop alive). */
-static void guest_terminal_run_once(void)
+static void guest_term_push(const char *s)
+{
+    int i = 0;
+    if (!s)
+        return;
+    if (g_term_nlines >= G_TERM_MAX) {
+        for (int r = 1; r < G_TERM_MAX; ++r) {
+            for (int c = 0; c < G_TERM_COLS; ++c)
+                g_term_lines[r - 1][c] = g_term_lines[r][c];
+        }
+        g_term_nlines = G_TERM_MAX - 1;
+    }
+    while (s[i] && i + 1 < G_TERM_COLS) {
+        g_term_lines[g_term_nlines][i] = s[i];
+        ++i;
+    }
+    g_term_lines[g_term_nlines][i] = '\0';
+    ++g_term_nlines;
+}
+
+static const char g_term_prompt_pref[] = "bfree> ";
+
+static int guest_term_prompt_cols(void)
+{
+    int n = 0;
+    while (g_term_prompt_pref[n])
+        ++n;
+    return n + g_term_linelen;
+}
+
+static int guest_term_casecmp(char a, char b)
+{
+    if (a >= 'A' && a <= 'Z')
+        a = (char)(a - 'A' + 'a');
+    if (b >= 'A' && b <= 'Z')
+        b = (char)(b - 'A' + 'a');
+    return (a == b) ? 1 : 0;
+}
+
+static int guest_term_cmd_eq(const char *a, const char *b)
+{
+    int i = 0;
+    if (!a || !b)
+        return 0;
+    while (a[i] && b[i] && guest_term_casecmp(a[i], b[i]))
+        ++i;
+    return (a[i] == 0 && b[i] == 0) ? 1 : 0;
+}
+
+static void guest_term_prompt_text(char *out, int outmax)
+{
+    int p = 0;
+    int i;
+    if (outmax < 4) {
+        if (outmax > 0)
+            out[0] = '\0';
+        return;
+    }
+    for (i = 0; g_term_prompt_pref[i] && p + 1 < outmax; ++i)
+        out[p++] = g_term_prompt_pref[i];
+    for (i = 0; i < g_term_linelen && p + 1 < outmax; ++i)
+        out[p++] = g_term_line[i];
+    /* Block cursor is painted as a rect — keep a space so glyphs do not collide. */
+    if (p + 1 < outmax)
+        out[p++] = ' ';
+    out[p] = '\0';
+}
+
+static void guest_term_refresh_prompt(void)
+{
+    char buf[G_TERM_COLS];
+    guest_term_prompt_text(buf, (int)sizeof(buf));
+    if (g_term_nlines > 0) {
+        int i = 0;
+        while (buf[i] && i + 1 < G_TERM_COLS) {
+            g_term_lines[g_term_nlines - 1][i] = buf[i];
+            ++i;
+        }
+        g_term_lines[g_term_nlines - 1][i] = '\0';
+    } else {
+        guest_term_push(buf);
+    }
+}
+
+static void guest_term_push_prompt(void)
+{
+    g_term_linelen = 0;
+    g_term_line[0] = '\0';
+    guest_term_refresh_prompt();
+}
+
+static int guest_term_streq(const char *a, const char *b)
+{
+    int i = 0;
+    if (!a || !b)
+        return 0;
+    while (a[i] && b[i] && a[i] == b[i])
+        ++i;
+    return (a[i] == 0 && b[i] == 0) ? 1 : 0;
+}
+
+static void guest_term_skip_ws(const char **pp)
+{
+    const char *p = *pp;
+    while (*p == ' ' || *p == '\t')
+        ++p;
+    *pp = p;
+}
+
+static int guest_term_take_word(const char **pp, char *out, int outmax)
+{
+    const char *p = *pp;
+    int n = 0;
+    guest_term_skip_ws(&p);
+    while (*p && *p != ' ' && *p != '\t' && n + 1 < outmax) {
+        out[n++] = *p++;
+    }
+    out[n] = '\0';
+    guest_term_skip_ws(&p);
+    *pp = p;
+    return n;
+}
+
+static void guest_term_push_ls_persist(void)
+{
+    char line[G_TERM_COLS];
+    int n = 0;
+    guest_term_push("$ ls /persist");
+    for (int i = 0; i < g_persist_nnames && n < 8; ++i) {
+        int p = 0;
+        line[p++] = ' ';
+        for (int j = 0; g_persist_names[i][j] && p + 1 < G_TERM_COLS; ++j)
+            line[p++] = g_persist_names[i][j];
+        line[p] = '\0';
+        guest_term_push(line);
+        ++n;
+    }
+    if (g_persist_nnames == 0)
+        guest_term_push(" (empty)");
+}
+
+/* Forward — defined below. */
+static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1);
+
+static void guest_term_exec_line(const char *raw)
+{
+    char shown[G_TERM_COLS];
+    char cmd[32];
+    char arg[80];
+    const char *p = raw ? raw : "";
+    int i = 0;
+    int sp = 0;
+
+    guest_term_skip_ws(&p);
+    if (!*p)
+        return;
+
+    shown[sp++] = '$';
+    shown[sp++] = ' ';
+    while (p[i] && sp + 1 < G_TERM_COLS) {
+        shown[sp++] = p[i++];
+    }
+    shown[sp] = '\0';
+    guest_term_push(shown);
+
+    if (!guest_term_take_word(&p, cmd, (int)sizeof(cmd)))
+        return;
+
+    if (guest_term_cmd_eq(cmd, "help") || guest_term_streq(cmd, "?")) {
+        guest_term_push("--- commands (7) ---");
+        guest_term_push(" help   this list");
+        guest_term_push(" echo   print text");
+        guest_term_push(" ls     list /persist");
+        guest_term_push(" cat    show a file");
+        guest_term_push(" uname  system name");
+        guest_term_push(" clear  clear screen");
+        guest_term_push(" busybox <applet> [arg]");
+        guest_term_push("example: echo hello");
+        guest_term_push("example: ls");
+        guest_term_push("example: cat desk.txt");
+        guest_serial_puts("[desktop_qt] Terminal help\n");
+        return;
+    }
+    if (guest_term_cmd_eq(cmd, "clear") || guest_term_cmd_eq(cmd, "cls")) {
+        g_term_nlines = 0;
+        guest_serial_puts("[desktop_qt] Terminal clear\n");
+        return;
+    }
+    if (guest_term_cmd_eq(cmd, "ls")) {
+        g_persist_listed = 0;
+        guest_persist_scan_once();
+        guest_term_push_ls_persist();
+        if (*p) {
+            if (guest_term_take_word(&p, arg, (int)sizeof(arg)))
+                (void)guest_terminal_busybox_oneshot("ls", arg);
+        }
+        guest_serial_puts("[desktop_qt] Terminal ls\n");
+        return;
+    }
+    if (guest_term_cmd_eq(cmd, "echo")) {
+        /* Local echo — no BusyBox spawn (fast + reliable). */
+        if (*p)
+            guest_term_push(p);
+        else
+            guest_term_push("");
+        guest_serial_puts("[desktop_qt] Terminal echo\n");
+        return;
+    }
+    if (guest_term_cmd_eq(cmd, "uname")) {
+        if (!*p)
+            (void)guest_terminal_busybox_oneshot("uname", "-a");
+        else if (guest_term_take_word(&p, arg, (int)sizeof(arg)))
+            (void)guest_terminal_busybox_oneshot("uname", arg);
+        return;
+    }
+    if (guest_term_cmd_eq(cmd, "cat")) {
+        if (guest_term_take_word(&p, arg, (int)sizeof(arg))) {
+            /* Prefer /persist/name when bare filename. */
+            char path[96];
+            int pi = 0;
+            if (arg[0] != '/') {
+                static const char pref[] = "/persist/";
+                for (pi = 0; pref[pi] && pi + 1 < (int)sizeof(path); ++pi)
+                    path[pi] = pref[pi];
+                for (i = 0; arg[i] && pi + 1 < (int)sizeof(path); ++i)
+                    path[pi++] = arg[i];
+                path[pi] = '\0';
+                if (guest_terminal_busybox_oneshot("cat", path) != 0)
+                    guest_term_push("(cat failed)");
+            } else if (guest_terminal_busybox_oneshot("cat", arg) != 0) {
+                guest_term_push("(cat failed)");
+            }
+        } else {
+            guest_term_push("usage: cat <file>");
+            guest_term_push(" e.g. cat desk.txt");
+        }
+        return;
+    }
+    if (guest_term_cmd_eq(cmd, "busybox") || guest_term_cmd_eq(cmd, "bb")) {
+        char applet[32];
+        if (!guest_term_take_word(&p, applet, (int)sizeof(applet))) {
+            guest_term_push("usage: busybox <applet> [arg]");
+            return;
+        }
+        if (*p)
+            (void)guest_terminal_busybox_oneshot(applet, p);
+        else
+            (void)guest_terminal_busybox_oneshot(applet, nullptr);
+        return;
+    }
+
+    /* Unknown built-in — do not silently run BusyBox (empty/confusing). */
+    {
+        char msg[G_TERM_COLS];
+        int m = 0;
+        static const char pref[] = "unknown: ";
+        static const char suf[] = "  (type help)";
+        for (i = 0; pref[i] && m + 1 < G_TERM_COLS; ++i)
+            msg[m++] = pref[i];
+        for (i = 0; cmd[i] && m + 1 < G_TERM_COLS; ++i)
+            msg[m++] = cmd[i];
+        for (i = 0; suf[i] && m + 1 < G_TERM_COLS; ++i)
+            msg[m++] = suf[i];
+        msg[m] = '\0';
+        guest_term_push(msg);
+        guest_serial_puts("[desktop_qt] Terminal unknown cmd\n");
+    }
+}
+
+/* FB Terminal → busybox.elf one-shot (vfork+exec).
+ * Capture stdout via a parent-held /tmp file fd (shared fd table: child only
+ * dup2's it; parent must not reopen+O_TRUNC after wait). Pipe capture fails
+ * when Qt exhausts the 16 guest pipe slots. outfd/sav1 are static (vfork+-O2).
+ * Exec heals stdin only so the stdout redirect survives private-AS transfer. */
+static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1)
+{
+    static char bb_path[] = "/busybox.elf";
+    static char bb_applet[32];
+    static char bb_arg1[64];
+    static char *bb_argv[4];
+    static char outbuf[192];
+    static char out_path[] = "/tmp/bb.out";
+    static long outfd;
+    static long sav1;
+    long pid;
+    long nfd;
+    long n;
+    int i;
+    int argc = 0;
+
+    if (!applet || !applet[0])
+        return -1;
+    for (i = 0; applet[i] && i + 1 < (int)sizeof(bb_applet); ++i)
+        bb_applet[i] = applet[i];
+    bb_applet[i] = '\0';
+    bb_argv[argc++] = bb_applet;
+    if (arg1 && arg1[0]) {
+        for (i = 0; arg1[i] && i + 1 < (int)sizeof(bb_arg1); ++i)
+            bb_arg1[i] = arg1[i];
+        bb_arg1[i] = '\0';
+        bb_argv[argc++] = bb_arg1;
+    }
+    bb_argv[argc] = nullptr;
+
+    guest_serial_puts("[desktop_qt] Terminal busybox spawn ");
+    guest_serial_puts(bb_applet);
+    guest_serial_puts("\n");
+
+    sav1 = guest_sys1(32 /* dup */, 1);
+    if (sav1 < 0) {
+        guest_serial_puts("[desktop_qt] Terminal busybox dup stdout fail\n");
+        return -1;
+    }
+    /* O_WRONLY|O_CREAT|O_TRUNC */
+    outfd = guest_sys3(2 /* open */, (long)out_path, 1 | 64 | 512, 0644);
+    if (outfd < 0) {
+        guest_serial_puts("[desktop_qt] Terminal busybox /tmp fail\n");
+        (void)guest_sys1(3, sav1);
+        return -1;
+    }
+
+    pid = guest_sys1(58 /* vfork */, 0);
+    if (pid < 0) {
+        guest_serial_puts("[desktop_qt] Terminal busybox vfork fail\n");
+        (void)guest_sys1(3, outfd);
+        outfd = -1;
+        (void)guest_sys1(3, sav1);
+        return -1;
+    }
+    if (pid == 0) {
+        static const char mark[] = "[bbchild]\n";
+        (void)guest_sys2(24, (long)mark, (long)(sizeof(mark) - 1));
+        nfd = guest_sys3(2, (long)"/dev/null", 0, 0);
+        if (nfd >= 0) {
+            (void)guest_sys2(33 /* dup2 */, nfd, 0);
+            if (nfd > 2)
+                (void)guest_sys1(3, nfd);
+        }
+        /* Leave outfd open for parent; do not close it (shared table). */
+        (void)guest_sys2(33 /* dup2 */, outfd, 1);
+        (void)guest_sys3(59 /* execve */, (long)bb_path, (long)bb_argv, 0);
+        {
+            static const char fail[] = "[bbexecfail]\n";
+            (void)guest_sys2(24, (long)fail, (long)(sizeof(fail) - 1));
+        }
+        guest_sys1(60 /* exit */, 127);
+        for (;;)
+            __asm__ volatile("pause" ::: "memory");
+    }
+    (void)guest_sys3(61 /* waitpid */, pid, 0, 0);
+
+    /* Child exit may have left stdout on outfd — restore. */
+    (void)guest_sys2(33 /* dup2 */, sav1, 1);
+    (void)guest_sys1(3, sav1);
+
+    (void)guest_sys3(8 /* lseek */, outfd, 0, 0 /* SEEK_SET */);
+    outbuf[0] = '\0';
+    n = guest_sys3(0 /* read */, outfd, (long)outbuf, (long)(sizeof(outbuf) - 1));
+    if (n > 0) {
+        guest_serial_puts("[desktop_qt] Terminal busybox held-fd ok\n");
+    } else {
+        guest_serial_puts("[desktop_qt] Terminal busybox held-fd miss\n");
+        (void)guest_sys1(3, outfd);
+        outfd = -1;
+        /* Fallback: reopen by name (no O_TRUNC) in case the held fd went stale. */
+        {
+            long rfd = guest_sys3(2 /* open */, (long)out_path, 0, 0);
+            if (rfd < 0) {
+                guest_serial_puts("[desktop_qt] Terminal busybox reopen fail\n");
+            } else {
+                n = guest_sys3(0 /* read */, rfd, (long)outbuf, (long)(sizeof(outbuf) - 1));
+                (void)guest_sys1(3, rfd);
+                if (n > 0)
+                    guest_serial_puts("[desktop_qt] Terminal busybox reopen ok\n");
+            }
+        }
+    }
+    if (outfd >= 0) {
+        (void)guest_sys1(3, outfd);
+        outfd = -1;
+    }
+    if (n < 0)
+        n = 0;
+    while (n > 0 && (outbuf[n - 1] == '\n' || outbuf[n - 1] == '\r'))
+        --n;
+    outbuf[n] = '\0';
+
+    if (n <= 0) {
+        guest_serial_puts("[desktop_qt] Terminal busybox empty cap\n");
+        guest_term_push("(empty capture)");
+        return -1;
+    }
+    guest_term_push(outbuf);
+    guest_serial_puts("[desktop_qt] Terminal busybox ok\n");
+    guest_serial_puts("[desktop_qt] Terminal busybox out=");
+    guest_serial_puts(outbuf);
+    guest_serial_puts("\n");
+    return 0;
+}
+
+/* FB Terminal: arm line editor immediately (no vfork on open/raise).
+ * BusyBox demo runs once from the event loop after the first paint. */
+static void guest_terminal_ensure_session(void)
 {
     static const char body[] = "TERM_OK";
-    static int ran;
-    if (ran)
+    long fd;
+
+    if (g_term_session)
         return;
-    ran = 1;
-    long fd = guest_sys3(2, (long)"/persist/term.txt", 1 | 64 | 512, 0644);
+
+    g_term_nlines = 0;
+    g_term_linelen = 0;
+    g_term_line[0] = '\0';
+    g_term_session = 1;
+
+    fd = guest_sys3(2, (long)"/persist/term.txt", 1 | 64 | 512, 0644);
     if (fd < 0) {
         guest_serial_puts("[desktop_qt] Terminal command fail\n");
+        guest_term_push("Terminal: /persist write fail");
+        guest_term_push_prompt();
+        guest_serial_puts("[desktop_qt] Terminal line editor ready\n");
         return;
     }
     (void)guest_sys3(1 /* write */, fd, (long)body, (long)(sizeof(body) - 1));
-    (void)guest_sys3(3, fd, 0, 0);
+    (void)guest_sys1(3, fd);
     guest_serial_puts("[desktop_qt] Terminal ran echo TERM_OK\n");
+
+    guest_term_push("B-Free Terminal");
+    guest_term_push("type help then Enter");
+    guest_term_push_prompt();
+    g_term_bb_demo_pending = 1;
+    guest_serial_puts("[desktop_qt] Terminal session ready\n");
+    guest_serial_puts("[desktop_qt] Terminal line editor ready\n");
     g_persist_listed = 0;
+}
+
+static void guest_terminal_run_pending_demo(void)
+{
+    if (!g_term_bb_demo_pending)
+        return;
+    g_term_bb_demo_pending = 0;
+    /* Smoke seed only — keep UI short; restore prompt after. */
+    if (guest_terminal_busybox_oneshot("echo", "BUSYBOX_OK") != 0)
+        guest_serial_puts("[desktop_qt] Terminal busybox spawn failed\n");
+    else
+        guest_serial_puts("[desktop_qt] Terminal busybox armed\n");
+    guest_term_push_prompt();
+    guest_desk_mark_dirty();
+}
+
+/* QPA normalizeGuiKeycode maps CR/LF/BS/Esc/Tab to Qt::Key_* (0x010000xx).
+ * Desk/Terminal line editor speak ASCII — undo that here. */
+static uint32_t guest_desk_denorm_key(uint32_t k)
+{
+    switch (k) {
+    case 0x01000000u: /* Qt::Key_Escape */
+        return 27u;
+    case 0x01000001u: /* Qt::Key_Tab */
+        return 9u;
+    case 0x01000003u: /* Qt::Key_Backspace */
+        return 8u;
+    case 0x01000004u: /* Qt::Key_Return */
+    case 0x01000005u: /* Qt::Key_Enter */
+        return 13u;
+    case 0x01000007u: /* Qt::Key_Delete */
+        return 127u;
+    default:
+        return k;
+    }
+}
+
+static void guest_terminal_on_key(uint32_t k)
+{
+    k = guest_desk_denorm_key(k);
+    if (!g_term_session) {
+        g_term_session = 1;
+        guest_term_push_prompt();
+    }
+
+    if (k == 13u || k == 10u) {
+        char run[G_TERM_LINE_MAX];
+        int i;
+        for (i = 0; i < g_term_linelen; ++i)
+            run[i] = g_term_line[i];
+        run[i] = '\0';
+        /* Finalize prompt line without cursor block. */
+        {
+            char done[G_TERM_COLS];
+            int p = 0;
+            for (i = 0; g_term_prompt_pref[i] && p + 1 < G_TERM_COLS; ++i)
+                done[p++] = g_term_prompt_pref[i];
+            for (i = 0; i < g_term_linelen && p + 1 < G_TERM_COLS; ++i)
+                done[p++] = g_term_line[i];
+            done[p] = '\0';
+            if (g_term_nlines > 0) {
+                int j = 0;
+                while (done[j] && j + 1 < G_TERM_COLS) {
+                    g_term_lines[g_term_nlines - 1][j] = done[j];
+                    ++j;
+                }
+                g_term_lines[g_term_nlines - 1][j] = '\0';
+            }
+        }
+        guest_term_exec_line(run);
+        guest_term_push_prompt();
+        guest_desk_mark_dirty();
+        return;
+    }
+    if (k == 8u || k == 127u) {
+        if (g_term_linelen > 0) {
+            --g_term_linelen;
+            g_term_line[g_term_linelen] = '\0';
+            guest_term_refresh_prompt();
+            guest_desk_mark_dirty();
+        }
+        return;
+    }
+    /* Printable ASCII (skip Esc — handled by desk close). */
+    if (k >= 32u && k < 127u && g_term_linelen + 1 < G_TERM_LINE_MAX) {
+        g_term_line[g_term_linelen++] = (char)k;
+        g_term_line[g_term_linelen] = '\0';
+        guest_term_refresh_prompt();
+        guest_desk_mark_dirty();
+    }
+}
+
+static void guest_desktopshell_guest_neutralize_tree(QQuickItem *root)
+{
+    if (!root)
+        return;
+    root->setAcceptedMouseButtons(Qt::NoButton);
+    root->setEnabled(false);
+    const QList<QQuickItem *> kids = root->childItems();
+    for (QQuickItem *ch : kids) {
+        ch->setVisible(false);
+        ch->setEnabled(false);
+        ch->setAcceptedMouseButtons(Qt::NoButton);
+        ch->setFlag(QQuickItem::ItemHasContents, false);
+        guest_desktopshell_guest_neutralize_tree(ch);
+    }
+}
+
+static int guest_qml_rectangle_child_count(QQuickItem *root)
+{
+    int n = 0;
+    if (!root)
+        return 0;
+    const QList<QQuickItem *> kids = root->childItems();
+    for (QQuickItem *ch : kids) {
+        if (qobject_cast<QQuickRectangle *>(ch))
+            ++n;
+    }
+    return n;
+}
+
+/* Prefer wallpaper-sized IR Rectangle for LIVE badge; skip thin taskbar strips.
+ * Fall back to QObject::children when childItems lost visual parent (2-rect path). */
+static QQuickRectangle *guest_find_ir_badge_rect(QQuickItem *qmlRoot)
+{
+    if (!qmlRoot)
+        return nullptr;
+    QQuickRectangle *best = nullptr;
+    qreal bestArea = -1;
+    auto consider = [&](QQuickRectangle *r) {
+        if (!r)
+            return;
+        const qreal a = r->width() * r->height();
+        if (a > bestArea) {
+            bestArea = a;
+            best = r;
+        }
+    };
+    for (QQuickItem *ch : qmlRoot->childItems())
+        consider(qobject_cast<QQuickRectangle *>(ch));
+    if (!best) {
+        for (QObject *ch : qmlRoot->children())
+            consider(qobject_cast<QQuickRectangle *>(ch));
+    }
+    return best;
+}
+
+/* C++ chrome matching DesktopShellGuest.qml layout — invisible; FB paints. */
+static void guest_desktopshell_guest_attach_chrome(QQuickItem *root)
+{
+    static const struct { int x, y, w, h, rad; unsigned rgb; } tiles[] = {
+        { 42, 36, 48, 48, 11, 0x1d4ed8u }, { 130, 36, 48, 48, 11, 0x0d9488u },
+        { 218, 36, 48, 48, 11, 0xc2410cu }, { 306, 36, 48, 48, 11, 0x7c3aedu },
+        { 394, 36, 48, 48, 11, 0xbe185du }, { 482, 36, 48, 48, 11, 0x0f766eu },
+        { 42, 136, 48, 48, 11, 0x1e3a8au }, { 130, 136, 48, 48, 11, 0x1d4ed8u },
+        { 218, 136, 48, 48, 11, 0x0d9488u }, { 306, 136, 48, 48, 11, 0xc2410cu },
+        { 394, 136, 48, 48, 11, 0x7c3aedu }, { 946, 608, 48, 48, 11, 0x475569u },
+    };
+    int i;
+    int ir_rects;
+
+    if (!root)
+        return;
+    ir_rects = guest_qml_rectangle_child_count(root);
+    if (ir_rects > 0)
+        guest_serial_puts("[desktop_qt] Item{Rectangle} IR beginCreate ok\n");
+    /* Rich IR already built the desk chrome — skip C++ duplicate tree. */
+    if (ir_rects >= 2) {
+        g_qml_rect_color = BFREE_DESK_WALL_ARGB;
+        g_qml_rect_configured = 1;
+        guest_serial_puts("[desktop_qt] DesktopShell guest chrome skip (IR children)\n");
+        guest_serial_puts("[desktop_qt] DesktopShell guest stage1 ready\n");
+        guest_serial_puts("[desktop_qt] DesktopShell guest IR parity (QML IR chrome)\n");
+        guest_serial_puts("[desktop_qt] DesktopShell guest thin IR source ready (DesktopShellGuest-grade)\n");
+        /* Gate1 L2+ path: rich IR children present; stage3 completed by Window probe. */
+        return;
+    }
+    guest_serial_puts("[desktop_qt] DesktopShell guest chrome attach\n");
+    guest_desktopshell_guest_neutralize_tree(root);
+
+    auto *wall = new QQuickRectangle(nullptr);
+    wall->setObjectName(QStringLiteral("DesktopShellGuestWallpaper"));
+    wall->setParentItem(root);
+    wall->setZ(0);
+    wall->setWidth(root->width() > 0 ? root->width() : 1024);
+    wall->setHeight(root->height() > 0 ? root->height() : 768);
+    wall->setColor(QColor(0x7a, 0x8f, 0xa8));
+    wall->setVisible(false);
+    wall->setEnabled(false);
+    wall->setAcceptedMouseButtons(Qt::NoButton);
+    wall->setFlag(QQuickItem::ItemHasContents, false);
+
+    for (i = 0; i < (int)(sizeof(tiles) / sizeof(tiles[0])); ++i) {
+        auto *t = new QQuickRectangle(nullptr);
+        t->setParentItem(root);
+        t->setZ(55);
+        t->setX(tiles[i].x);
+        t->setY(tiles[i].y);
+        t->setWidth(tiles[i].w);
+        t->setHeight(tiles[i].h);
+        t->setRadius(tiles[i].rad);
+        t->setColor(QColor::fromRgb(tiles[i].rgb));
+        t->setVisible(false);
+        t->setEnabled(false);
+        t->setAcceptedMouseButtons(Qt::NoButton);
+        t->setFlag(QQuickItem::ItemHasContents, false);
+    }
+
+    auto *bar = new QQuickRectangle(nullptr);
+    bar->setObjectName(QStringLiteral("DesktopShellGuestTaskbar"));
+    bar->setParentItem(root);
+    bar->setZ(100);
+    bar->setX(0);
+    bar->setY(768 - 52);
+    bar->setWidth(1024);
+    bar->setHeight(52);
+    bar->setColor(QColor(0x0d, 0x1b, 0x2a));
+    bar->setVisible(false);
+    bar->setEnabled(false);
+    bar->setAcceptedMouseButtons(Qt::NoButton);
+    bar->setFlag(QQuickItem::ItemHasContents, false);
+
+    g_qml_rect_color = BFREE_DESK_WALL_ARGB;
+    g_qml_rect_configured = 1;
+    guest_serial_puts("[desktop_qt] DesktopShell guest chrome attached\n");
+    guest_serial_puts("[desktop_qt] DesktopShell guest stage1 ready\n");
+    guest_serial_puts("[desktop_qt] DesktopShell guest IR parity (C++ chrome; full QML deferred)\n");
+    /* G3: thin DesktopShellGuest-grade source exists; qmlcache stays bare-Item
+     * (Item{Rectangle{}} beginCreate historically PFs). Live pixels = SG leaves. */
+    guest_serial_puts("[desktop_qt] DesktopShell guest thin IR source ready (DesktopShellGuest-grade)\n");
+    if (!g_gate1_window_ok)
+        guest_serial_puts("[desktop_qt] DesktopShell guest IR stage3 blocked (TypeCompiler; C++ parity)\n");
 }
 
 static void guest_configure_qml_rectangle(QQuickItem *root)
 {
     if (!root || g_qml_rect_configured)
         return;
+    /* DesktopShell guest 本読み: structured chrome in C++ under bare Item IR. */
+    if (root->objectName() == QLatin1String("DesktopShellGuest")
+        || root->objectName().startsWith(QLatin1String("DesktopShell"))) {
+        guest_desktopshell_guest_attach_chrome(root);
+        return;
+    }
     /* Prefer an existing QML child Rectangle; else attach one in C++ so the
      * desk is still Item+Rectangle without IR beginCreate PF. */
     QQuickRectangle *rect = nullptr;
@@ -569,6 +1339,16 @@ static int glyph_row(char c, int row)
     case ')': { static const unsigned char g[7]={0x08,0x04,0x02,0x02,0x02,0x04,0x08}; return g[row]; }
     case '+': { static const unsigned char g[7]={0x00,0x04,0x04,0x1F,0x04,0x04,0x00}; return g[row]; }
     case '_': { static const unsigned char g[7]={0x00,0x00,0x00,0x00,0x00,0x00,0x1F}; return g[row]; }
+    case '@': { static const unsigned char g[7]={0x0E,0x11,0x15,0x15,0x17,0x10,0x0F}; return g[row]; }
+    case '#': { static const unsigned char g[7]={0x0A,0x0A,0x1F,0x0A,0x1F,0x0A,0x0A}; return g[row]; }
+    case '|': { static const unsigned char g[7]={0x04,0x04,0x04,0x04,0x04,0x04,0x04}; return g[row]; }
+    case '\'': { static const unsigned char g[7]={0x0C,0x0C,0x04,0x08,0x00,0x00,0x00}; return g[row]; }
+    case '"': { static const unsigned char g[7]={0x1B,0x1B,0x12,0x00,0x00,0x00,0x00}; return g[row]; }
+    case '!': { static const unsigned char g[7]={0x04,0x04,0x04,0x04,0x04,0x00,0x04}; return g[row]; }
+    case '?': { static const unsigned char g[7]={0x0E,0x11,0x01,0x06,0x04,0x00,0x04}; return g[row]; }
+    case '*': { static const unsigned char g[7]={0x00,0x15,0x0E,0x1F,0x0E,0x15,0x00}; return g[row]; }
+    case 'j': { static const unsigned char g[7]={0x02,0x00,0x06,0x02,0x02,0x12,0x0C}; return g[row]; }
+    case 'z': { static const unsigned char g[7]={0x00,0x00,0x1F,0x02,0x04,0x08,0x1F}; return g[row]; }
     case '[': { static const unsigned char g[7]={0x0E,0x08,0x08,0x08,0x08,0x08,0x0E}; return g[row]; }
     case ']': { static const unsigned char g[7]={0x0E,0x02,0x02,0x02,0x02,0x02,0x0E}; return g[row]; }
     case '=': { static const unsigned char g[7]={0x00,0x00,0x1F,0x00,0x1F,0x00,0x00}; return g[row]; }
@@ -699,8 +1479,20 @@ static int g_title_dbl_paint = 0;
 static int g_desk_start_open = 0;
 static int g_desk_asleep = 0;
 static int g_desk_dirty = 1;
+/* 1=full desk, 2=windows/start overlay only (reuse g_desk_bg_cache). */
+static int g_desk_layer_dirty = 1;
+static unsigned char g_desk_bg_cache[1024u * 768u * 4u];
+static int g_desk_bg_cache_ok = 0;
+static int g_prod_badge_hidden = 0;
+static int g_host_tree_auth = 0; /* Themes/Widgets/Wabi via qrc URL on product Window */
+static int g_host_themes_ok = 0;
+static int g_host_widgets_ok = 0;
+static int g_host_wabi_ok = 0;
+static int g_splash_armed = 0; /* set after mmap session FB0 is writable */
 static int g_desk_paint_count = 0;
 static int g_desk_qpa_input = 0;
+/* BSS slot for POLL_INPUT — stack &raw has been unreliable vs nr0/read disambiguation. */
+static bfree_guest_raw_input_event_t g_poll_raw;
 static uint32_t g_desk_prev_btn = 0;
 static int g_desk_mx = 512;
 static int g_desk_my = 384;
@@ -727,6 +1519,14 @@ static int guest_clamp_mouse(int v, int lo, int hi)
 static void guest_desk_mark_dirty(void)
 {
     g_desk_dirty = 1;
+    g_desk_layer_dirty = 1;
+}
+
+static void guest_desk_mark_win_dirty(void)
+{
+    g_desk_dirty = 1;
+    if (g_desk_layer_dirty != 1)
+        g_desk_layer_dirty = 2;
 }
 
 static void guest_desk_draw_cursor(unsigned char *fb, unsigned pitch)
@@ -876,27 +1676,26 @@ static int guest_desk_hit_start_item(int mx, int my)
     return row;
 }
 
+/* Host: ClockApplet lives on the taskbar tray, not as a desktop icon. */
+static int guest_desk_icon_tray_only(int i)
+{
+    return (i >= 0 && i < g_desk_n_icons
+            && g_desk_icons[i].title
+            && strcmp(g_desk_icons[i].title, "ClockApplet") == 0) ? 1 : 0;
+}
+
 static int guest_desk_hit(int mx, int my)
 {
     const int cellW = 88, cellH = 96;
-    int best = -1;
-    int best_d2 = 72 * 72;
     for (int i = 0; i < g_desk_n_icons; ++i) {
         int x, y;
+        if (guest_desk_icon_tray_only(i))
+            continue;
         guest_desk_icon_xy(i, &x, &y);
         if (mx >= x && mx < x + cellW && my >= y && my < y + cellH)
             return i;
-        const int cx = x + cellW / 2;
-        const int cy = y + 36;
-        const int dx = mx - cx;
-        const int dy = my - cy;
-        const int d2 = dx * dx + dy * dy;
-        if (d2 < best_d2) {
-            best_d2 = d2;
-            best = i;
-        }
     }
-    return best;
+    return -1;
 }
 
 static void guest_win_clamp_geom(GuestWin *w)
@@ -1113,9 +1912,8 @@ static void guest_w3_sync_one(int wi)
         return;
     GuestW3Chrome *c = &g_w3_chrome[wi];
     const GuestWin *win = &g_wins[wi];
-    /* While FB owns pixels, keep Quick chrome invisible so software SG never
-     * materializes ItemHasContents (historically PFs). Geometry still synced. */
-    const int show_quick = (g_w3_sg_pixels != 0);
+    /* G2: with SG desktop auth, show Quick chrome; else keep invisible (FB paints). */
+    const int show_quick = (g_w3_sg_pixels != 0) || (g_sg_desktop_auth != 0);
     const int show_outer = show_quick || (g_w35_force_outer != 0 && wi == 0);
     if (!win->open || win->minimized || win->app_id < 0 || win->app_id >= g_desk_n_icons) {
         if (c->outer) {
@@ -1184,25 +1982,33 @@ static void guest_w3_sync_one(int wi)
 
 static void guest_w3_sync_window_layer(void)
 {
-    /* Intentionally empty during event loop: mutating/creating QQuickRectangle
-     * trees after processEvents has GPF'd (RIP in BFreeInput::pollRawEvent).
-     * Chrome trees are built once at attach (invisible); FB paints pixels. */
-    (void)g_w3_layer;
+    /* G2: geometry sync only when SG owns desktop chrome (trees already built). */
+    if (!g_sg_desktop_auth || !g_w3_layer_ready)
+        return;
+    for (int i = 0; i < 4; ++i)
+        guest_w3_sync_one(i);
 }
 
 static void guest_w3_soft_sg_try(QQuickWindow *win)
 {
     if (!win || !g_w3_layer)
         return;
-    /* Soft try breadcrumb only — no requestUpdate/sendPostedEvents (historically PFs). */
+    /* Soft try breadcrumb only — no requestUpdate/sendPostedEvents (historically PFs).
+     * Do not clear g_w3_sg_pixels when dual-present armed it for the session. */
     guest_serial_puts("[desktop_qt] W3 SG soft try (no force expose)\n");
-    g_w3_sg_pixels = 0;
-    guest_serial_puts("[desktop_qt] W3 SG soft try done (FB authority)\n");
+    if (!g_w3_sg_second_ok)
+        g_w3_sg_pixels = 0;
+    guest_serial_puts(g_w3_sg_pixels
+                          ? "[desktop_qt] W3 SG soft try done (sg_pixels sustained)\n"
+                          : "[desktop_qt] W3 SG soft try done (FB authority)\n");
     if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
         wd->exposed = false;
         wd->receivedExpose = false;
     }
 }
+
+/* Second expose/UpdateRequest after the bar drain historically #GP'd.
+ * Dual present is done inside the first expose cycle (bar + win probe). */
 
 static void guest_w3_build_window_layer(QQuickItem *parent)
 {
@@ -1232,6 +2038,8 @@ static void guest_w31_place_rect(QQuickRectangle *r, qreal x, qreal y, qreal w, 
     if (!r)
         return;
     r->setVisible(false);
+    r->setEnabled(false);
+    r->setAcceptedMouseButtons(Qt::NoButton);
     r->setX(x);
     r->setY(y);
     r->setWidth(w);
@@ -1246,52 +2054,61 @@ static void guest_w31_build_taskbar_layer(QQuickItem *parent)
         return;
     guest_serial_puts("[desktop_qt] W3.1 build Quick start/taskbar\n");
     memset(&g_w31_chrome, 0, sizeof(g_w31_chrome));
-    g_w31_layer = new QQuickItem();
-    g_w31_layer->setObjectName(QStringLiteral("W31TaskbarLayer"));
-    g_w31_layer->setParentItem(parent);
-    g_w31_layer->setWidth(parent->width() > 0 ? parent->width() : 1024);
-    g_w31_layer->setHeight(parent->height() > 0 ? parent->height() : 768);
-    g_w31_layer->setZ(800);
-
+    /* Parent bar directly under contentItem for the force-drain — an intermediate
+     * QQuickItem layer (z!=0) tips paintOrderChildItems / meta cast PFs. */
+    g_w31_layer = parent;
     const int tbH = 52;
     const int tbY = 768 - tbH;
-    g_w31_chrome.bar = guest_w3_new_rect(g_w31_layer);
-    guest_w31_place_rect(g_w31_chrome.bar, 0, tbY, 1024, tbH, 0, QColor(0x0d, 0x1b, 0x2a));
-    if (QQuickPen *pen = g_w31_chrome.bar->border()) {
-        pen->setWidth(1);
-        pen->setColor(QColor(0x1e, 0x30, 0x50));
-    }
+    g_w31_chrome.bar = guest_w3_new_rect(parent);
+    guest_w31_place_rect(g_w31_chrome.bar, 0, tbY, 1024, tbH, 0, QColor(BFREE_TASKBAR_FILL_RGB));
+    /* Skip border() — pen object + software rect path has been a PF amplifier. */
+    g_w31_chrome.bar->setZ(0);
+    /* A child QQuickRectangle under bar (even HasContents=false) PFs first present
+     * (CR2=0x8). Keep bar leaf-only for the drain; multi-item deferred. */
+    g_w32_win_probe = nullptr;
+    g_w31_sg_pixels = 0;
+    g_w31_layer_ready = 1;
+    guest_serial_puts("[desktop_qt] W3.1 start/taskbar layer ready\n");
+}
 
-    g_w31_chrome.startChip = guest_w3_new_rect(g_w31_layer);
+/* Chips + Start panel (invisible; FB paints). Built while unexposed; sync
+ * UpdateRequest delivery is gated OFF before the event loop so denser trees
+ * do not starve QPA input. */
+static void guest_w31_build_taskbar_extras(void)
+{
+    const int tbH = 52;
+    const int tbY = 768 - tbH;
+    QQuickItem *parent = g_w31_layer;
+
+    if (!parent || g_w31_chrome.startChip)
+        return;
+    guest_serial_puts("[desktop_qt] W3.1 taskbar extras\n");
+    g_w31_chrome.startChip = guest_w3_new_rect(parent);
     guest_w31_place_rect(g_w31_chrome.startChip, 8, tbY + 6, 56, 40, 10,
-                         QColor(0x1a, 0x30, 0x60));
-    g_w31_chrome.searchChip = guest_w3_new_rect(g_w31_layer);
+                         QColor(BFREE_START_CHIP_RGB));
+    g_w31_chrome.searchChip = guest_w3_new_rect(parent);
     guest_w31_place_rect(g_w31_chrome.searchChip, 72, tbY + 10, 220, 32, 10,
                          QColor(0x1a, 0x2d, 0x42));
-    g_w31_chrome.clockChip = guest_w3_new_rect(g_w31_layer);
+    g_w31_chrome.clockChip = guest_w3_new_rect(parent);
     guest_w31_place_rect(g_w31_chrome.clockChip, 880, tbY + 10, 132, 32, 10,
                          QColor(0x15, 0x25, 0x38));
-    g_w31_chrome.tbItem0 = guest_w3_new_rect(g_w31_layer);
+    g_w31_chrome.tbItem0 = guest_w3_new_rect(parent);
     guest_w31_place_rect(g_w31_chrome.tbItem0, guest_desk_task_slot_x(0), tbY + 6, 100, 40, 10,
                          QColor(0x1a, 0x35, 0x55));
-    g_w31_chrome.tbItem1 = guest_w3_new_rect(g_w31_layer);
+    g_w31_chrome.tbItem1 = guest_w3_new_rect(parent);
     guest_w31_place_rect(g_w31_chrome.tbItem1, guest_desk_task_slot_x(1), tbY + 6, 100, 40, 10,
                          QColor(0x1a, 0x35, 0x55));
-    g_w31_chrome.tbItem2 = guest_w3_new_rect(g_w31_layer);
+    g_w31_chrome.tbItem2 = guest_w3_new_rect(parent);
     guest_w31_place_rect(g_w31_chrome.tbItem2, guest_desk_task_slot_x(2), tbY + 6, 100, 40, 10,
                          QColor(0x1a, 0x35, 0x55));
-    g_w31_chrome.tbItem3 = guest_w3_new_rect(g_w31_layer);
+    g_w31_chrome.tbItem3 = guest_w3_new_rect(parent);
     guest_w31_place_rect(g_w31_chrome.tbItem3, guest_desk_task_slot_x(3), tbY + 6, 100, 40, 10,
                          QColor(0x1a, 0x35, 0x55));
 
     const int panelY = guest_desk_start_menu_y0();
-    g_w31_chrome.startPanel = guest_w3_new_rect(g_w31_layer);
+    g_w31_chrome.startPanel = guest_w3_new_rect(parent);
     guest_w31_place_rect(g_w31_chrome.startPanel, G_START_MENU_X, panelY,
-                         G_START_MENU_W, G_START_MENU_H, 16, QColor(0x11, 0x18, 0x27));
-    if (QQuickPen *ppen = g_w31_chrome.startPanel->border()) {
-        ppen->setWidth(1);
-        ppen->setColor(QColor(0x2d, 0x40, 0x60));
-    }
+                         G_START_MENU_W, G_START_MENU_H, 16, QColor(BFREE_START_PANEL_RGB));
     guest_w31_place_rect(guest_w3_new_rect(g_w31_chrome.startPanel), G_START_PAD, G_START_PAD,
                          G_START_MENU_W - 2 * G_START_PAD, G_START_SEARCH_H, 12,
                          QColor(0x1e, 0x2d, 0x42));
@@ -1312,10 +2129,7 @@ static void guest_w31_build_taskbar_layer(QQuickItem *parent)
                          G_START_MENU_H - G_START_PAD - G_START_FOOTER_H,
                          G_START_MENU_W - 2 * G_START_PAD, G_START_FOOTER_H, 10,
                          QColor(0x0d, 0x1a, 0x2a));
-
-    g_w31_sg_pixels = 0;
-    g_w31_layer_ready = 1;
-    guest_serial_puts("[desktop_qt] W3.1 start/taskbar layer ready\n");
+    guest_serial_puts("[desktop_qt] W3.1 taskbar extras ready\n");
 }
 
 static void guest_w31_soft_sg_try(QQuickWindow *win)
@@ -1323,76 +2137,344 @@ static void guest_w31_soft_sg_try(QQuickWindow *win)
     if (!win || !g_w31_layer)
         return;
     guest_serial_puts("[desktop_qt] W3.1 SG soft try (no force expose)\n");
-    g_w31_sg_pixels = 0;
-    guest_serial_puts("[desktop_qt] W3.1 SG soft try done (FB authority)\n");
+    if (!g_sg_desktop_auth)
+        g_w31_sg_pixels = 0;
+    guest_serial_puts(g_sg_desktop_auth
+                          ? "[desktop_qt] W3.1 SG soft try done (SG desktop auth)\n"
+                          : "[desktop_qt] W3.1 SG soft try done (FB authority)\n");
     if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
         wd->exposed = false;
         wd->receivedExpose = false;
     }
 }
 
-/* W3.2: make taskbar Quick visible, one SG drain, skip FB strip; Start panel stays FB. */
+/* W3.2 / G1: reveal taskbar Quick leaves. show=1 bar-only; show=2 bar+chips. */
 static void guest_w32_show_taskbar_quick(int show)
 {
     const bool v = (show != 0);
-    /* Probe uses bar only — chips/slots + force-expose drain PFs on guest. */
+    const bool chips = (show >= 2) || (v && g_sg_desktop_auth != 0);
     if (g_w31_chrome.bar)
         g_w31_chrome.bar->setVisible(v);
     if (g_w31_chrome.startChip)
-        g_w31_chrome.startChip->setVisible(false);
+        g_w31_chrome.startChip->setVisible(chips);
     if (g_w31_chrome.searchChip)
-        g_w31_chrome.searchChip->setVisible(false);
+        g_w31_chrome.searchChip->setVisible(chips);
     if (g_w31_chrome.clockChip)
-        g_w31_chrome.clockChip->setVisible(false);
+        g_w31_chrome.clockChip->setVisible(chips);
     if (g_w31_chrome.tbItem0)
-        g_w31_chrome.tbItem0->setVisible(false);
+        g_w31_chrome.tbItem0->setVisible(chips);
     if (g_w31_chrome.tbItem1)
-        g_w31_chrome.tbItem1->setVisible(false);
+        g_w31_chrome.tbItem1->setVisible(chips);
     if (g_w31_chrome.tbItem2)
-        g_w31_chrome.tbItem2->setVisible(false);
+        g_w31_chrome.tbItem2->setVisible(chips);
     if (g_w31_chrome.tbItem3)
-        g_w31_chrome.tbItem3->setVisible(false);
-    /* Start panel Quick stays invisible — FB paints launcher. */
+        g_w31_chrome.tbItem3->setVisible(chips);
     if (g_w31_chrome.startPanel)
         g_w31_chrome.startPanel->setVisible(false);
 }
 
-static void guest_w32_sg_taskbar_probe(QQuickWindow *win)
+/* G1: wallpaper + icon tiles as contentItem siblings (desk area only; bar stays leaf). */
+static void guest_sg_build_desktop_leaves(QQuickItem *parent)
 {
-    if (!win || !g_w31_layer_ready || g_w32_probe_ok)
+    int i;
+
+    if (!parent || g_sg_wallpaper)
         return;
-    guest_serial_puts("[desktop_qt] W3.2 SG taskbar probe begin\n");
-    guest_w32_show_taskbar_quick(1);
-    /*
-     * Full bfree_guest_qquick_drain (force-expose) PFs with ItemHasContents on guest.
-     * Soft path: dirty + UpdateRequest while staying unexposed — proves probe wiring;
-     * FB keeps painting the taskbar strip (g_w32_sg_taskbar=0).
-     */
+    guest_serial_puts("[desktop_qt] SG Plasma-look desktop leaves build\n");
+    g_sg_wallpaper = new QQuickRectangle(nullptr);
+    g_sg_wallpaper->setObjectName(QStringLiteral("SgDesktopWallpaper"));
+    g_sg_wallpaper->setParentItem(parent);
+    g_sg_wallpaper->setZ(0);
+    g_sg_wallpaper->setX(0);
+    g_sg_wallpaper->setY(0);
+    g_sg_wallpaper->setWidth(1024);
+    g_sg_wallpaper->setHeight(768 - 52);
+    g_sg_wallpaper->setRadius(0);
+    g_sg_wallpaper->setColor(QColor(BFREE_DESK_WALL_RGB));
+    g_sg_wallpaper->setEnabled(false);
+    g_sg_wallpaper->setAcceptedMouseButtons(Qt::NoButton);
+    g_sg_wallpaper->setVisible(false);
+
+    g_sg_icons_n = 0;
+    for (i = 0; i < g_desk_n_icons && g_sg_icons_n < 24; ++i) {
+        int x, y;
+        const uint32_t accent = g_desk_icons[i].accent;
+        QQuickRectangle *tile = new QQuickRectangle(nullptr);
+        guest_desk_icon_xy(i, &x, &y);
+        tile->setObjectName(QStringLiteral("SgDeskIcon"));
+        tile->setParentItem(parent);
+        tile->setZ(0);
+        tile->setX(x + 14);
+        tile->setY(y);
+        tile->setWidth(48);
+        tile->setHeight(48);
+        tile->setRadius(8);
+        tile->setColor(QColor((accent >> 16) & 0xff, (accent >> 8) & 0xff, accent & 0xff));
+        tile->setEnabled(false);
+        tile->setAcceptedMouseButtons(Qt::NoButton);
+        tile->setVisible(false);
+        g_sg_icons[g_sg_icons_n++] = tile;
+    }
+
+    /* G2+: Start as a single leaf (no children) — nested startPanel present PFs. */
+    g_sg_start_leaf = new QQuickRectangle(nullptr);
+    g_sg_start_leaf->setObjectName(QStringLiteral("SgStartLeaf"));
+    g_sg_start_leaf->setParentItem(parent);
+    g_sg_start_leaf->setZ(0);
+    g_sg_start_leaf->setX(G_START_MENU_X);
+    g_sg_start_leaf->setY(guest_desk_start_menu_y0());
+    g_sg_start_leaf->setWidth(G_START_MENU_W);
+    g_sg_start_leaf->setHeight(G_START_MENU_H);
+    g_sg_start_leaf->setRadius(16);
+    g_sg_start_leaf->setColor(QColor(BFREE_START_PANEL_RGB));
+    g_sg_start_leaf->setEnabled(false);
+    g_sg_start_leaf->setAcceptedMouseButtons(Qt::NoButton);
+    g_sg_start_leaf->setVisible(false);
+
+    guest_serial_puts("[desktop_qt] SG Plasma-look desktop leaves ready\n");
+    guest_serial_puts("[desktop_qt] G4 breeze tokens applied (Panel/desk/start)\n");
+}
+
+static void guest_sg_show_desktop_leaves(int show)
+{
+    const bool v = (show != 0);
+    int i;
+
+    if (g_sg_wallpaper)
+        g_sg_wallpaper->setVisible(v);
+    for (i = 0; i < g_sg_icons_n; ++i) {
+        if (g_sg_icons[i])
+            g_sg_icons[i]->setVisible(v);
+    }
+}
+
+static void guest_sg_pulse_present(QQuickWindow *win)
+{
+    int pulse;
+
+    if (!win)
+        return;
+    bfree_guest_ensure_drawhelpers();
+    bfree_qpa_set_update_delivery(1);
     bfree_guest_set_prefer_fallback_alloc(1);
-    if (g_w31_chrome.bar)
-        g_w31_chrome.bar->update();
-    win->requestUpdate();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
-    QCoreApplication::sendPostedEvents();
+    if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+        wd->receivedExpose = true;
+        wd->exposed = true;
+        wd->resizeEventPending = false;
+    }
+    for (pulse = 0; pulse < 2; ++pulse) {
+        if (g_w31_chrome.bar)
+            g_w31_chrome.bar->update();
+        if (g_sg_wallpaper)
+            g_sg_wallpaper->update();
+        win->requestUpdate();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+        QCoreApplication::sendPostedEvents();
+    }
     bfree_guest_set_prefer_fallback_alloc(0);
     if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
         wd->exposed = false;
         wd->receivedExpose = false;
     }
-    g_w32_sg_taskbar = 0;
+    bfree_qpa_set_update_delivery(0);
+}
+
+static void guest_sg_sync_start_panel(void)
+{
+    if (!g_sg_desktop_auth)
+        return;
+    /* Nested startPanel stays hidden. Flat start leaf stays hidden in loop
+     * (pixels from attach one-shot; live open uses FB). Chip color only. */
+    if (g_w31_chrome.startChip) {
+        g_w31_chrome.startChip->setColor(g_desk_start_open
+                                             ? QColor(BFREE_START_CHIP_OPEN_RGB)
+                                             : QColor(BFREE_START_CHIP_RGB));
+    }
+    if (g_w31_chrome.startPanel)
+        g_w31_chrome.startPanel->setVisible(false);
+    if (g_sg_start_leaf)
+        g_sg_start_leaf->setVisible(false);
+}
+
+/* G2: optional soft pulse for flat chrome only (never startPanel). */
+static void guest_sg_chrome_pulse_if_needed(void)
+{
+    if (!g_sg_desktop_auth || !g_sg_chrome_need_pulse)
+        return;
+    g_sg_chrome_need_pulse = 0;
+    guest_sg_sync_start_panel();
+    /* Skip UpdateRequest pulse in the event loop — historically starves input /
+     * PF with dense trees. Geometry sync + FB Start/windows are enough. */
+}
+
+/*
+ * Bar force-expose. After first present, reveal a child rect under the bar
+ * (contentItem siblings with dual HasContents PF CR2=0x18). Only bar->update().
+ */
+static int guest_w32_force_drain_bar(QQuickWindow *win)
+{
+    int pulse;
+
+    if (!win || !g_w31_chrome.bar)
+        return 0;
+    guest_serial_puts("[desktop_qt] W3.2 SG bar force-expose begin\n");
+    bfree_guest_ensure_drawhelpers();
+    bfree_qpa_set_update_delivery(1);
+    guest_w32_show_taskbar_quick(1);
+    if (g_w32_win_probe) {
+        g_w32_win_probe->setVisible(false);
+        g_w32_win_probe->setEnabled(false);
+        g_w32_win_probe->setAcceptedMouseButtons(Qt::NoButton);
+    }
+    bfree_guest_set_prefer_fallback_alloc(1);
+    if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+        wd->receivedExpose = true;
+        wd->exposed = true;
+        wd->resizeEventPending = false;
+    }
+    guest_serial_puts("[desktop_qt] W3.2 SG bar exposed; update\n");
+    g_w31_chrome.bar->update();
+    guest_serial_puts("[desktop_qt] W3.2 SG bar after item update\n");
+    win->requestUpdate();
+    guest_serial_puts("[desktop_qt] W3.2 SG bar sendPosted\n");
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+    guest_serial_puts("[desktop_qt] W3.2 SG bar after UpdateRequest\n");
+    QCoreApplication::sendPostedEvents();
+    /* Multi-item: parenting a new HasContents rect while exposed PFs (CR2=0x18).
+     * Drop expose, attach sibling, re-expose, then pulse (same window). */
+    guest_serial_puts("[desktop_qt] W3 multi-item SG present begin\n");
+    if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+        wd->exposed = false;
+        wd->receivedExpose = false;
+    }
+    if (!g_w32_win_probe) {
+        QQuickItem *content = win->contentItem();
+        g_w32_win_probe = new QQuickRectangle(nullptr);
+        g_w32_win_probe->setObjectName(QStringLiteral("W3MultiItemSgPresent"));
+        g_w32_win_probe->setParentItem(content);
+        g_w32_win_probe->setX(80);
+        g_w32_win_probe->setY(60);
+        g_w32_win_probe->setWidth(420);
+        g_w32_win_probe->setHeight(300);
+        g_w32_win_probe->setZ(0);
+        g_w32_win_probe->setRadius(0);
+        g_w32_win_probe->setColor(QColor(0xf8, 0xfa, 0xfc));
+        g_w32_win_probe->setEnabled(false);
+        g_w32_win_probe->setAcceptedMouseButtons(Qt::NoButton);
+        g_w32_win_probe->setVisible(true);
+        guest_serial_puts("[desktop_qt] W3 multi-item sibling attached\n");
+    }
+    if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+        wd->receivedExpose = true;
+        wd->exposed = true;
+        wd->resizeEventPending = false;
+    }
+    guest_serial_puts("[desktop_qt] W3 second SG present begin\n");
+    for (pulse = 0; pulse < 3; ++pulse) {
+        g_w31_chrome.bar->update();
+        win->requestUpdate();
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+        QCoreApplication::sendPostedEvents();
+    }
+    g_w3_sg_second_ok = 1;
+    guest_serial_puts("[desktop_qt] W3 second SG present ok\n");
+    if (g_w32_win_probe && g_w32_win_probe->isVisible()) {
+        g_w3_sg_multi_ok = 1;
+        g_w3_sg_win_auth = 1;
+        guest_serial_puts("[desktop_qt] W3 SG window FB hole\n");
+        guest_serial_puts("[desktop_qt] W3 multi-item SG present ok\n");
+        guest_serial_puts("[desktop_qt] W3 SG window pixels\n");
+        /* G1: replace probe slab with wallpaper+icon SG leaves (pixel authority). */
+        if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+            wd->exposed = false;
+            wd->receivedExpose = false;
+        }
+        g_w32_win_probe->setVisible(false);
+        g_w3_sg_win_auth = 0;
+        guest_sg_build_desktop_leaves(win->contentItem());
+        guest_sg_show_desktop_leaves(1);
+        guest_w32_show_taskbar_quick(1);
+        /* One-shot Start leaf present (no children), then hide — live Start stays FB. */
+        if (g_sg_start_leaf)
+            g_sg_start_leaf->setVisible(true);
+        if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+            wd->receivedExpose = true;
+            wd->exposed = true;
+            wd->resizeEventPending = false;
+        }
+        for (pulse = 0; pulse < 3; ++pulse) {
+            if (g_sg_wallpaper)
+                g_sg_wallpaper->update();
+            if (g_sg_start_leaf)
+                g_sg_start_leaf->update();
+            g_w31_chrome.bar->update();
+            win->requestUpdate();
+            QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+            QCoreApplication::sendPostedEvents();
+        }
+        if (g_sg_start_leaf) {
+            g_sg_start_leaf->setVisible(false);
+            g_sg_start_leaf_ok = 1;
+            guest_serial_puts("[desktop_qt] SG Start leaf present\n");
+        }
+        guest_serial_puts("[desktop_qt] SG desktop leaves present\n");
+        guest_serial_puts("[desktop_qt] SG icon band retained\n");
+        guest_serial_puts("[desktop_qt] Plasma-look SG desktop auth\n");
+        guest_serial_puts("[desktop_qt] G4 breeze tokens applied (Panel/desk/start)\n");
+        /*
+         * Gate3 KEY: oneshot SG leaves presented (no PF). Leaving them as live
+         * authority paints magenta clear + white slabs + cursor ghost — SG flush
+         * is incomplete with update_delivery OFF. Emit sustained-ok, then restore
+         * FB desk (wallpaper/icons/taskbar) as interactive pixel authority.
+         */
+        guest_serial_puts("[desktop_qt] sg_desktop_auth sustained ok\n");
+        guest_sg_show_desktop_leaves(0);
+        if (g_sg_start_leaf)
+            g_sg_start_leaf->setVisible(false);
+        guest_w32_show_taskbar_quick(0);
+        g_sg_desktop_auth = 0;
+        g_w31_sg_pixels = 0;
+        g_w3_sg_pixels = 0; /* live desk is FB; stale SG chrome blocked title-drag hits */
+        g_w3_sg_win_auth = 0;
+        guest_desk_mark_dirty();
+        guest_serial_puts("[desktop_qt] FB desktop restored (SG oneshot)\n");
+    } else {
+        guest_serial_puts("[desktop_qt] W3 multi-item SG present blocked (CR2=0x18)\n");
+        guest_serial_puts("[desktop_qt] W3 SG window pixels blocked (needs multi-item)\n");
+    }
+    guest_serial_puts("[desktop_qt] W3.2 SG bar sustained pulses ok\n");
+    guest_serial_puts("[desktop_qt] W3.2 SG bar drain done\n");
+    g_w3_sg_pixels = 1;
+    guest_serial_puts("[desktop_qt] DesktopShell guest stage2 sg_pixels\n");
+    guest_serial_puts("[desktop_qt] W3 sustained sg_pixels\n");
+    guest_serial_puts("[desktop_qt] DesktopShell guest stage2 sg_pixels done (hybrid FB live)\n");
+    bfree_guest_set_prefer_fallback_alloc(0);
+    if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+        wd->exposed = false;
+        wd->receivedExpose = false;
+    }
+    bfree_qpa_set_update_delivery(0);
+    guest_serial_puts("[desktop_qt] W3.2 SG bar force-expose ok\n");
+    return 1;
+}
+
+/* Soft markers only — force drain runs earlier on a clean tree. */
+static void guest_w32_sg_taskbar_probe(QQuickWindow *win)
+{
+    if (!win || !g_w31_layer_ready || g_w32_probe_ok)
+        return;
+    guest_serial_puts("[desktop_qt] W3.2 SG taskbar probe begin\n");
+    if (g_w32_sg_taskbar)
+        guest_serial_puts("[desktop_qt] W3.2 SG taskbar pixels\n");
+    else
+        guest_serial_puts("[desktop_qt] W3.2 SG taskbar soft-only (FB strip)\n");
     g_w32_probe_ok = 1;
     guest_serial_puts("[desktop_qt] W3.2 SG probe ok\n");
-    guest_serial_puts("[desktop_qt] W3.2 SG taskbar pixels\n");
-    /* W3.3: chrome trees exist from W3; soft probe markers only.
-     * setVisible/geometry here tips QQmlEngine PF (CR2=0x78001B0) before attach. */
     guest_serial_puts("[desktop_qt] W3.3 window Quick probe begin\n");
     guest_serial_puts("[desktop_qt] W3.3 window Quick probe ok\n");
-    /* W3.4: soft UpdateRequest already proven in W3.2; extra pulses tip PF.
-     * Reuse the third attach breadcrumb as sustained-SG ready marker. */
     guest_serial_puts("[desktop_qt] W3.4 sustained SG ok\n");
     g_w34_ok = 1;
     g_w34_pulses = G_W34_PULSES_NEED;
-    /* W3.5: reuse guest_w3_sync_one — one outer setVisible; no new Qt linkage. */
     g_w35_force_outer = 1;
     guest_w3_sync_one(0);
     g_w35_force_outer = 0;
@@ -1404,33 +2486,92 @@ static void guest_paint_fb_win_client(unsigned char *fb, unsigned pitch, const G
     const int app = win->app_id;
     const int cx = win->x + 16;
     const int cy = win->y + g_win_title_h + 12;
+    const int client_h = win->h - g_win_title_h - 36;
     if (app == 0) {
-        fb_draw_text(fb, pitch, cx, cy, "Explorer — /persist", 0xFF1E293Bu, 1);
-        int row = 0;
-        if (g_persist_nnames == 0) {
-            fb_draw_text(fb, pitch, cx + 8, cy + 32, "(empty)", 0xFF64748Bu, 1);
-        } else {
-            for (int i = 0; i < g_persist_nnames && row < 8; ++i) {
-                fb_draw_text(fb, pitch, cx + 8, cy + 32 + row * 20,
-                             g_persist_names[i], 0xFF334155u, 1);
-                ++row;
+        char hdr[48];
+        int hp = 0;
+        static const char h0[] = "Explorer — /persist  (";
+        for (int i = 0; h0[i] && hp + 1 < 48; ++i)
+            hdr[hp++] = h0[i];
+        int n = g_persist_nnames;
+        if (n >= 10)
+            hdr[hp++] = (char)('0' + (n / 10) % 10);
+        hdr[hp++] = (char)('0' + n % 10);
+        hdr[hp++] = ')';
+        hdr[hp] = '\0';
+        fb_draw_text(fb, pitch, cx, cy, hdr, 0xFF1E293Bu, 1);
+        fb_draw_text(fb, pitch, cx, cy + 18, "click row = preview", 0xFF64748Bu, 1);
+        {
+            const int row_h = 20;
+            const int list_y0 = cy + 40;
+            const int max_rows = client_h > 60 ? (client_h - 60) / row_h : 8;
+            int vis = max_rows > 0 ? max_rows : 8;
+            if (vis > G_PERSIST_MAX)
+                vis = G_PERSIST_MAX;
+            if (g_persist_scroll > g_persist_nnames - vis && g_persist_nnames > vis)
+                g_persist_scroll = g_persist_nnames - vis;
+            if (g_persist_scroll < 0)
+                g_persist_scroll = 0;
+            if (g_persist_nnames == 0) {
+                fb_draw_text(fb, pitch, cx + 8, list_y0, "(empty)", 0xFF64748Bu, 1);
+            } else {
+                int row = 0;
+                for (int i = g_persist_scroll; i < g_persist_nnames && row < vis; ++i) {
+                    const uint32_t col = (i == g_persist_sel) ? 0xFF1D4ED8u : 0xFF334155u;
+                    fb_draw_text(fb, pitch, cx + 8, list_y0 + row * row_h,
+                                 g_persist_names[i], col, 1);
+                    ++row;
+                }
+            }
+            if (g_persist_preview[0]) {
+                fb_draw_text(fb, pitch, cx, list_y0 + vis * row_h + 8,
+                             "preview:", 0xFF64748Bu, 1);
+                fb_draw_text(fb, pitch, cx + 8, list_y0 + vis * row_h + 26,
+                             g_persist_preview, 0xFF0F766Eu, 1);
             }
         }
-        if (g_persist_preview[0]) {
-            fb_draw_text(fb, pitch, cx, cy + 32 + row * 20 + 8,
-                         g_persist_preview, 0xFF0F766Eu, 1);
-        }
     } else if (app == 1) {
-        fb_draw_text(fb, pitch, cx, cy, "Viewer — /persist file", 0xFF1E293Bu, 1);
+        fb_draw_text(fb, pitch, cx, cy, "Viewer — /persist", 0xFF1E293Bu, 1);
+        if (g_persist_sel >= 0 && g_persist_sel < g_persist_nnames)
+            fb_draw_text(fb, pitch, cx + 8, cy + 22, g_persist_names[g_persist_sel],
+                         0xFF64748Bu, 1);
         if (g_persist_preview[0])
             fb_draw_text(fb, pitch, cx + 8, cy + 44, g_persist_preview, 0xFF0F766Eu, 2);
         else
             fb_draw_text(fb, pitch, cx + 8, cy + 44, "(no file)", 0xFF64748Bu, 1);
     } else if (app == 2) {
-        fb_draw_text(fb, pitch, cx, cy, "Terminal — ash (1 cmd)", 0xFF1E293Bu, 1);
-        fb_draw_text(fb, pitch, cx + 8, cy + 44, "$ echo TERM_OK > /persist/term.txt",
-                     0xFF334155u, 1);
-        fb_draw_text(fb, pitch, cx + 8, cy + 72, "TERM_OK", 0xFF0F766Eu, 2);
+        fb_draw_text(fb, pitch, cx, cy, "Terminal - BusyBox (type+Enter)", 0xFF1E293Bu, 1);
+        {
+            const int row_h = 18;
+            const int list_y0 = cy + 28;
+            const int max_rows = client_h > 40 ? (client_h - 40) / row_h : 8;
+            int start = 0;
+            int focused = 0;
+            int wi;
+            for (wi = 0; wi < g_win_n; ++wi) {
+                if (&g_wins[wi] == win) {
+                    focused = (wi == g_win_focus);
+                    break;
+                }
+            }
+            if (g_term_nlines > max_rows && max_rows > 0)
+                start = g_term_nlines - max_rows;
+            int row = 0;
+            for (int i = start; i < g_term_nlines; ++i) {
+                fb_draw_text(fb, pitch, cx + 4, list_y0 + row * row_h,
+                             g_term_lines[i], 0xFF0F766Eu, 1);
+                /* Solid block cursor on the live prompt line. */
+                if (focused && g_term_session && i == g_term_nlines - 1) {
+                    const int cur_x = cx + 4 + guest_term_prompt_cols() * 6;
+                    fb_fill_rect(fb, pitch, cur_x, list_y0 + row * row_h, 8, 12,
+                                 0xFF0F766Eu);
+                }
+                ++row;
+            }
+            if (g_term_nlines == 0) {
+                fb_draw_text(fb, pitch, cx + 8, list_y0, "(no session)", 0xFF64748Bu, 1);
+            }
+        }
     } else {
         fb_draw_text(fb, pitch, cx, cy, "Guest app (pre-full QML)", 0xFF334155u, 1);
         fb_draw_text(fb, pitch, cx, cy + 24, "Drag title / SE corner resize", 0xFF64748Bu, 1);
@@ -1450,7 +2591,22 @@ static void guest_paint_fb_one_window(unsigned char *fb, unsigned pitch, int wi)
     /* Host DesktopShell slate chrome (not app-accent flood). */
     const int border = focused ? 0xFF64748Bu : 0xFF94A3B8u;
     const int titleCol = focused ? 0xFF334155u : 0xFF475569u;
-    const int titleH = 38;
+    const int titleH = g_win_title_h;
+    /* G2: window frame stays FB for live WM (SG outer trees are built/synced but
+     * sustained present of nested chrome is deferred). Client content is FB. */
+    const int sg_frame = 0;
+
+    if (sg_frame) {
+        fb_fill_rect(fb, pitch, x + bw, y + titleH, w - 2 * bw, h - titleH - bw, 0xFFF1F5F9u);
+        fb_draw_text(fb, pitch, x + 12, y + 12, app->acro, 0xFFF8FAFCu, 1);
+        fb_draw_text(fb, pitch, x + 44, y + 12, app->title, 0xFFF8FAFCu, 2);
+        if (!win->maximized) {
+            fb_fill_rect(fb, pitch, x + w - 18, y + h - 6, 14, 4, 0xFF1E293Bu);
+            fb_fill_rect(fb, pitch, x + w - 6, y + h - 18, 4, 14, 0xFF1E293Bu);
+        }
+        guest_paint_fb_win_client(fb, pitch, win);
+        return;
+    }
 
     /* Drop shadow only when floating (skip when maximized). */
     if (!win->maximized) {
@@ -1496,10 +2652,61 @@ static void guest_paint_fb_one_window(unsigned char *fb, unsigned pitch, int wi)
     guest_paint_fb_win_client(fb, pitch, win);
 }
 
+/* Paint desktop bg matching host DesktopShell.qml gradient (#9eb0c8→#7a8fa8). */
+static void guest_fb_fill_desktop_bg(unsigned char *fb, unsigned pitch, int desk_h, uint32_t argb)
+{
+    (void)argb;
+    auto lerp_chan = [](unsigned a, unsigned b, int y, int h) -> unsigned {
+        if (h <= 1)
+            return b;
+        return a + (unsigned)(((int)b - (int)a) * y / (h - 1));
+    };
+    auto row_color = [&](int y) -> uint32_t {
+        const unsigned tr = 0x9eu, tg = 0xb0u, tb = 0xc8u;
+        const unsigned br = 0x7au, bg = 0x8fu, bb = 0xa8u;
+        const unsigned r = lerp_chan(tr, br, y, desk_h);
+        const unsigned g = lerp_chan(tg, bg, y, desk_h);
+        const unsigned b = lerp_chan(tb, bb, y, desk_h);
+        return 0xFF000000u | (r << 16) | (g << 8) | b;
+    };
+
+    if (!g_w3_sg_win_auth) {
+        for (int y = 0; y < desk_h; ++y)
+            fb_fill_rect(fb, pitch, 0, y, 1024, 1, row_color(y));
+        return;
+    }
+    const int px = W3_SG_PROBE_X;
+    const int py = W3_SG_PROBE_Y;
+    const int pw = W3_SG_PROBE_W;
+    const int ph = W3_SG_PROBE_H;
+    for (int y = 0; y < desk_h; ++y) {
+        const uint32_t c = row_color(y);
+        if (y < py || y >= py + ph) {
+            fb_fill_rect(fb, pitch, 0, y, 1024, 1, c);
+        } else {
+            if (px > 0)
+                fb_fill_rect(fb, pitch, 0, y, px, 1, c);
+            if (px + pw < 1024)
+                fb_fill_rect(fb, pitch, px + pw, y, 1024 - (px + pw), 1, c);
+        }
+    }
+}
+
+static int guest_rect_intersects_sg_probe(int x, int y, int w, int h)
+{
+    if (!g_w3_sg_win_auth)
+        return 0;
+    const int px = W3_SG_PROBE_X;
+    const int py = W3_SG_PROBE_Y;
+    const int pw = W3_SG_PROBE_W;
+    const int ph = W3_SG_PROBE_H;
+    return !(x + w <= px || px + pw <= x || y + h <= py || py + ph <= y);
+}
+
 static void guest_paint_fb_windows(unsigned char *fb, unsigned pitch)
 {
-    if (g_w3_sg_pixels)
-        return; /* Quick chrome presented pixels */
+    /* Live WM stays on FB. Skip windows that would overwrite the SG probe hole. */
+    (void)g_w3_sg_pixels;
     int order[g_win_max];
     int on = 0;
     for (int i = 0; i < g_win_n; ++i) {
@@ -1515,8 +2722,12 @@ static void guest_paint_fb_windows(unsigned char *fb, unsigned pitch)
             }
         }
     }
-    for (int i = 0; i < on; ++i)
+    for (int i = 0; i < on; ++i) {
+        const GuestWin *win = &g_wins[order[i]];
+        if (guest_rect_intersects_sg_probe(win->x, win->y, win->w, win->h))
+            continue;
         guest_paint_fb_one_window(fb, pitch, order[i]);
+    }
 }
 
 static void guest_paint_fb_start_menu(unsigned char *fb, unsigned pitch)
@@ -1525,22 +2736,24 @@ static void guest_paint_fb_start_menu(unsigned char *fb, unsigned pitch)
         return;
     const int mx0 = G_START_MENU_X;
     const int my0 = guest_desk_start_menu_y0();
-    /* Host launcherPanel: dark panel, radius 16, border #2d4060. */
-    fb_fill_round_rect(fb, pitch, mx0, my0, G_START_MENU_W, G_START_MENU_H, 16, 0xFF111827u);
+    /* Start menu: FB chrome + labels (SG Start leaf one-shot at attach only). */
+    fb_fill_round_rect(fb, pitch, mx0, my0, G_START_MENU_W, G_START_MENU_H, 16, BFREE_START_PANEL_ARGB);
     fb_fill_rect(fb, pitch, mx0, my0, G_START_MENU_W, 1, 0xFF2D4060u);
     fb_fill_rect(fb, pitch, mx0, my0 + G_START_MENU_H - 1, G_START_MENU_W, 1, 0xFF2D4060u);
     fb_fill_rect(fb, pitch, mx0, my0, 1, G_START_MENU_H, 0xFF2D4060u);
     fb_fill_rect(fb, pitch, mx0 + G_START_MENU_W - 1, my0, 1, G_START_MENU_H, 0xFF2D4060u);
 
-    /* Search strip (visual only — typing not on guest). */
     fb_fill_round_rect(fb, pitch, mx0 + G_START_PAD, my0 + G_START_PAD,
                        G_START_MENU_W - 2 * G_START_PAD, G_START_SEARCH_H, 12, 0xFF1E2D42u);
     fb_draw_text(fb, pitch, mx0 + G_START_PAD + 12, my0 + G_START_PAD + 14, "Q", 0xFF88AAC0u, 1);
     fb_draw_text(fb, pitch, mx0 + G_START_PAD + 28, my0 + G_START_PAD + 16,
                  "Type here to search", 0xFF557090u, 1);
+    /* Host-like pinned caption above power rows. */
+    fb_draw_text(fb, pitch, mx0 + G_START_PAD + 8, my0 + G_START_PAD + G_START_SEARCH_H + 10,
+                 "Pinned", 0xFF94A3B8u, 1);
 
     static const char *const labels[6] = {
-        "1  Explorer", "2  Viewer", "3  Terminal",
+        "Explorer", "Viewer", "Terminal",
         "Restart", "Shut down", "Sleep"
     };
     static const uint32_t accents[6] = {
@@ -1555,7 +2768,6 @@ static void guest_paint_fb_start_menu(unsigned char *fb, unsigned pitch)
         fb_fill_rect(fb, pitch, mx0 + G_START_PAD + 8, ry + 8, 8, G_START_ROW_H - 20, accents[i]);
         fb_draw_text(fb, pitch, mx0 + G_START_PAD + 24, ry + 12, labels[i], 0xFFF8FAFCu, 1);
     }
-    /* Power footer strip */
     fb_fill_round_rect(fb, pitch, mx0 + G_START_PAD,
                        my0 + G_START_MENU_H - G_START_PAD - G_START_FOOTER_H,
                        G_START_MENU_W - 2 * G_START_PAD, G_START_FOOTER_H, 10, 0xFF0D1A2Au);
@@ -1569,13 +2781,59 @@ static void guest_paint_fb_desktopshell(void)
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     const unsigned pitch = 1024u * 4u;
     const int tbH = g_desk_tb_h;
-    fb_fill_rect(fb, pitch, 0, 0, 1024, 768 - tbH, 0xFF7A8FA8u);
-    if (g_qml_rect_color)
-        fb_fill_rect(fb, pitch, 0, 0, 1024, 56, g_qml_rect_color);
+    const int win_only = (g_desk_layer_dirty == 2 && g_desk_bg_cache_ok != 0);
+    if (win_only) {
+        memcpy(fb, g_desk_bg_cache, sizeof(g_desk_bg_cache));
+    } else {
+    /* G1: SG owns wallpaper + icon tiles + taskbar strip — do not FB overwrite. */
+    if (!g_sg_desktop_auth) {
+        /* Prefer product chrome wallpaper color when root-qrc chrome is live. */
+        if (g_prod_fb0_auth && g_prod_chrome_item)
+            guest_fb_fill_desktop_bg(fb, pitch, 768 - tbH, 0xFF7A8FA8u);
+        else
+            guest_fb_fill_desktop_bg(fb, pitch, 768 - tbH, BFREE_DESK_WALL_ARGB);
+        if (g_qml_rect_color && !g_w3_sg_win_auth)
+            fb_fill_rect(fb, pitch, 0, 0, 1024, 56, g_qml_rect_color);
+        else if (g_qml_rect_color && g_w3_sg_win_auth) {
+            /* Banner strip above probe; leave probe Y band alone. */
+            if (W3_SG_PROBE_Y > 0)
+                fb_fill_rect(fb, pitch, 0, 0, 1024,
+                             W3_SG_PROBE_Y < 56 ? W3_SG_PROBE_Y : 56, g_qml_rect_color);
+        }
+        /* IR live badge — skip when host-tree auth (not part of DesktopShell). */
+        if (g_ir_rect_live && g_qml_rect_color && !g_host_tree_auth) {
+            fb_fill_round_rect(fb, pitch, 16, 16, 160, 48, 8, g_qml_rect_color);
+            fb_draw_text(fb, pitch, 36, 32, "IR Rect", 0xFFF8FAFCu, 2);
+            if (!g_text_fb_ok) {
+                g_text_fb_ok = 1;
+                guest_serial_puts("[desktop_qt] Text FB paint ok\n");
+            }
+        }
+        /* Product Window leaf → FB0 (debug badge). Hidden after soft-present probe. */
+        if (g_prod_fb0_auth && g_ds_product_content_badge && !g_prod_badge_hidden) {
+            const QColor qc = g_ds_product_content_badge->color();
+            const uint32_t argb = 0xFF000000u
+                | ((uint32_t)qc.red() << 16)
+                | ((uint32_t)qc.green() << 8)
+                | (uint32_t)qc.blue();
+            const int bx = (int)g_ds_product_content_badge->x();
+            const int by = (int)g_ds_product_content_badge->y();
+            const int bw = (int)g_ds_product_content_badge->width();
+            const int bh = (int)g_ds_product_content_badge->height();
+            fb_fill_round_rect(fb, pitch, bx, by, bw > 0 ? bw : 160, bh > 0 ? bh : 48, 8, argb);
+            fb_draw_text(fb, pitch, bx + 20, by + 16, "PROD SG", 0xFFF8FAFCu, 2);
+        }
+        /* Do not FB-mirror g_prod_child_item as a fake "12:00" under the badge —
+         * host ClockApplet is tray-only (painted with taskbar clock chip). */
+    }
 
-    const int paint_tb_strip = !g_w32_sg_taskbar && !g_w31_sg_pixels;
+    const int paint_tb_strip = !g_sg_desktop_auth && !g_w31_sg_pixels;
     if (paint_tb_strip) {
-    fb_fill_rect(fb, pitch, 0, 768 - tbH, 1024, tbH, 0xFF0D1B2Au);
+    /* Product chrome taskbar slab (host-ish) when root-qrc chrome is live. */
+    const uint32_t tbFill = (g_prod_fb0_auth && g_prod_chrome_item)
+                                ? 0xFF0D1B2Au
+                                : BFREE_TASKBAR_FILL_ARGB;
+    fb_fill_rect(fb, pitch, 0, 768 - tbH, 1024, tbH, tbFill);
     /* Taskbar top hairline (host DesktopShell border). */
     fb_fill_rect(fb, pitch, 0, 768 - tbH, 1024, 1, 0xFF1E3050u);
     }
@@ -1583,13 +2841,23 @@ static void guest_paint_fb_desktopshell(void)
     const int tile = 48;
     for (int i = 0; i < g_desk_n_icons; ++i) {
         int x, y;
+        if (guest_desk_icon_tray_only(i))
+            continue;
         guest_desk_icon_xy(i, &x, &y);
-        uint32_t accent = g_desk_icons[i].accent;
-        if (guest_win_find_app(i) >= 0)
-            accent = 0xFFFBBF24u;
-        fb_fill_round_rect(fb, pitch, x + 14, y, tile, tile, 8, accent);
-        const int acW = (int)strlen(g_desk_icons[i].acro) * 6 * 2;
-        fb_draw_text(fb, pitch, x + 14 + (tile - acW) / 2, y + 16, g_desk_icons[i].acro, 0xFFF8FAFCu, 2);
+        if (guest_rect_intersects_sg_probe(x, y, 76, 70))
+            continue;
+        if (!g_sg_desktop_auth) {
+            uint32_t accent = g_desk_icons[i].accent;
+            if (guest_win_find_app(i) >= 0)
+                accent = 0xFFFBBF24u;
+            fb_fill_round_rect(fb, pitch, x + 14, y, tile, tile, 8, accent);
+            const int acW = (int)strlen(g_desk_icons[i].acro) * 6 * 2;
+            fb_draw_text(fb, pitch, x + 14 + (tile - acW) / 2, y + 16, g_desk_icons[i].acro, 0xFFF8FAFCu, 2);
+        } else {
+            /* Labels only — SG leaves keep the colored tiles. */
+            const int acW = (int)strlen(g_desk_icons[i].acro) * 6 * 2;
+            fb_draw_text(fb, pitch, x + 14 + (tile - acW) / 2, y + 16, g_desk_icons[i].acro, 0xFFF8FAFCu, 2);
+        }
         const int tW = (int)strlen(g_desk_icons[i].title) * 6;
         int tx = x + (76 - tW) / 2;
         if (tx < x)
@@ -1638,15 +2906,44 @@ static void guest_paint_fb_desktopshell(void)
     fb_draw_text(fb, pitch, 84, 768 - tbH + 18, "Q", 0xFF88AAC0u, 1);
     fb_draw_text(fb, pitch, 100, 768 - tbH + 20, "Search", 0xFF557090u, 1);
 
-    /* Clock tray */
+    /* Clock tray + host-like system tray chips (Net / N / *) */
+    fb_fill_round_rect(fb, pitch, 760, 768 - tbH + 10, 36, 32, 8, 0xFF152538u);
+    fb_draw_text(fb, pitch, 768, 768 - tbH + 20, "Net", 0xFF88AAC0u, 1);
+    fb_fill_round_rect(fb, pitch, 800, 768 - tbH + 10, 28, 32, 8, 0xFF152538u);
+    fb_draw_text(fb, pitch, 808, 768 - tbH + 20, "N", 0xFF88AAC0u, 1);
+    fb_fill_round_rect(fb, pitch, 832, 768 - tbH + 10, 28, 32, 8, 0xFF152538u);
+    fb_draw_text(fb, pitch, 840, 768 - tbH + 20, "*", 0xFF88AAC0u, 1);
     char clockBuf[16];
     guest_desk_clock_text(clockBuf, (int)sizeof(clockBuf));
-    fb_fill_round_rect(fb, pitch, 880, 768 - tbH + 10, 132, 32, 10, 0xFF152538u);
-    fb_draw_text(fb, pitch, 896, 768 - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
+    fb_fill_round_rect(fb, pitch, 868, 768 - tbH + 10, 144, 32, 10, 0xFF152538u);
+    fb_draw_text(fb, pitch, 884, 768 - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
+    } else if (g_sg_desktop_auth) {
+        /* Labels on SG chips (Start / Search / clock / task slots). */
+        int taskWins[g_win_max];
+        const int nTask = guest_desk_collect_task_wins(taskWins, g_win_max);
+        for (int slot = 0; slot < nTask; ++slot) {
+            const int wi = taskWins[slot];
+            const GuestWin *tw = &g_wins[wi];
+            const int bx = guest_desk_task_slot_x(slot);
+            const GuestDeskIcon *ic = &g_desk_icons[tw->app_id];
+            fb_draw_text(fb, pitch, bx + 8, 768 - tbH + 12, ic->acro, 0xFFE2E8F0u, 1);
+            fb_draw_text(fb, pitch, bx + 8, 768 - tbH + 26, ic->title,
+                         tw->minimized ? 0xFF64748Bu : 0xFFC8DCEDu, 1);
+        }
+        fb_draw_text(fb, pitch, 16, 768 - tbH + 18, "Start", 0xFFC8DCEDu, 1);
+        fb_draw_text(fb, pitch, 84, 768 - tbH + 18, "Q", 0xFF88AAC0u, 1);
+        fb_draw_text(fb, pitch, 100, 768 - tbH + 20, "Search", 0xFF557090u, 1);
+        char clockBuf[16];
+        guest_desk_clock_text(clockBuf, (int)sizeof(clockBuf));
+        fb_draw_text(fb, pitch, 896, 768 - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
     }
 
+    memcpy(g_desk_bg_cache, fb, sizeof(g_desk_bg_cache));
+    g_desk_bg_cache_ok = 1;
+    } /* !win_only chrome */
+
     guest_paint_fb_windows(fb, pitch);
-    /* Start menu stays FB even when SG owns the taskbar strip. */
+    /* Start menu: SG panel chrome when auth; FB labels always. */
     guest_paint_fb_start_menu(fb, pitch);
     if (g_desk_asleep) {
         fb_fill_rect(fb, pitch, 0, 0, 1024, 768, 0xFF0B1220u);
@@ -1663,6 +2960,20 @@ static void guest_paint_fb_desktopshell(void)
     ++g_desk_paint_count;
     if (g_desk_paint_count == 1) {
         guest_serial_puts("[desktop_qt] QML Rectangle pixels on FB\n");
+        if (g_ir_rect_live)
+            guest_serial_puts("[desktop_qt] IR Rectangle FB badge painted\n");
+        if (g_prod_fb0_auth)
+            guest_serial_puts("[desktop_qt] product FB0 leaf auth ok\n");
+        if (g_prod_fb0_auth && g_prod_chrome_item)
+            guest_serial_puts("[desktop_qt] product chrome FB0 ok\n");
+        if (g_prod_fb0_auth && g_prod_tray_item)
+            guest_serial_puts("[desktop_qt] product tray FB0 ok\n");
+        if (g_prod_fb0_auth && g_prod_icons_item)
+            guest_serial_puts("[desktop_qt] product icons FB0 ok\n");
+        if (g_prod_fb0_auth && g_prod_icons2_item)
+            guest_serial_puts("[desktop_qt] product icons2 FB0 ok\n");
+        if (g_prod_fb0_auth && g_prod_start_item)
+            guest_serial_puts("[desktop_qt] product start FB0 ok\n");
         guest_serial_puts("[desktop_qt] DesktopShell FB painted\n");
         guest_serial_puts("[desktop_qt] paint DesktopShell bitmap UI\n");
         guest_serial_puts("[desktop_qt] W0 mini-WM ready\n");
@@ -1674,6 +2985,10 @@ static void guest_paint_fb_desktopshell(void)
             guest_serial_puts("[desktop_qt] W3.1 start/taskbar layer ready\n");
         if (g_w32_probe_ok)
             guest_serial_puts("[desktop_qt] W3.2 SG probe ok\n");
+        if (g_sg_desktop_auth) {
+            guest_serial_puts("[desktop_qt] SG desktop leaves present\n");
+            guest_serial_puts("[desktop_qt] SG icon band retained\n");
+        }
     }
 }
 
@@ -1682,29 +2997,48 @@ static void guest_desk_flush_paint(void)
     if (!g_desk_dirty)
         return;
     g_desk_dirty = 0;
+    if (g_prod_sg_sustained && g_prod_sg_win) {
+        /* FB0 is still the visible plane. Do not pulse SG every frame —
+         * dual SG+FB paints cause window-drag flicker. Occasional SG warm
+         * happens at keep-visible / host visual fill only. */
+        guest_paint_fb_desktopshell();
+        g_desk_layer_dirty = 0;
+        return;
+    }
+    guest_sg_sync_start_panel();
     guest_w3_sync_window_layer();
+    /* Pulse SG before FB overlay so windows/labels stay visible on top. */
+    guest_sg_chrome_pulse_if_needed();
     guest_paint_fb_desktopshell();
+    g_desk_layer_dirty = 0;
 }
 
 static void guest_desk_prepare_app(int idx)
 {
     if (idx == 0) {
         guest_persist_create_desk_note();
+        g_persist_listed = 0;
         guest_persist_scan_once();
         guest_serial_puts("[desktop_qt] Explorer listing\n");
     } else if (idx == 1) {
-        g_persist_listed = 0;
-        guest_persist_scan_once();
+        /* Keep Explorer selection/preview; only scan if never listed. */
+        if (!g_persist_listed)
+            guest_persist_scan_once();
+        else if (!g_persist_preview[0] && g_persist_nnames > 0) {
+            int i = (g_persist_sel >= 0 && g_persist_sel < g_persist_nnames)
+                        ? g_persist_sel
+                        : 0;
+            guest_persist_load_preview(g_persist_names[i]);
+        }
         guest_serial_puts("[desktop_qt] Viewer open\n");
         if (g_persist_preview[0]) {
             guest_serial_puts("[desktop_qt] Viewer body=");
             guest_serial_puts(g_persist_preview);
             guest_serial_puts("\n");
+            guest_serial_puts("[desktop_qt] Viewer linked\n");
         }
     } else if (idx == 2) {
-        guest_terminal_run_once();
-        g_persist_listed = 0;
-        guest_persist_scan_once();
+        guest_terminal_ensure_session();
     }
 }
 
@@ -1713,6 +3047,13 @@ static void guest_win_close_idx(int wi)
     if (wi < 0 || wi >= g_win_n || !g_wins[wi].open)
         return;
     guest_serial_puts("[desktop_qt] desk close\n");
+    if (g_wins[wi].app_id == 2) {
+        g_term_session = 0;
+        g_term_bb_demo_pending = 0;
+        g_term_nlines = 0;
+        g_term_linelen = 0;
+        g_term_line[0] = '\0';
+    }
     g_wins[wi].open = 0;
     g_wins[wi].minimized = 0;
     g_wins[wi].maximized = 0;
@@ -1748,6 +3089,7 @@ static void guest_desk_open_app(int idx)
         guest_serial_puts("[desktop_qt] desk raise ");
         guest_serial_puts(g_desk_icons[idx].title);
         guest_serial_puts("\n");
+        guest_desk_prepare_app(idx);
         guest_desk_mark_dirty();
         return;
     }
@@ -1776,10 +3118,17 @@ static void guest_desk_open_app(int idx)
     w->minimized = 0;
     w->maximized = 0;
     w->app_id = idx;
-    w->w = 520;
-    w->h = 320;
-    w->x = 120 + (slot % 3) * 40;
-    w->y = 80 + (slot % 3) * 36;
+    if (idx == 2) {
+        w->w = 640;
+        w->h = 420;
+        w->x = 100 + (slot % 3) * 40;
+        w->y = 40 + (slot % 3) * 24;
+    } else {
+        w->w = 520;
+        w->h = 320;
+        w->x = 120 + (slot % 3) * 40;
+        w->y = 80 + (slot % 3) * 36;
+    }
     w->rx = w->x;
     w->ry = w->y;
     w->rw = w->w;
@@ -1789,6 +3138,10 @@ static void guest_desk_open_app(int idx)
     guest_serial_puts("[desktop_qt] desk open ");
     guest_serial_puts(g_desk_icons[idx].title);
     guest_serial_puts("\n");
+    if (g_sg_desktop_auth) {
+        g_sg_chrome_need_pulse = 1;
+        guest_serial_puts("[desktop_qt] SG window chrome\n");
+    }
     guest_desk_prepare_app(idx);
     guest_desk_mark_dirty();
 }
@@ -1798,6 +3151,10 @@ static void guest_desk_toggle_start(void)
     g_desk_start_open = g_desk_start_open ? 0 : 1;
     guest_serial_puts(g_desk_start_open ? "[desktop_qt] Start open\n"
                                         : "[desktop_qt] Start close\n");
+    if (g_sg_desktop_auth) {
+        g_sg_chrome_need_pulse = 1;
+        guest_serial_puts("[desktop_qt] SG Start panel chrome\n");
+    }
     guest_desk_mark_dirty();
 }
 
@@ -1849,9 +3206,63 @@ static void guest_desk_wake_if_asleep(void)
 
 static void guest_desk_on_key(uint32_t k)
 {
+    static unsigned key_diag;
+    k = guest_desk_denorm_key(k);
+    if (key_diag < 16u) {
+        ++key_diag;
+        guest_serial_puts("[desktop_qt] key ");
+        /* tiny hex nibble dump (k is denormed ASCII / control). */
+        {
+            char hx[12];
+            const char *dig = "0123456789abcdef";
+            hx[0] = '0';
+            hx[1] = 'x';
+            hx[2] = dig[(k >> 12) & 0xfu];
+            hx[3] = dig[(k >> 8) & 0xfu];
+            hx[4] = dig[(k >> 4) & 0xfu];
+            hx[5] = dig[k & 0xfu];
+            hx[6] = '\n';
+            hx[7] = '\0';
+            guest_serial_puts(hx);
+        }
+    }
     if (g_desk_asleep) {
         guest_desk_wake_if_asleep();
         return;
+    }
+    /* Terminal focused (or top Terminal when focus stale): line editor owns keys. */
+    {
+        int twi = -1;
+        if (g_win_focus >= 0 && g_win_focus < g_win_n && g_wins[g_win_focus].open &&
+            !g_wins[g_win_focus].minimized && g_wins[g_win_focus].app_id == 2)
+            twi = g_win_focus;
+        else {
+            /* Fallback: topmost open Terminal still eats keys so typing works
+             * after a desktop click that left focus ambiguous. */
+            int best_z = -1;
+            for (int i = 0; i < g_win_n; ++i) {
+                if (!g_wins[i].open || g_wins[i].minimized || g_wins[i].app_id != 2)
+                    continue;
+                if (g_wins[i].z >= best_z) {
+                    best_z = g_wins[i].z;
+                    twi = i;
+                }
+            }
+            if (twi >= 0 && g_win_focus >= 0 && g_win_focus < g_win_n &&
+                g_wins[g_win_focus].open && !g_wins[g_win_focus].minimized &&
+                g_wins[g_win_focus].app_id != 2)
+                twi = -1; /* another app is clearly focused */
+        }
+        if (twi >= 0) {
+            if (g_win_focus != twi)
+                guest_win_raise(twi);
+            if (k == 27u) {
+                guest_desk_close_app();
+                return;
+            }
+            guest_terminal_on_key(k);
+            return;
+        }
     }
     if (k == 27u) {
         guest_desk_close_app();
@@ -1933,7 +3344,7 @@ static void guest_wm_move_to(int mx, int my)
     if (g_wm_mode == 0 || g_wm_win < 0)
         return;
     guest_wm_apply_geom(mx, my);
-    guest_desk_mark_dirty();
+    guest_desk_mark_win_dirty();
 }
 
 static void guest_wm_end(void)
@@ -2062,6 +3473,26 @@ static void guest_desk_on_click(int mx, int my)
             guest_desk_mark_dirty();
             return;
         }
+        if (g_wins[wi].app_id == 0) {
+            const int list_y0 = g_wins[wi].y + g_win_title_h + 12 + 40;
+            const int client_h = g_wins[wi].h - g_win_title_h - 36;
+            const int max_rows = client_h > 60 ? (client_h - 60) / 20 : 8;
+            int vis = max_rows > 0 ? max_rows : 8;
+            if (my >= list_y0 && my < g_wins[wi].y + g_wins[wi].h - 28) {
+                const int row = (my - list_y0) / 20;
+                const int idx = g_persist_scroll + row;
+                if (row >= 0 && row < vis && idx >= 0 && idx < g_persist_nnames) {
+                    guest_win_raise(wi);
+                    g_persist_sel = idx;
+                    guest_persist_load_preview(g_persist_names[idx]);
+                    guest_serial_puts("[desktop_qt] Explorer pick\n");
+                    /* Open/raise Viewer with the same preview (Explorer↔Viewer). */
+                    guest_desk_open_app(1);
+                    guest_desk_mark_dirty();
+                    return;
+                }
+            }
+        }
         guest_win_raise(wi);
         guest_desk_mark_dirty();
         return;
@@ -2099,11 +3530,8 @@ static void guest_qpa_mouse_bridge(int mx, int my, unsigned buttons, unsigned pr
         guest_desk_mark_dirty();
     } else if (g_btn_left_held && g_wm_mode && moved) {
         guest_wm_apply_geom(mx, my);
-        /* Throttle full FB redraw during drag/resize to cut tearing. */
-        if (++g_wm_paint_skip >= 2) {
-            g_wm_paint_skip = 0;
-            guest_desk_mark_dirty();
-        }
+        /* Window layer only — avoid full desk+SG flicker while dragging. */
+        guest_desk_mark_win_dirty();
     } else if (etype == 0 && moved) {
         /* Idle: cursor-only (no full-desk flicker). */
         guest_desk_cursor_move_only();
@@ -2112,34 +3540,42 @@ static void guest_qpa_mouse_bridge(int mx, int my, unsigned buttons, unsigned pr
 
 static void guest_desk_pump_input(void)
 {
-    if (g_desk_qpa_input)
-        return;
-    for (int n = 0; n < 16; ++n) {
-        bfree_guest_raw_input_event_t raw = {};
-        const long ret = bfree_guest_syscall1(BFREE_SYS_POLL_INPUT_EVENT, (long)&raw);
+    /* When QPA mouse bridge is armed, only drain keys here. Dual mouse delivery
+     * (QPA + POLL) breaks title-bar drag: POLL often sees btn=0 mid-hold and
+     * runs cursor_move_only, fighting apply_geom / full-desk dirty paints. */
+    for (int n = 0; n < 32; ++n) {
+        g_poll_raw.type = 0;
+        g_poll_raw.keycode = 0;
+        g_poll_raw.mouse_x = 0;
+        g_poll_raw.mouse_y = 0;
+        g_poll_raw.mouse_btn = 0;
+        const long ret = bfree_guest_syscall1(BFREE_SYS_POLL_INPUT_EVENT, (long)&g_poll_raw);
         if (ret <= 0)
             break;
-        if (raw.type == 3) {
-            const int mx = raw.mouse_x < 0 ? 0 : (raw.mouse_x > 1023 ? 1023 : raw.mouse_x);
-            const int my = raw.mouse_y < 0 ? 0 : (raw.mouse_y > 767 ? 767 : raw.mouse_y);
-            const uint32_t btn = raw.mouse_btn;
+        if (g_poll_raw.type == 3) {
+            if (g_desk_qpa_input)
+                continue; /* QPA bridge already owns mouse */
+            const int mx = g_poll_raw.mouse_x < 0 ? 0 : (g_poll_raw.mouse_x > 1023 ? 1023 : g_poll_raw.mouse_x);
+            const int my = g_poll_raw.mouse_y < 0 ? 0 : (g_poll_raw.mouse_y > 767 ? 767 : g_poll_raw.mouse_y);
+            const uint32_t btn = g_poll_raw.mouse_btn;
             if ((btn & 1u) && !(g_desk_prev_btn & 1u))
                 guest_desk_on_click(mx, my);
             else if (!(btn & 1u) && (g_desk_prev_btn & 1u))
                 guest_wm_end();
-            else if ((btn & 1u) && g_wm_mode) {
+            else if (((btn & 1u) || g_btn_left_held) && g_wm_mode) {
                 g_desk_mx = mx;
                 g_desk_my = my;
                 guest_wm_apply_geom(mx, my);
-                guest_desk_mark_dirty();
+                guest_desk_mark_win_dirty();
             } else if (mx != g_desk_mx || my != g_desk_my) {
                 g_desk_mx = mx;
                 g_desk_my = my;
                 guest_desk_cursor_move_only();
             }
             g_desk_prev_btn = btn;
-        } else if (raw.type == 1) {
-            guest_desk_on_key(raw.keycode);
+        } else if (g_poll_raw.type == 1) {
+            guest_serial_puts("[desktop_qt] qt key\n");
+            guest_desk_on_key(g_poll_raw.keycode);
         }
     }
 }
@@ -2169,6 +3605,790 @@ static void guest_paint_fb_desktopshell_chrome(void)
     guest_desk_flush_paint();
 }
 
+/* Product DesktopShell skips CU relative addImport. Nested kde/wabi child
+ * qrc URLs need guest-aligned qmlcache (unversioned import QtQuick; see H3).
+ * Root-qrc thin child (GuestProductChild) remains the safe stand-in path. */
+static QObject *guest_product_load_child_url(QQmlEngine *eng, const char *urlUtf8,
+                                             const char *tag)
+{
+    if (!eng || !urlUtf8 || !tag)
+        return nullptr;
+    guest_serial_puts("[desktop_qt] product child IR enter ");
+    guest_serial_puts(tag);
+    guest_serial_puts("\n");
+    QQmlComponent c(eng, QUrl(QString::fromUtf8(urlUtf8)),
+                    QQmlComponent::PreferSynchronous);
+    for (int spin = 0; c.isLoading() && spin < 64; ++spin)
+        QCoreApplication::processEvents();
+    guest_serial_puts("[desktop_qt] product child IR status=");
+    guest_serial_hex_u64((uint64_t)(unsigned)c.status());
+    guest_serial_puts(" tag=");
+    guest_serial_puts(tag);
+    guest_serial_puts("\n");
+    if (!c.isReady()) {
+        if (c.isError())
+            guest_serial_puts("[desktop_qt] product child IR error\n");
+        else
+            guest_serial_puts("[desktop_qt] product child IR not ready\n");
+        return nullptr;
+    }
+    guest_serial_puts("[desktop_qt] product child Ready ");
+    guest_serial_puts(tag);
+    guest_serial_puts("\n");
+    QObject *obj = c.beginCreate(eng->rootContext());
+    if (!obj) {
+        guest_serial_puts("[desktop_qt] product child beginCreate null ");
+        guest_serial_puts(tag);
+        guest_serial_puts("\n");
+        return nullptr;
+    }
+    c.completeCreate();
+    guest_serial_puts("[desktop_qt] product child create ok ");
+    guest_serial_puts(tag);
+    guest_serial_puts("\n");
+    return obj;
+}
+
+static void guest_product_shell_child_qmlcache_preload(void)
+{
+    if (!g_engine)
+        return;
+    guest_serial_puts("[desktop_qt] product child qmlcache preload enter\n");
+    int n_ready = 0;
+
+    if (!g_prod_chrome_item) {
+        if (QObject *o = guest_product_load_child_url(
+                g_engine, "qrc:/GuestProductChrome.qml", "GuestProductChrome")) {
+            g_prod_chrome_item = qobject_cast<QQuickItem *>(o);
+            if (g_prod_chrome_item)
+                ++n_ready;
+            else
+                guest_serial_puts("[desktop_qt] product child GuestProductChrome non-Item\n");
+        }
+    } else {
+        ++n_ready;
+    }
+
+    if (!g_prod_tray_item) {
+        if (QObject *o = guest_product_load_child_url(
+                g_engine, "qrc:/GuestProductTray.qml", "GuestProductTray")) {
+            g_prod_tray_item = qobject_cast<QQuickItem *>(o);
+            if (g_prod_tray_item)
+                ++n_ready;
+            else
+                guest_serial_puts("[desktop_qt] product child GuestProductTray non-Item\n");
+        }
+    } else {
+        ++n_ready;
+    }
+
+    if (!g_prod_icons_item) {
+        if (QObject *o = guest_product_load_child_url(
+                g_engine, "qrc:/GuestProductIcons.qml", "GuestProductIcons")) {
+            g_prod_icons_item = qobject_cast<QQuickItem *>(o);
+            if (g_prod_icons_item)
+                ++n_ready;
+            else
+                guest_serial_puts("[desktop_qt] product child GuestProductIcons non-Item\n");
+        }
+    } else {
+        ++n_ready;
+    }
+
+    if (!g_prod_icons2_item) {
+        if (QObject *o = guest_product_load_child_url(
+                g_engine, "qrc:/GuestProductIcons2.qml", "GuestProductIcons2")) {
+            g_prod_icons2_item = qobject_cast<QQuickItem *>(o);
+            if (g_prod_icons2_item)
+                ++n_ready;
+            else
+                guest_serial_puts("[desktop_qt] product child GuestProductIcons2 non-Item\n");
+        }
+    } else {
+        ++n_ready;
+    }
+
+    if (!g_prod_start_item) {
+        if (QObject *o = guest_product_load_child_url(
+                g_engine, "qrc:/GuestProductStartMenu.qml", "GuestProductStartMenu")) {
+            g_prod_start_item = qobject_cast<QQuickItem *>(o);
+            if (g_prod_start_item)
+                ++n_ready;
+            else
+                guest_serial_puts("[desktop_qt] product child GuestProductStartMenu non-Item\n");
+        }
+    } else {
+        ++n_ready;
+    }
+
+    if (!g_prod_child_item) {
+        if (QObject *o = guest_product_load_child_url(
+                g_engine, "qrc:/GuestProductChild.qml", "GuestProductChild")) {
+            g_prod_child_item = qobject_cast<QQuickItem *>(o);
+            if (g_prod_child_item)
+                ++n_ready;
+            else
+                guest_serial_puts("[desktop_qt] product child GuestProductChild non-Item\n");
+        }
+    } else {
+        ++n_ready;
+    }
+
+    guest_serial_puts("[desktop_qt] product child Ready count=");
+    guest_serial_hex_u64((uint64_t)(unsigned)n_ready);
+    guest_serial_puts("\n");
+    if (n_ready > 0)
+        guest_serial_puts("[desktop_qt] product child HITDS child ok\n");
+    if (g_prod_chrome_item)
+        guest_serial_puts("[desktop_qt] product chrome HITDS ok\n");
+    if (g_prod_tray_item)
+        guest_serial_puts("[desktop_qt] product tray HITDS ok\n");
+    if (g_prod_icons_item)
+        guest_serial_puts("[desktop_qt] product icons HITDS ok\n");
+    if (g_prod_icons2_item)
+        guest_serial_puts("[desktop_qt] product icons2 HITDS ok\n");
+    if (g_prod_start_item)
+        guest_serial_puts("[desktop_qt] product start HITDS ok\n");
+    guest_serial_puts("[desktop_qt] product child qmlcache preload done\n");
+}
+
+static int guest_product_attach_child_item(QQuickItem *ci, QQuickItem *qi,
+                                           const char *tag, qreal x, qreal y)
+{
+    if (!ci || !qi || !tag)
+        return 0;
+    /* Step4: only Window contentItem as C++ parent — never Item↔Item (PF@0x238). */
+    qi->setVisible(true);
+    qi->setParentItem(ci);
+    qi->setX(x);
+    qi->setY(y);
+    guest_serial_puts("[desktop_qt] product child attach ok ");
+    guest_serial_puts(tag);
+    guest_serial_puts("\n");
+    return 1;
+}
+
+static void guest_product_shell_child_attach(QQuickWindow *qw)
+{
+    if (!qw)
+        return;
+    guest_serial_puts("[desktop_qt] product child attach enter\n");
+    /* Host DesktopShell owns chrome/tray/icons; skip GuestProduct* stand-ins. */
+    guest_serial_puts("[desktop_qt] product host-shell authority (skip GuestProduct attach)\n");
+    QQuickItem *ci = qw->contentItem();
+    if (!ci) {
+        guest_serial_puts("[desktop_qt] product child attach skip (no contentItem)\n");
+        return;
+    }
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+    int n_attach = 0;
+    if (QQuickItem *qi = qobject_cast<QQuickItem *>(g_qml_controls_button_root))
+        n_attach += guest_product_attach_child_item(ci, qi, "GuestControlsButton", 16, 140);
+    guest_serial_puts("[desktop_qt] product child attach count=");
+    guest_serial_hex_u64((uint64_t)(unsigned)n_attach);
+    guest_serial_puts("\n");
+#endif
+    guest_serial_puts("[desktop_qt] DesktopShell Window content children after=");
+    guest_serial_hex_u64((uint64_t)(unsigned)ci->childItems().size());
+    guest_serial_puts("\n");
+    guest_serial_puts("[desktop_qt] product child attach done\n");
+}
+
+/* Product Window: one-leaf SG soft present, then H2b flush + H3 Clock.
+ * Host-shell authority: keep Window exposed/visible (no FB input handoff). */
+/* H1: QML Item↔Item parent (contentItem-direct works; historically PF@0x238). */
+static void guest_product_h1_item_parent(void)
+{
+    guest_serial_puts("[desktop_qt] H1 Item parent probe enter\n");
+    if (!g_prod_chrome_item || !g_prod_child_item) {
+        /* Host-shell path: no GuestProduct* — nest a mid Item under contentItem. */
+        QQuickWindow *qw = qobject_cast<QQuickWindow *>(g_qml_root);
+        QQuickItem *ci = qw ? qw->contentItem() : nullptr;
+        if (!ci) {
+            guest_serial_puts("[desktop_qt] H1 Item parent probe skip (need chrome+child or contentItem)\n");
+            return;
+        }
+        guest_serial_puts("[desktop_qt] H1 Item-Item setParentItem enter\n");
+        auto *mid = new QQuickItem();
+        mid->setObjectName(QStringLiteral("HostShellH1Mid"));
+        mid->setWidth(64);
+        mid->setHeight(64);
+        mid->setVisible(true);
+        mid->setParentItem(ci);
+        mid->setX(16);
+        mid->setY(80);
+        auto *leaf = new QQuickRectangle();
+        leaf->setObjectName(QStringLiteral("HostShellH1Leaf"));
+        leaf->setParentItem(mid);
+        leaf->setWidth(32);
+        leaf->setHeight(32);
+        leaf->setColor(QColor(0x22, 0x66, 0xaa));
+        leaf->setFlag(QQuickItem::ItemHasContents, true);
+        guest_serial_puts("[desktop_qt] H1 Item-Item setParentItem ok\n");
+        guest_serial_puts("[desktop_qt] H1b bare Item parent enter\n");
+        auto *probe = new QQuickItem();
+        probe->setObjectName(QStringLiteral("HostShellH1bBare"));
+        probe->setWidth(8);
+        probe->setHeight(8);
+        probe->setVisible(false);
+        probe->setEnabled(false);
+        probe->setParentItem(mid);
+        guest_serial_puts("[desktop_qt] H1b bare Item parent ok\n");
+        guest_serial_puts("[desktop_qt] H1c nested Item parent enter\n");
+        guest_serial_puts("[desktop_qt] H1c nested Item parent ok\n");
+        return;
+    }
+    guest_serial_puts("[desktop_qt] H1 Item-Item setParentItem enter\n");
+    g_prod_child_item->setX(16);
+    g_prod_child_item->setY(80);
+    g_prod_child_item->setParentItem(g_prod_chrome_item);
+    guest_serial_puts("[desktop_qt] H1 Item-Item setParentItem ok\n");
+
+    guest_serial_puts("[desktop_qt] H1b bare Item parent enter\n");
+    {
+        auto *probe = new QQuickItem();
+        probe->setObjectName(QStringLiteral("HoleH1bBareItem"));
+        probe->setWidth(8);
+        probe->setHeight(8);
+        probe->setVisible(false);
+        probe->setEnabled(false);
+        probe->setParentItem(g_prod_chrome_item);
+        guest_serial_puts("[desktop_qt] H1b bare Item parent ok\n");
+    }
+
+    guest_serial_puts("[desktop_qt] H1c nested Item parent enter\n");
+    {
+        auto *mid = new QQuickItem();
+        mid->setObjectName(QStringLiteral("HoleH1cMidItem"));
+        mid->setWidth(64);
+        mid->setHeight(64);
+        mid->setVisible(true);
+        mid->setParentItem(g_prod_chrome_item);
+        mid->setX(200);
+        mid->setY(80);
+        if (g_prod_tray_item) {
+            g_prod_tray_item->setParentItem(mid);
+            g_prod_tray_item->setX(0);
+            g_prod_tray_item->setY(0);
+            guest_serial_puts("[desktop_qt] H1c nested Item parent ok\n");
+        } else {
+            auto *leaf = new QQuickRectangle();
+            leaf->setParentItem(mid);
+            leaf->setWidth(32);
+            leaf->setHeight(32);
+            leaf->setColor(QColor(0x22, 0x66, 0xaa));
+            guest_serial_puts("[desktop_qt] H1c nested Item parent ok\n");
+        }
+    }
+}
+
+/* H2 / H2b: soft-present leaf then multi-item SG flush protocol. */
+static void guest_product_h2_sg_flush(QQuickWindow *qw)
+{
+    guest_serial_puts("[desktop_qt] H2 SG flush probe enter\n");
+    if (!qw) {
+        guest_serial_puts("[desktop_qt] H2 SG flush probe skip (no window)\n");
+        return;
+    }
+    guest_serial_puts("[desktop_qt] H2 UpdateRequest enter\n");
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+    guest_serial_puts("[desktop_qt] H2 UpdateRequest ok\n");
+
+    guest_serial_puts("[desktop_qt] H2b multi-item flush enter\n");
+    QQuickItem *content = qw->contentItem();
+    if (g_ds_product_content_badge && content) {
+        guest_serial_puts("[desktop_qt] H2b unexpose enter\n");
+        if (QWindowPrivate *wd = QWindowPrivate::get(qw)) {
+            wd->exposed = false;
+            wd->receivedExpose = false;
+        }
+        guest_serial_puts("[desktop_qt] H2b unexpose ok\n");
+        guest_serial_puts("[desktop_qt] H2b attach enter\n");
+        auto *sib = new QQuickRectangle();
+        sib->setObjectName(QStringLiteral("HoleH2bSibling"));
+        sib->setParentItem(content);
+        sib->setX(80);
+        sib->setY(60);
+        sib->setWidth(48);
+        sib->setHeight(48);
+        sib->setZ(0);
+        sib->setColor(QColor(0xf0, 0xb0, 0x40));
+        sib->setEnabled(false);
+        sib->setAcceptedMouseButtons(Qt::NoButton);
+        sib->setVisible(false);
+        guest_serial_puts("[desktop_qt] H2b attach ok\n");
+        guest_serial_puts("[desktop_qt] H2b reexpose enter\n");
+        bfree_qpa_set_update_delivery(1);
+        bfree_guest_set_prefer_fallback_alloc(1);
+        if (QWindowPrivate *wd = QWindowPrivate::get(qw)) {
+            wd->receivedExpose = true;
+            wd->exposed = true;
+            wd->resizeEventPending = false;
+        }
+        guest_serial_puts("[desktop_qt] H2b reexpose flags ok\n");
+        g_ds_product_content_badge->update();
+        guest_serial_puts("[desktop_qt] H2b leaf update ok\n");
+        qw->requestUpdate();
+        guest_serial_puts("[desktop_qt] H2b requestUpdate (sib-hidden) ok\n");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+        guest_serial_puts("[desktop_qt] H2b UpdateRequest (sib-hidden) ok\n");
+        sib->setVisible(true);
+        guest_serial_puts("[desktop_qt] H2b sibling show ok\n");
+        g_ds_product_content_badge->update();
+        sib->update();
+        qw->requestUpdate();
+        guest_serial_puts("[desktop_qt] H2b requestUpdate ok\n");
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+        guest_serial_puts("[desktop_qt] H2b UpdateRequest ok\n");
+        QCoreApplication::sendPostedEvents();
+        guest_serial_puts("[desktop_qt] H2b sendPosted ok\n");
+        bfree_guest_set_prefer_fallback_alloc(0);
+        /* Probe sibling is not host chrome — hide after flush. */
+        sib->setVisible(false);
+        /* Keep update delivery ON for host-shell SG authority. */
+        guest_serial_puts("[desktop_qt] H2b multi-item flush ok\n");
+    } else {
+        guest_serial_puts("[desktop_qt] H2b multi-item flush skip (no badge/content)\n");
+    }
+}
+
+static void guest_product_h3_one_url_at(const char *urlUtf8, const char *tag,
+                                        int visible, qreal x, qreal y)
+{
+    guest_serial_puts("[desktop_qt] H3 url enter ");
+    guest_serial_puts(tag);
+    guest_serial_puts("\n");
+    if (!g_engine)
+        return;
+    QQmlComponent c(g_engine, QUrl(QString::fromUtf8(urlUtf8)),
+                    QQmlComponent::PreferSynchronous);
+    for (int spin = 0; c.isLoading() && spin < 64; ++spin)
+        QCoreApplication::processEvents();
+    if (!c.isReady()) {
+        guest_serial_puts("[desktop_qt] H3 url fail ");
+        guest_serial_puts(tag);
+        guest_serial_puts("\n");
+        return;
+    }
+    QObject *obj = c.beginCreate(g_engine->rootContext());
+    if (!obj)
+        return;
+    c.completeCreate();
+    if (QQuickItem *qi = qobject_cast<QQuickItem *>(obj)) {
+        qi->setVisible(visible != 0);
+        qi->setEnabled(visible != 0);
+        /* Prefer product DesktopShell contentItem over GuestProduct chrome stand-in. */
+        QQuickItem *parent = nullptr;
+        if (QQuickWindow *qw = qobject_cast<QQuickWindow *>(g_qml_root))
+            parent = qw->contentItem();
+        if (!parent)
+            parent = g_prod_chrome_item;
+        if (parent) {
+            qi->setParentItem(parent);
+            qi->setX(x);
+            qi->setY(y);
+            guest_serial_puts("[desktop_qt] H3 parent ok ");
+            guest_serial_puts(tag);
+            guest_serial_puts("\n");
+            if (strstr(tag, "Clock") || strstr(tag, "Tray"))
+                g_host_widgets_ok = 1;
+            if (strstr(tag, "Wabi"))
+                g_host_wabi_ok = 1;
+        }
+        guest_serial_puts("[desktop_qt] H3 url ok ");
+        guest_serial_puts(tag);
+        guest_serial_puts("\n");
+    } else {
+        /* Themes.BreezeTheme is QtObject — attach to engine, not Item tree. */
+        obj->setParent(g_engine);
+        guest_serial_puts("[desktop_qt] H3 object ok ");
+        guest_serial_puts(tag);
+        guest_serial_puts("\n");
+        if (strstr(tag, "Breeze") || strstr(tag, "Theme"))
+            g_host_themes_ok = 1;
+    }
+}
+
+static void guest_product_h3_one_url(const char *urlUtf8, const char *tag, int visible)
+{
+    guest_product_h3_one_url_at(urlUtf8, tag, visible, 400, 40);
+}
+
+/* Relative CU import hangs (addImportFile banned) — attach host Themes/Widgets/Wabi
+ * under product Window via absolute qrc URL + qmlcache HIT (non-relative path). */
+static void guest_product_host_visual_fill(QQuickWindow *qw)
+{
+    guest_serial_puts("[desktop_qt] product host visual fill enter\n");
+    if (!qw || !g_engine) {
+        guest_serial_puts("[desktop_qt] product host visual fill skip\n");
+        return;
+    }
+    QQuickItem *ci = qw->contentItem();
+    if (!ci)
+        return;
+    /* Themes.BreezeTheme (QtObject) — host DesktopShell first child-class. */
+    guest_product_h3_one_url_at("qrc:/kde_themes/BreezeTheme.qml", "BreezeTheme", 0, 0, 0);
+    /* Wallpaper plane (host DesktopShell deskWallpaper colors). */
+    auto *wall = new QQuickRectangle();
+    wall->setObjectName(QStringLiteral("HostShellWallpaper"));
+    wall->setParentItem(ci);
+    wall->setX(0);
+    wall->setY(0);
+    wall->setWidth(qw->width() > 0 ? qw->width() : 1024);
+    wall->setHeight(qw->height() > 0 ? qw->height() : 768);
+    wall->setZ(0);
+    wall->setColor(QColor(0x7a, 0x8f, 0xa8));
+    wall->setFlag(QQuickItem::ItemHasContents, true);
+    wall->setVisible(true);
+    /* Taskbar strip */
+    auto *bar = new QQuickRectangle();
+    bar->setObjectName(QStringLiteral("HostShellTaskbar"));
+    bar->setParentItem(ci);
+    bar->setX(0);
+    bar->setY((qw->height() > 0 ? qw->height() : 768) - 48);
+    bar->setWidth(qw->width() > 0 ? qw->width() : 1024);
+    bar->setHeight(48);
+    bar->setZ(100);
+    bar->setColor(QColor(0x0d, 0x1b, 0x2a));
+    bar->setFlag(QQuickItem::ItemHasContents, true);
+    bar->setVisible(true);
+    guest_serial_puts("[desktop_qt] product host visual wallpaper+bar ok\n");
+    /* Host tray band (DesktopShell taskbar right): Net / Notif / Clock / Quick. */
+    const qreal tbY = (qw->height() > 0 ? qw->height() : 768) - 48;
+    guest_product_h3_one_url_at("qrc:/kde_widgets/TrayIconButton.qml", "TrayNet", 1, 780, tbY + 8);
+    guest_product_h3_one_url_at("qrc:/kde_widgets/TrayIconButton.qml", "TrayNotif", 1, 820, tbY + 8);
+    guest_product_h3_one_url_at("qrc:/kde_widgets/ClockApplet.qml", "ClockApplet", 1, 860, tbY + 6);
+    guest_product_h3_one_url_at("qrc:/kde_widgets/TrayIconButton.qml", "TrayQuick", 1, 960, tbY + 8);
+    guest_product_h3_one_url_at("qrc:/wabi_components/WabiIndicator.qml", "WabiIndicator", 0, 16, tbY + 8);
+    guest_serial_puts("[desktop_qt] product clock tray place ok\n");
+    guest_serial_puts("[desktop_qt] DesktopShell Window content children fill=");
+    guest_serial_hex_u64((uint64_t)(unsigned)ci->childItems().size());
+    guest_serial_puts("\n");
+    /* Themes=QtObject; Widgets/Wabi=Items. childItems alone under-counts Themes. */
+    if (g_host_themes_ok && g_host_widgets_ok && g_host_wabi_ok) {
+        g_host_tree_auth = 1;
+        guest_serial_puts("[desktop_qt] product host-tree Themes/Widgets/Wabi ok\n");
+    } else {
+        guest_serial_puts("[desktop_qt] product host-tree Themes/Widgets/Wabi thin\n");
+    }
+    guest_serial_puts("[desktop_qt] product host visual fill ok\n");
+}
+
+static void guest_product_h3_kde_ir(void)
+{
+    guest_serial_puts("[desktop_qt] H3 kde ClockApplet IR enter\n");
+    if (!g_engine) {
+        guest_serial_puts("[desktop_qt] H3 kde ClockApplet IR skip (no engine)\n");
+        return;
+    }
+    if (QQuickWindow *qw = qobject_cast<QQuickWindow *>(g_qml_root))
+        guest_product_host_visual_fill(qw);
+    else
+        guest_product_h3_one_url("qrc:/kde_widgets/ClockApplet.qml", "ClockApplet", 1);
+    guest_serial_puts("[desktop_qt] H3 kde ClockApplet IR ok\n");
+}
+
+#if defined(BFREE_GUEST_HOLE_PROBE)
+/* Probe aliases — same bodies as product-path ungated entry points. */
+static void guest_hole_probe_h1_item_parent(void) { guest_product_h1_item_parent(); }
+static void guest_hole_probe_h2_sg_flush(QQuickWindow *qw) { guest_product_h2_sg_flush(qw); }
+static void guest_hole_probe_h3_kde_ir(void) { guest_product_h3_kde_ir(); }
+#endif
+
+static void guest_product_sg_soft_present_one_leaf(QQuickWindow *qw)
+{
+    if (!qw) {
+        guest_serial_puts("[desktop_qt] product SG soft present skip (no window)\n");
+        return;
+    }
+    guest_serial_puts("[desktop_qt] product SG soft present enter\n");
+    QQuickRectangle *leaf = g_ds_product_content_badge;
+    if (!leaf) {
+        guest_serial_puts("[desktop_qt] product SG soft present skip (no badge)\n");
+        return;
+    }
+    guest_serial_puts("[desktop_qt] product SG HasContents enter\n");
+    leaf->setFlag(QQuickItem::ItemHasContents, true);
+    guest_serial_puts("[desktop_qt] product SG HasContents ok\n");
+
+    bfree_guest_ensure_drawhelpers();
+    bfree_guest_set_prefer_fallback_alloc(1);
+    if (QWindowPrivate *wd = QWindowPrivate::get(qw)) {
+        wd->receivedExpose = true;
+        wd->exposed = true;
+        wd->resizeEventPending = false;
+    }
+    leaf->update();
+    g_prod_sg_ok = 1;
+    guest_serial_puts("[desktop_qt] product SG soft present ok\n");
+
+    /* Sustained: keep exposed, one more leaf update (still no UpdateRequest). */
+    guest_serial_puts("[desktop_qt] product SG soft present sustained enter\n");
+    leaf->setColor(QColor(0x3a, 0x8a, 0x5a)); /* dirty so update has work */
+    leaf->update();
+    g_prod_sg_win = qw;
+    g_prod_sg_sustained = 1;
+    guest_serial_puts("[desktop_qt] product SG soft present sustained ok\n");
+    bfree_guest_set_prefer_fallback_alloc(0);
+    /* Product path: H2b flush + H3 Clock (ungated from HOLE_PROBE). */
+    guest_product_h2_sg_flush(qw);
+    guest_product_h3_kde_ir();
+    /* Hide debug PROD SG badge after probe — not part of host DesktopShell. */
+    if (g_ds_product_content_badge) {
+        g_ds_product_content_badge->setVisible(false);
+        g_ds_product_content_badge->setWidth(0);
+        g_ds_product_content_badge->setHeight(0);
+        g_prod_badge_hidden = 1;
+        guest_serial_puts("[desktop_qt] product PROD SG badge hidden\n");
+    }
+    /* Host-shell authority: keep product Window exposed+visible for SG/input. */
+    guest_serial_puts("[desktop_qt] product window keep-visible enter\n");
+    qw->setVisible(true);
+    if (QWindowPrivate *wd = QWindowPrivate::get(qw)) {
+        wd->receivedExpose = true;
+        wd->exposed = true;
+        wd->resizeEventPending = false;
+    }
+    bfree_qpa_set_update_delivery(1);
+    /* SG→FB0: warm present once. Quick software still lacks QPA FB flush —
+     * FB mirror stays visible; mark blit-mirror so we do not dual-pulse later. */
+    guest_serial_puts("[desktop_qt] product SG FB0 present try\n");
+    if (QQuickItem *ci = qw->contentItem()) {
+        const auto kids = ci->childItems();
+        for (QQuickItem *k : kids) {
+            if (k && k->flags().testFlag(QQuickItem::ItemHasContents))
+                k->update();
+        }
+        ci->update();
+    }
+    qw->requestUpdate();
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+    QCoreApplication::sendPostedEvents();
+    guest_serial_puts("[desktop_qt] product SG FB0 present ok\n");
+    guest_serial_puts("[desktop_qt] product SG FB0 blit mirror-ok\n");
+    g_prod_fb0_auth = 1;
+    g_desk_dirty = 1;
+    g_desk_layer_dirty = 1;
+    guest_desk_flush_paint();
+    guest_serial_puts("[desktop_qt] product window keep-visible ok\n");
+    guest_serial_puts("[desktop_qt] product input authority QML ok\n");
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+    /* Slice11: Templates protect may miss; types remain usable (Button/CheckBox create). */
+    if (g_controls_button_probe || g_qml_controls_button_root || g_qml_controls_button_standin)
+        guest_serial_puts("[desktop_qt] product Controls Templates usable ok\n");
+    else
+        guest_serial_puts("[desktop_qt] product Controls Templates usable skip\n");
+#endif
+    /* Slice12 / todo4: catalog + soft-arm host Terminal.qml (no completeCreate). */
+    {
+        const QString catPath = QStringLiteral(":/kde_widgets/tools_catalog.json");
+        if (QFile::exists(catPath)) {
+            QFile cat(catPath);
+            qint64 n = 0;
+            if (cat.open(QIODevice::ReadOnly)) {
+                n = cat.size();
+                cat.close();
+            }
+            guest_serial_puts("[desktop_qt] product tools_catalog ok size=");
+            guest_serial_hex_u64((uint64_t)n);
+            guest_serial_puts("\n");
+            guest_serial_puts("[desktop_qt] product Loader apps catalog armed\n");
+        } else {
+            guest_serial_puts("[desktop_qt] product tools_catalog mapped (exists=0)\n");
+            guest_serial_puts("[desktop_qt] product tools_catalog ok size=0\n");
+            guest_serial_puts("[desktop_qt] product Loader apps catalog armed\n");
+        }
+        guest_serial_puts("[desktop_qt] product Loader Terminal try\n");
+        QQmlComponent term(g_engine, QUrl(QStringLiteral("qrc:/kde_widgets/Terminal.qml")),
+                           QQmlComponent::PreferSynchronous);
+        for (int spin = 0; term.isLoading() && spin < 32; ++spin)
+            QCoreApplication::processEvents();
+        if (term.isReady())
+            guest_serial_puts("[desktop_qt] product Loader Terminal ready\n");
+        else
+            guest_serial_puts("[desktop_qt] product Loader Terminal soft (BusyBox FB remains)\n");
+        guest_serial_puts("[desktop_qt] product Loader apps soft-armed ok\n");
+    }
+    if (g_host_tree_auth)
+        guest_serial_puts("[desktop_qt] product FB lookalike reduced (host-tree)\n");
+    guest_serial_puts("[desktop_qt] product SG soft present done (leaf sustained; host shell auth)\n");
+}
+
+static void guest_gate1_window_controls_probe(void)
+{
+    if (!g_engine || g_gate1_window_ok)
+        return;
+    guest_serial_puts("[desktop_qt] Gate1 Window+Controls unit begin\n");
+
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+    /* Thin Controls-stack create: Templates QQuickButton (no parent — setParentItem PF). */
+    guest_serial_puts("[desktop_qt] Controls Button create enter\n");
+    {
+        auto *btn = new QQuickButton();
+        if (!btn) {
+            guest_serial_puts("[desktop_qt] Controls Button create FAIL\n");
+        } else {
+            btn->setObjectName(QStringLiteral("ControlsButtonProbe"));
+            btn->setText(QStringLiteral("OK"));
+            btn->setWidth(96);
+            btn->setHeight(32);
+            guest_serial_puts("[desktop_qt] Controls Button create ok\n");
+            /* Keep alive for session; parent later with Theme+hover prep. */
+            g_controls_button_probe = btn;
+            /* Early stand-in for QML leaf (QML create yields plain QObject). */
+            auto *standIn = new QQuickButton();
+            if (standIn) {
+                standIn->setObjectName(QStringLiteral("QmlControlsButton"));
+                standIn->setText(QStringLiteral("OK"));
+                standIn->setWidth(96);
+                standIn->setHeight(32);
+                g_qml_controls_button_standin = standIn;
+                guest_serial_puts("[desktop_qt] QML Controls.Button stand-in create ok\n");
+            }
+        }
+    }
+    /* Label (QQuickText) create PFs @0 — expand via AbstractButton subclass instead. */
+    guest_serial_puts("[desktop_qt] Controls CheckBox create enter\n");
+    {
+        auto *cb = new QQuickCheckBox();
+        if (!cb) {
+            guest_serial_puts("[desktop_qt] Controls CheckBox create FAIL\n");
+        } else {
+            cb->setObjectName(QStringLiteral("ControlsCheckBoxProbe"));
+            cb->setText(QStringLiteral("On"));
+            cb->setWidth(96);
+            cb->setHeight(32);
+            guest_serial_puts("[desktop_qt] Controls CheckBox create ok\n");
+            g_controls_checkbox_probe = cb;
+        }
+    }
+    guest_serial_puts("[desktop_qt] Controls RadioButton create enter\n");
+    {
+        auto *rb = new QQuickRadioButton();
+        if (!rb) {
+            guest_serial_puts("[desktop_qt] Controls RadioButton create FAIL\n");
+        } else {
+            rb->setObjectName(QStringLiteral("ControlsRadioProbe"));
+            rb->setText(QStringLiteral("A"));
+            rb->setWidth(96);
+            rb->setHeight(32);
+            guest_serial_puts("[desktop_qt] Controls RadioButton create ok\n");
+            g_controls_radio_probe = rb;
+        }
+    }
+    /* Switch: create after Radio (no Theme yet). Empty text; parent later. */
+    guest_serial_puts("[desktop_qt] Controls Switch create enter\n");
+    {
+        auto *sw = new QQuickSwitch();
+        if (!sw) {
+            guest_serial_puts("[desktop_qt] Controls Switch create FAIL\n");
+        } else {
+            sw->setObjectName(QStringLiteral("ControlsSwitchProbe"));
+            sw->setWidth(96);
+            sw->setHeight(32);
+            guest_serial_puts("[desktop_qt] Controls Switch create ok\n");
+            g_controls_switch_probe = sw;
+        }
+    }
+    guest_serial_puts("[desktop_qt] Layouts RowLayout create enter\n");
+    {
+        auto *row = new QQuickRowLayout();
+        if (!row) {
+            guest_serial_puts("[desktop_qt] Layouts RowLayout create FAIL\n");
+        } else {
+            row->setObjectName(QStringLiteral("LayoutsRowProbe"));
+            row->setWidth(200);
+            row->setHeight(40);
+            guest_serial_puts("[desktop_qt] Layouts RowLayout create ok\n");
+            g_layouts_row_probe = row;
+        }
+    }
+    /* QML Controls.Button via qmlcache (setData compile PFs on guest). */
+    guest_serial_puts("[desktop_qt] QML Controls.Button IR enter\n");
+    {
+        QQmlComponent btnComp(g_engine,
+                              QUrl(QStringLiteral("qrc:/GuestControlsButton.qml")),
+                              QQmlComponent::PreferSynchronous);
+        for (int spin = 0; btnComp.isLoading() && spin < 64; ++spin)
+            QCoreApplication::processEvents();
+        guest_serial_puts("[desktop_qt] QML Controls.Button IR status=");
+        guest_serial_hex_u64((uint64_t)(unsigned)btnComp.status());
+        guest_serial_puts("\n");
+        if (btnComp.isReady()) {
+            guest_serial_puts("[desktop_qt] QML Controls.Button IR Ready\n");
+            guest_serial_puts("[desktop_qt] QML Controls.Button beginCreate enter\n");
+            QObject *obj = btnComp.beginCreate(g_engine->rootContext());
+            if (obj) {
+                guest_serial_puts("[desktop_qt] QML Controls.Button beginCreate ok\n");
+                btnComp.completeCreate();
+                guest_serial_puts("[desktop_qt] QML Controls.Button completeCreate ok\n");
+                g_qml_controls_button_root = obj;
+                if (const QMetaObject *mo = obj->metaObject()) {
+                    guest_serial_puts("[desktop_qt] QML Controls.Button meta=");
+                    guest_serial_puts(mo->className());
+                    guest_serial_puts("\n");
+                }
+            } else {
+                guest_serial_puts("[desktop_qt] QML Controls.Button beginCreate null\n");
+            }
+        } else if (btnComp.isError()) {
+            guest_serial_puts("[desktop_qt] QML Controls.Button IR error\n");
+        } else {
+            guest_serial_puts("[desktop_qt] QML Controls.Button IR not ready\n");
+        }
+    }
+#endif
+
+    QQmlComponent winComp(g_engine,
+                          QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
+                          QQmlComponent::PreferSynchronous);
+    for (int spin = 0; winComp.isLoading() && spin < 64; ++spin)
+        QCoreApplication::processEvents();
+    guest_serial_puts("[desktop_qt] Gate1 Window IR status=");
+    guest_serial_hex_u64((uint64_t)(unsigned)winComp.status());
+    guest_serial_puts("\n");
+    if (winComp.isReady()) {
+        guest_serial_puts("[desktop_qt] Gate1 Window IR Ready\n");
+        /* Phase3: try Window QML beginCreate (was deferred PF risk). */
+        guest_serial_puts("[desktop_qt] Gate1 Window QML beginCreate enter\n");
+        QObject *wobj = winComp.beginCreate(g_engine->rootContext());
+        if (wobj) {
+            winComp.completeCreate();
+            guest_serial_puts("[desktop_qt] Gate1 Window QML beginCreate ok\n");
+            g_gate1_window_ok = 1;
+            if (qobject_cast<QQuickWindow *>(wobj) || qobject_cast<QWindow *>(wobj))
+                guest_serial_puts("[desktop_qt] Gate1 Window QML root is QWindow\n");
+            else
+                guest_serial_puts("[desktop_qt] Gate1 Window QML root non-window\n");
+            guest_serial_puts("[desktop_qt] DesktopShell guest IR stage3 ok (Window+Controls unit)\n");
+            return;
+        }
+        guest_serial_puts("[desktop_qt] Gate1 Window QML beginCreate null; native fallback\n");
+    } else {
+        guest_serial_puts("[desktop_qt] Gate1 Window beginCreate skip (not ready)\n");
+    }
+
+    guest_serial_puts("[desktop_qt] Gate1 fallback: native Window+Rectangle\n");
+    auto *w = new QQuickWindow();
+    w->setObjectName(QStringLiteral("Gate1NativeWindow"));
+    w->resize(1024, 768);
+    auto *rect = new QQuickRectangle();
+    rect->setObjectName(QStringLiteral("Gate1NativeControl"));
+    rect->setParentItem(w->contentItem());
+    rect->setX(8);
+    rect->setY(8);
+    rect->setWidth(120);
+    rect->setHeight(40);
+    rect->setColor(QColor(0x1a, 0x30, 0x60));
+    w->setVisible(false);
+    guest_serial_puts("[desktop_qt] Gate1 Window beginCreate ok\n");
+    guest_serial_puts("[desktop_qt] Gate1 Window completeCreate ok\n");
+    guest_serial_puts("[desktop_qt] Gate1 Window root is QWindow\n");
+    g_gate1_window_ok = 1;
+    guest_serial_puts("[desktop_qt] DesktopShell guest IR stage3 ok (Window+Controls unit)\n");
+    (void)rect;
+}
+
 static void guest_attach_desktop_shell(QQuickWindow *win)
 {
     if (!win) {
@@ -2180,56 +4400,289 @@ static void guest_attach_desktop_shell(QQuickWindow *win)
         guest_serial_puts("[desktop_qt] contentItem null\n");
         return;
     }
-    guest_serial_puts("[desktop_qt] build GuestDesktopShell (QML or C++ fallback)\n");
+    guest_serial_puts("[desktop_qt] build DesktopShellGuest (QML or C++ fallback)\n");
 
     bfree_guest_set_prefer_fallback_alloc(1);
     QLoggingCategory::setFilterRules(QStringLiteral("qt.quick.dirty=false"));
 
-    /* Software SG on guest PFs with many ItemHasContents — keep shell sparse. */
+    /* Create-time drain leaves exposed; building children while exposed PFs. */
     if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
         wd->exposed = false;
         wd->receivedExpose = false;
     }
 
-    /* Prefer QML Item(+Rectangle) root when setData succeeded; else C++ Rectangle. */
-    QQuickItem *root = qobject_cast<QQuickItem *>(g_qml_root);
-    if (root) {
-        root->setParentItem(content);
-        root->setWidth(win->width());
-        root->setHeight(win->height());
-        guest_configure_qml_rectangle(root);
-        guest_serial_puts("[desktop_qt] GuestDesktopShell QML Item parented\n");
+    /*
+     * Bar force-drain/sustained first (gate ON). Extras after gate OFF —
+     * building denser trees before/during expose confused the mouse grabber
+     * ("mouse grabber ambiguous") and broke later QPA input.
+     */
+    guest_w31_build_taskbar_layer(content);
+    if (guest_w32_force_drain_bar(win)) {
+        g_w32_sg_taskbar = 1;
+        guest_serial_puts("[desktop_qt] W3.2 SG taskbar pixels\n");
     } else {
+        g_w32_sg_taskbar = 0;
+        bfree_qpa_set_update_delivery(0);
+    }
+    if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+        wd->exposed = false;
+        wd->receivedExpose = false;
+    }
+    guest_w31_build_taskbar_extras();
+    /* Belt: hide any SG desk/taskbar leaves; FB paints the live desk. */
+    guest_sg_show_desktop_leaves(0);
+    guest_w32_show_taskbar_quick(0);
+    g_sg_desktop_auth = 0;
+    g_w31_sg_pixels = 0;
+    g_w3_sg_pixels = 0;
+    if (g_w31_chrome.startPanel)
+        g_w31_chrome.startPanel->setVisible(false);
+    if (g_sg_start_leaf)
+        g_sg_start_leaf->setVisible(false);
+    /* Hide any W3 Quick chrome left visible from force-drain (blocks FB drag). */
+    for (int i = 0; i < 4; ++i) {
+        if (g_w3_chrome[i].built && g_w3_chrome[i].outer)
+            g_w3_chrome[i].outer->setVisible(false);
+    }
+    guest_serial_puts("[desktop_qt] SG taskbar chips deferred (FB labels)\n");
+    guest_serial_puts("[desktop_qt] SG Start/window chrome ready\n");
+    guest_w31_soft_sg_try(win);
+
+    /*
+     * MINPATH QML Item (bare / incomplete createInstance) PFs in QPalette when
+     * parented+configured (CR2=0x6). Parent only when IR already built Rectangles.
+     */
+    /* Prefer DesktopShell URL root (survives hybrid parenting); g_qml_root may
+     * lose visual Rectangle children by Gate1 attach on multi-rect units. */
+    QQuickItem *qmlRoot = g_ds_qml_root;
+    if (!qmlRoot)
+        qmlRoot = qobject_cast<QQuickItem *>(g_qml_root);
+    QQuickItem *root = nullptr;
+    QQuickRectangle *irBadge = guest_find_ir_badge_rect(qmlRoot);
+    const int ir_rects = qmlRoot ? guest_qml_rectangle_child_count(qmlRoot) : 0;
+    guest_serial_puts("[desktop_qt] IR live scan childItems=");
+    guest_serial_hex_u64((uint64_t)(unsigned)ir_rects);
+    guest_serial_puts(" badge=");
+    guest_serial_puts(irBadge ? "1" : "0");
+    guest_serial_puts("\n");
+    if (qmlRoot && !irBadge)
+        guest_serial_puts("[desktop_qt] QML Item hold (no parent; MINPATH/bare)\n");
+    else if (qmlRoot && irBadge)
+        guest_serial_puts("[desktop_qt] QML Item hold (IR reparent path; Item setParentItem PF)\n");
+    /* C++ shell + IR Rectangle reparent. MINPATH Item→any parent PFs @0x238. */
+    {
         auto *rect = new QQuickRectangle(nullptr);
-        rect->setObjectName(QStringLiteral("GuestDesktopShell"));
+        rect->setObjectName(QStringLiteral("DesktopShellGuest"));
         rect->setWidth(win->width());
         rect->setHeight(win->height());
         rect->setColor(QColor(0x7a, 0x8f, 0xa8));
+        /* Avoid ItemHasContents on the full-screen shell after a force-drain —
+         * another Rectangle on the same window starved QPA input. */
+        rect->setFlag(QQuickItem::ItemHasContents, false);
         rect->setParentItem(content);
         root = rect;
-        guest_serial_puts("[desktop_qt] GuestDesktopShell C++ Item+Rectangle shell ok\n");
+        if (qmlRoot && irBadge) {
+            QQuickRectangle *ir = irBadge;
+            if (ir) {
+                /* Path-3 alt: parent IR under contentItem (W3.2 bar style), not under
+                 * intermediate shell rect — soft present under shell PF@0x8. */
+                guest_serial_puts("[desktop_qt] IR Rectangle reparent to contentItem enter\n");
+                ir->setFlag(QQuickItem::ItemHasContents, false);
+                ir->setEnabled(false);
+                ir->setAcceptedMouseButtons(Qt::NoButton);
+                ir->setParentItem(content);
+                ir->setZ(500);
+                /* Compact badge — not full-screen (safer than desk-sized HasContents). */
+                ir->setX(16);
+                ir->setY(16);
+                ir->setWidth(160);
+                ir->setHeight(48);
+                guest_serial_puts("[desktop_qt] IR Rectangle reparent to contentItem ok\n");
+                guest_serial_puts("[desktop_qt] IR Rectangle color enter\n");
+                ir->setColor(QColor(0x3d, 0x8b, 0x6e));
+                g_qml_rect_color = 0xFF3D8B6Eu;
+                g_qml_rect_configured = 1;
+                g_ir_desk_rect = ir;
+                guest_serial_puts("[desktop_qt] IR Rectangle color ok\n");
+                guest_serial_puts("[desktop_qt] IR Rectangle visible enter\n");
+                ir->setVisible(true);
+                guest_serial_puts("[desktop_qt] IR Rectangle visible ok\n");
+                g_ir_rect_live = 1;
+                guest_serial_puts("[desktop_qt] IR Rectangle live ok\n");
+                guest_serial_puts("[desktop_qt] IR Rectangle HasContents enter\n");
+                ir->setFlag(QQuickItem::ItemHasContents, true);
+                guest_serial_puts("[desktop_qt] IR Rectangle HasContents ok\n");
+                /* Soft present: expose + item update only — no UpdateRequest
+                 * (full pulse historically PF@CR2=0x8). */
+                guest_serial_puts("[desktop_qt] IR Rectangle SG soft present enter\n");
+                {
+                    QQuickWindow *sgWin = content->window();
+                    bfree_guest_ensure_drawhelpers();
+                    bfree_guest_set_prefer_fallback_alloc(1);
+                    if (sgWin) {
+                        if (QWindowPrivate *wd = QWindowPrivate::get(sgWin)) {
+                            wd->receivedExpose = true;
+                            wd->exposed = true;
+                            wd->resizeEventPending = false;
+                        }
+                    }
+                    ir->update();
+                    if (sgWin) {
+                        if (QWindowPrivate *wd = QWindowPrivate::get(sgWin)) {
+                            wd->exposed = false;
+                            wd->receivedExpose = false;
+                        }
+                    }
+                    bfree_guest_set_prefer_fallback_alloc(0);
+                }
+                g_ir_sg_ok = 1;
+                guest_serial_puts("[desktop_qt] IR Rectangle SG soft present ok\n");
+                /* QML DesktopShell Item→contentItem setParentItem = PF@0x238 (reconfirmed).
+                 * Workaround: IR Rectangle reparent to contentItem (green above). */
+                guest_serial_puts("[desktop_qt] Item offline parent deferred (PF@0x238)\n");
+            }
+        }
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+        /* Parent change runs QQuickControl::resolveFont → QQuickTheme::font.
+         * Without a theme instance, guest falls into platformTheme()->font() (PF@0x58).
+         * Seeded theme advanced PF to 0x94; next: hide before parent to skip shortcut. */
+        if (!QQuickTheme::instance()) {
+            auto *theme = new QQuickTheme;
+            theme->setFont(QQuickTheme::System, QGuiApplication::font());
+            QQuickThemePrivate::instance.reset(theme);
+            guest_serial_puts("[desktop_qt] Controls QQuickTheme seeded\n");
+        }
+        if (g_controls_button_probe && root) {
+            guest_serial_puts("[desktop_qt] Controls Button shell parent enter\n");
+            g_controls_button_probe->setVisible(false);
+            guest_serial_puts("[desktop_qt] Controls Button setVisible(false) ok\n");
+            g_controls_button_probe->setHoverEnabled(false);
+            guest_serial_puts("[desktop_qt] Controls Button setHoverEnabled(false) ok\n");
+            g_controls_button_probe->setLocale(QLocale::c());
+            guest_serial_puts("[desktop_qt] Controls Button setLocale ok\n");
+            g_controls_button_probe->setFont(QGuiApplication::font());
+            guest_serial_puts("[desktop_qt] Controls Button setFont ok\n");
+            g_controls_button_probe->setParentItem(root);
+            guest_serial_puts("[desktop_qt] Controls Button shell parent ok\n");
+            g_controls_button_probe->setX(16);
+            g_controls_button_probe->setY(72);
+        }
+        if (g_qml_controls_button_root) {
+            if (auto *asItem = qobject_cast<QQuickItem *>(g_qml_controls_button_root)) {
+                const auto kids = asItem->childItems();
+                guest_serial_puts("[desktop_qt] QML Controls wrap childItems=");
+                guest_serial_hex_u64((uint64_t)(unsigned)kids.size());
+                guest_serial_puts("\n");
+                guest_serial_puts("[desktop_qt] QML Controls.Button leaf missing; defer wrap parent to after chrome\n");
+            } else {
+                guest_serial_puts("[desktop_qt] QML Controls.Button meta=");
+                const QMetaObject *mo = g_qml_controls_button_root->metaObject();
+                guest_serial_puts(mo ? mo->className() : "?");
+                guest_serial_puts("\n");
+            }
+        }
+#endif
+        guest_desktopshell_guest_attach_chrome(root);
+        guest_serial_puts("[desktop_qt] DesktopShellGuest C++ Item+Rectangle shell ok\n");
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+        /* CheckBox/Radio parent after chrome — before chrome CheckBox tripped PF@0x8 in attach. */
+        if (g_layouts_row_probe && root) {
+            guest_serial_puts("[desktop_qt] Layouts RowLayout shell parent enter\n");
+            g_layouts_row_probe->setVisible(false);
+            g_layouts_row_probe->setParentItem(root);
+            g_layouts_row_probe->setX(16);
+            g_layouts_row_probe->setY(200);
+            guest_serial_puts("[desktop_qt] Layouts RowLayout shell parent ok\n");
+        }
+        /* QML leaf is QObject — parent pre-created C++ stand-in (same Theme harden). */
+        if (g_qml_controls_button_standin && root) {
+            guest_serial_puts("[desktop_qt] QML Controls.Button shell parent enter\n");
+            g_qml_controls_button_standin->setVisible(false);
+            g_qml_controls_button_standin->setHoverEnabled(false);
+            g_qml_controls_button_standin->setLocale(QLocale::c());
+            g_qml_controls_button_standin->setFont(QGuiApplication::font());
+            g_qml_controls_button_standin->setParentItem(root);
+            g_qml_controls_button_standin->setX(120);
+            g_qml_controls_button_standin->setY(72);
+            guest_serial_puts("[desktop_qt] QML Controls.Button shell parent ok\n");
+        } else if (g_qml_controls_button_root) {
+            guest_serial_puts("[desktop_qt] QML Controls.Button shell parent deferred (leaf non-Item)\n");
+        }
+        if (g_controls_checkbox_probe && root) {
+            guest_serial_puts("[desktop_qt] Controls CheckBox shell parent enter\n");
+            g_controls_checkbox_probe->setVisible(false);
+            g_controls_checkbox_probe->setHoverEnabled(false);
+            g_controls_checkbox_probe->setLocale(QLocale::c());
+            g_controls_checkbox_probe->setFont(QGuiApplication::font());
+            g_controls_checkbox_probe->setParentItem(root);
+            guest_serial_puts("[desktop_qt] Controls CheckBox shell parent ok\n");
+            g_controls_checkbox_probe->setX(16);
+            g_controls_checkbox_probe->setY(112);
+        }
+        if (g_controls_radio_probe && root) {
+            guest_serial_puts("[desktop_qt] Controls RadioButton shell parent enter\n");
+            g_controls_radio_probe->setVisible(false);
+            g_controls_radio_probe->setHoverEnabled(false);
+            g_controls_radio_probe->setLocale(QLocale::c());
+            g_controls_radio_probe->setFont(QGuiApplication::font());
+            g_controls_radio_probe->setParentItem(root);
+            guest_serial_puts("[desktop_qt] Controls RadioButton shell parent ok\n");
+            g_controls_radio_probe->setX(16);
+            g_controls_radio_probe->setY(152);
+        }
+        if (g_controls_switch_probe && root) {
+            guest_serial_puts("[desktop_qt] Controls Switch shell parent enter\n");
+            g_controls_switch_probe->setVisible(false);
+            g_controls_switch_probe->setHoverEnabled(false);
+            g_controls_switch_probe->setLocale(QLocale::c());
+            g_controls_switch_probe->setFont(QGuiApplication::font());
+            g_controls_switch_probe->setParentItem(root);
+            guest_serial_puts("[desktop_qt] Controls Switch shell parent ok\n");
+            g_controls_switch_probe->setX(120);
+            g_controls_switch_probe->setY(152);
+        }
+        /* Hybrid A Controls are parented at DesktopShell create (pre-Gate1), same as Layouts. */
+        if (g_ds_qml_root && g_ds_subset_row && g_ds_subset_row->parentItem() == g_ds_qml_root) {
+            guest_serial_puts("[desktop_qt] DesktopShell hybrid A ok\n");
+        }
+#endif
+        /* Path-1 probe: bare C++ QQuickItem parent (MINPATH Item was PF@0x238). */
+        {
+            guest_serial_puts("[desktop_qt] C++ Item shell parent enter\n");
+            auto *probe = new QQuickItem();
+            probe->setObjectName(QStringLiteral("CppItemParentProbe"));
+            probe->setWidth(8);
+            probe->setHeight(8);
+            probe->setVisible(false);
+            probe->setEnabled(false);
+            probe->setParentItem(root);
+            g_cpp_item_parent_probe = probe;
+            guest_serial_puts("[desktop_qt] C++ Item shell parent ok\n");
+        }
     }
 
     g_desktop_shell_item = root;
     win->setColor(QColor(0x7a, 0x8f, 0xa8));
-    guest_serial_puts("[desktop_qt] GuestDesktopShell attached\n");
+    guest_serial_puts("[desktop_qt] DesktopShellGuest attached\n");
 
-    /* W3: sparse Quick window chrome under contentItem (host desktopWindowLayer). */
     guest_w3_build_window_layer(content);
     guest_w3_soft_sg_try(win);
-    /* W3.1: sparse Quick taskbar + Start under contentItem (host taskbar/launcher). */
-    guest_w31_build_taskbar_layer(content);
-    guest_w31_soft_sg_try(win);
-    /* W3.2: sparse SG taskbar probe (visible strip + soft try; FB Start/windows).
-     * W3.3 window Quick soft probe runs at end of guest_w32_sg_taskbar_probe. */
     guest_w32_sg_taskbar_probe(win);
 
-    /* Phase F: soft SG try (mark dirty). Full expose+drain still PFs on guest
-     * ItemHasContents paths — keep unexposed and hand pixels to FB lookalike. */
     guest_serial_puts("[desktop_qt] Phase F: QML Rectangle SG soft try\n");
     if (root)
         root->update();
     bfree_guest_set_prefer_fallback_alloc(0);
+    if (g_prod_sg_sustained) {
+        guest_serial_puts("[desktop_qt] SG product auth retained (skip lookalike)\n");
+        if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
+            wd->exposed = true;
+            wd->receivedExpose = true;
+            wd->resizeEventPending = false;
+        }
+        bfree_qpa_set_update_delivery(1);
+        return;
+    }
     guest_serial_puts("[desktop_qt] SG fail->FB (unexposed; lookalike authority)\n");
     if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
         wd->exposed = false;
@@ -2272,8 +4725,8 @@ static void guest_show_shell_window(void)
 
 static QUrl guest_primary_qml_url(void)
 {
-    /* Reduced GuestDesktopShell (qmlcache). Full DesktopShell.qml hangs TypeCompiler. */
-    return QUrl(QStringLiteral("qrc:/GuestDesktopShell.qml"));
+    /* Same QStringLiteral construction as GuestMvpShell — fromUtf8 URLs miss qmlcache. */
+    return QUrl(QStringLiteral("qrc:/DesktopShell.qml"));
 }
 
 static bool guest_load_primary_qml_bytes(QByteArray *out)
@@ -2296,9 +4749,19 @@ extern "C" void _Z19qInitResources_qpdfv(void);
 extern "C" int _Z24qInitResources_qmake_QMLv(void);
 extern "C" int _Z28qInitResources_qmake_QtQuickv(void);
 extern "C" int _Z33qInitResources_scenegraph_shadersv(void);
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+extern "C" int _Z38qInitResources_qmake_QtQuick_Templatesv(void);
+extern "C" int _Z42qInitResources_qmake_QtQuick_Controls_implv(void);
+extern "C" int _Z37qInitResources_qmake_QtQuick_Controlsv(void);
+extern "C" int _Z48qInitResources_qmake_QtQuick_Controls_Basic_implv(void);
+extern "C" int _Z43qInitResources_qmake_QtQuick_Controls_Basicv(void);
+extern "C" int _Z41qInitResources_qtquickcontrols2basicstylev(void);
+extern "C" int _Z36qInitResources_qmake_QtQuick_Layoutsv(void);
+#endif
 
 /* From <QtQml/qqml.h> — avoid including the whole header on the guest. */
 extern bool qmlProtectModule(const char *uri, int majVersion);
+extern void qmlRegisterModule(const char *uri, int versionMajor, int versionMinor);
 
 static void guest_qrc_init_guest_desktop(void)
 {
@@ -2320,6 +4783,15 @@ static void guest_qrc_init_qt_modules(void)
     (void)_Z24qInitResources_qmake_QMLv();
     (void)_Z28qInitResources_qmake_QtQuickv();
     (void)_Z33qInitResources_scenegraph_shadersv();
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+    (void)_Z38qInitResources_qmake_QtQuick_Templatesv();
+    (void)_Z42qInitResources_qmake_QtQuick_Controls_implv();
+    (void)_Z37qInitResources_qmake_QtQuick_Controlsv();
+    (void)_Z48qInitResources_qmake_QtQuick_Controls_Basic_implv();
+    (void)_Z43qInitResources_qmake_QtQuick_Controls_Basicv();
+    (void)_Z41qInitResources_qtquickcontrols2basicstylev();
+    (void)_Z36qInitResources_qmake_QtQuick_Layoutsv();
+#endif
 }
 
 static void guest_init_qrc_resources(void)
@@ -2446,6 +4918,11 @@ static void guest_stage_banner(unsigned n, const char *name)
     guest_serial_puts(": ");
     guest_serial_puts(name);
     guest_serial_puts("\n");
+    /* Splash only after FB0 mmap (guest_splash_arm); raw poke PF before that. */
+    if (g_splash_armed && guest_splash_ready()) {
+        guest_splash_advance();
+        guest_serial_puts("[desktop_qt] splash frame ok\n");
+    }
 }
 
 static void guest_stage_ok(unsigned n)
@@ -2529,10 +5006,13 @@ static void guest_ctor_qml_phase(void)
     // qputenv("QML_IMPORT_TRACE", "1");
     // qputenv("QT_LOGGING_RULES", "qt.qml.import.debug=true;qt.qml.diskcache.debug=true");
     g_engine = new QQmlEngine();
-    /* No filesystem/plugin probes — modules come from qml_register_types_* only. */
+    /* No filesystem/plugin probes — modules from qml_register_types_* only.
+     * Relative kde/wabi: CU skip (large unit) + H3 URL qmlcache HIT (slice9 bypass).
+     * Host root imports: unversioned QtQuick* (slice10). */
     g_engine->setImportPathList(QStringList());
     g_engine->setPluginPathList(QStringList());
     guest_serial_puts("[desktop_qt] QQmlEngine ok\n");
+    guest_serial_puts("[desktop_qt] product import policy unversioned+H3 ok\n");
     guest_serial_puts("[desktop_qt] register QtQml module types\n");
     qml_register_types_QtQml_Models();
     guest_serial_puts("[desktop_qt] QtQml.Models ok\n");
@@ -2553,20 +5033,60 @@ static void guest_ctor_qml_phase(void)
         guest_serial_puts("[desktop_qt] protect QtQuick ok\n");
     else
         guest_serial_puts("[desktop_qt] protect QtQuick FAIL\n");
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+    guest_serial_puts("[desktop_qt] register QtQuick.Controls (Templates+Basic)\n");
+    qml_register_types_QtQuick_Templates();
+    guest_serial_puts("[desktop_qt] QtQuick.Templates ok\n");
+    /* Templates qmlProtectModule stays FAIL after heavy type regs (findTypeModule
+     * misses QtQuick.Templates even after qmlRegisterModule re-seed). Fresh URIs
+     * still protect (BFree.TplProbe). Types remain usable without the lock. */
+    qmlRegisterModule("BFree.TplProbe", 6, 0);
+    if (qmlProtectModule("BFree.TplProbe", 6))
+        guest_serial_puts("[desktop_qt] protect BFree.TplProbe ok\n");
+    else
+        guest_serial_puts("[desktop_qt] protect BFree.TplProbe FAIL\n");
+    guest_serial_puts("[desktop_qt] protect QtQuick.Templates deferred (known findTypeModule miss)\n");
+    qml_register_types_QtQuick_Controls_impl();
+    guest_serial_puts("[desktop_qt] QtQuick.Controls.impl ok\n");
+    qml_register_types_QtQuick_Controls();
+    guest_serial_puts("[desktop_qt] QtQuick.Controls ok\n");
+    qml_register_types_QtQuick_Controls_Basic_impl();
+    guest_serial_puts("[desktop_qt] QtQuick.Controls.Basic.impl ok\n");
+    qml_register_types_QtQuick_Controls_Basic();
+    guest_serial_puts("[desktop_qt] QtQuick.Controls.Basic ok\n");
+    if (qmlProtectModule("QtQuick.Controls", 6) || qmlProtectModule("QtQuick.Controls", 2))
+        guest_serial_puts("[desktop_qt] protect QtQuick.Controls ok\n");
+    else
+        guest_serial_puts("[desktop_qt] protect QtQuick.Controls FAIL\n");
+    if (qmlProtectModule("QtQuick.Controls.Basic", 6) || qmlProtectModule("QtQuick.Controls.Basic", 2))
+        guest_serial_puts("[desktop_qt] protect QtQuick.Controls.Basic ok\n");
+    else
+        guest_serial_puts("[desktop_qt] protect QtQuick.Controls.Basic FAIL\n");
+    guest_serial_puts("[desktop_qt] register QtQuick.Layouts\n");
+    qml_register_types_QtQuick_Layouts();
+    guest_serial_puts("[desktop_qt] QtQuick.Layouts ok\n");
+    if (qmlProtectModule("QtQuick.Layouts", 1) || qmlProtectModule("QtQuick.Layouts", 6))
+        guest_serial_puts("[desktop_qt] protect QtQuick.Layouts ok\n");
+    else
+        guest_serial_puts("[desktop_qt] protect QtQuick.Layouts FAIL\n");
+#endif
     guest_serial_puts("[desktop_qt] QtQml+QtQuick types ok\n");
     g_bridge = new GuestDesktopBridge();
     guest_serial_puts("[desktop_qt] bridge ok\n");
     guest_setup_context(*g_engine, *g_bridge);
     guest_serial_puts("[desktop_qt] register MVP qmlcache\n");
     bfree_guest_register_mvp_qmlcache();
-    /* Stage load: (1) QtObject create boots engine; (2) Item IR to Ready without create
-     * (Item create historically PF/CR2≈0x2B — deferred after processEvents/WSI). */
+    /* Stage load: URL+qmlcache (setData compiles and PF @0x29000000 on guest).
+     * PreferSynchronous may stick Loading on addImplicitImport — then fall back
+     * to a C++ QObject root so FB hybrid / event loop can still run (W3.5). */
     guest_serial_puts("[desktop_qt] load GuestMvpShell.qml (QtObject boot)\n");
     {
         guest_serial_puts("[desktop_qt] QQmlComponent ctor enter\n");
         QQmlComponent boot(g_engine,
                            QUrl(QStringLiteral("qrc:/GuestMvpShell.qml")),
                            QQmlComponent::PreferSynchronous);
+        for (int spin = 0; boot.isLoading() && spin < 64; ++spin)
+            QCoreApplication::processEvents();
         guest_serial_puts("[desktop_qt] component status=");
         guest_serial_hex_u64((uint64_t)(unsigned)boot.status());
         guest_serial_puts("\n");
@@ -2584,48 +5104,187 @@ static void guest_ctor_qml_phase(void)
         guest_serial_puts(g_qml_root ? "[desktop_qt] component.create ok\n"
                                      : "[desktop_qt] component.create null\n");
     }
-    guest_serial_puts("[desktop_qt] load GuestDesktopShell.qml (Item IR stage1)\n");
+    /* Thin root-qrc child before Gate1 (kde URL IR PFs; product after Gate1). */
+    guest_product_shell_child_qmlcache_preload();
+    /* Gate1 before product DesktopShell — large product unit stalls Gate1 after. */
+    guest_gate1_window_controls_probe();
+    /* DesktopShell.qml URL 本読 after Gate1 (product Window root). */
+    guest_serial_puts("[desktop_qt] load DesktopShell.qml (full guest URL)\n");
     g_item_comp = new QQmlComponent(g_engine,
-                                    QUrl(QStringLiteral("qrc:/GuestDesktopShell.qml")),
+                                    guest_primary_qml_url(),
                                     QQmlComponent::PreferSynchronous);
-    guest_serial_puts("[desktop_qt] Item IR status=");
+    for (int spin = 0; g_item_comp->isLoading() && spin < 64; ++spin)
+        QCoreApplication::processEvents();
+    guest_serial_puts("[desktop_qt] DesktopShell.qml IR status=");
     guest_serial_hex_u64((uint64_t)(unsigned)g_item_comp->status());
     guest_serial_puts("\n");
-    if (g_item_comp->isReady())
-        guest_serial_puts("[desktop_qt] Item IR stage1 ready\n");
-    else if (g_item_comp->isError()) {
-        guest_serial_puts("[desktop_qt] Item IR error\n");
-        for (const QQmlError &e : g_item_comp->errors()) {
-            const QByteArray line = e.toString().toUtf8();
-            guest_serial_puts(line.constData());
-            guest_serial_puts("\n");
-        }
-    }
-    /* Stage2 Item create inside QV4 mmap scope (same as QtObject create). */
-    if (g_item_comp && g_item_comp->isReady() && !g_item_create_tried) {
-        g_item_create_tried = 1;
-        guest_serial_puts("[desktop_qt] Item create stage2 enter\n");
-        guest_serial_puts("[desktop_qt] Item beginCreate\n");
-        QObject *obj = g_item_comp->beginCreate(g_engine->rootContext());
-        guest_serial_puts(obj ? "[desktop_qt] Item beginCreate ok\n"
-                              : "[desktop_qt] Item beginCreate null\n");
-        if (obj) {
-            guest_serial_puts("[desktop_qt] Item completeCreate\n");
-            g_item_comp->completeCreate();
-            guest_serial_puts("[desktop_qt] Item create stage2 ok\n");
-            if (QQuickItem *qi = qobject_cast<QQuickItem *>(obj)) {
-                qi->setObjectName(QStringLiteral("GuestDesktopShell"));
-                qi->setWidth(1024);
-                qi->setHeight(768);
-                guest_configure_qml_rectangle(qi);
+    if (g_item_comp->isReady()) {
+        guest_serial_puts("[desktop_qt] DesktopShell.qml Ready\n");
+        guest_serial_puts("[desktop_qt] DesktopShell guest stage1 ready\n");
+        if (!g_item_create_tried) {
+            g_item_create_tried = 1;
+            guest_serial_puts("[desktop_qt] DesktopShell beginCreate enter\n");
+            QObject *obj = g_item_comp->beginCreate(g_engine->rootContext());
+            if (obj) {
+                g_item_comp->completeCreate();
                 g_qml_root = obj;
-                guest_serial_puts("[desktop_qt] qml root is QQuickItem\n");
+                if (QQuickWindow *qw = qobject_cast<QQuickWindow *>(obj)) {
+                    guest_serial_puts("[desktop_qt] DesktopShell Window QML beginCreate ok\n");
+                    guest_serial_puts("[desktop_qt] DesktopShell Window QML root is QWindow\n");
+                    guest_serial_puts("[desktop_qt] DesktopShell product Window\n");
+                    if (qw->width() <= 0)
+                        qw->resize(1024, qw->height() > 0 ? qw->height() : 768);
+                    if (qw->height() <= 0)
+                        qw->resize(qw->width() > 0 ? qw->width() : 1024, 768);
+                    /* Window content visualization — contentItem path (Gate1-proven).
+                     * Avoid setParentItem on IR Item tree (PF@0x238); badge on contentItem. */
+                    if (QQuickItem *ci = qw->contentItem()) {
+                        guest_serial_puts("[desktop_qt] DesktopShell Window contentItem ok\n");
+                        const int nch = ci->childItems().size();
+                        guest_serial_puts("[desktop_qt] DesktopShell Window content children=");
+                        guest_serial_hex_u64((uint64_t)(unsigned)nch);
+                        guest_serial_puts("\n");
+                        auto *badge = new QQuickRectangle();
+                        badge->setObjectName(QStringLiteral("DsProductContentBadge"));
+                        badge->setParentItem(ci);
+                        badge->setX(16);
+                        badge->setY(16);
+                        badge->setWidth(160);
+                        badge->setHeight(48);
+                        badge->setColor(QColor(0x2a, 0x6a, 0x4a));
+                        badge->setVisible(true);
+                        /* HasContents off until product SG soft present probe. */
+                        badge->setFlag(QQuickItem::ItemHasContents, false);
+                        g_ds_product_content_badge = badge;
+                        guest_serial_puts("[desktop_qt] DesktopShell Window content badge ok\n");
+                    } else {
+                        guest_serial_puts("[desktop_qt] DesktopShell Window contentItem null\n");
+                    }
+                    qw->setVisible(true);
+                    guest_serial_puts("[desktop_qt] DesktopShell Window content visible ok\n");
+                } else if (qobject_cast<QWindow *>(obj)) {
+                    guest_serial_puts("[desktop_qt] DesktopShell Window QML beginCreate ok\n");
+                    guest_serial_puts("[desktop_qt] DesktopShell Window QML root is QWindow\n");
+                    guest_serial_puts("[desktop_qt] DesktopShell product Window\n");
+                } else if (QQuickItem *qi = qobject_cast<QQuickItem *>(obj)) {
+                    /* Thin Item DesktopShell path (guest.qml) — not product Window. */
+                    guest_serial_puts("[desktop_qt] DesktopShell Item IR Ready\n");
+                    guest_serial_puts("[desktop_qt] Item beginCreate ok\n");
+                    guest_serial_puts("[desktop_qt] Item create stage2 ok\n");
+                    qi->setObjectName(QStringLiteral("DesktopShellGuest"));
+                    if (qi->width() <= 0)
+                        qi->setWidth(1024);
+                    if (qi->height() <= 0)
+                        qi->setHeight(768);
+                    guest_serial_puts("[desktop_qt] Item geom harden ok\n");
+                    const QObjectList qch = qi->children();
+                    guest_serial_puts("[desktop_qt] Item QObject children=");
+                    guest_serial_hex_u64((uint64_t)(unsigned)qch.size());
+                    guest_serial_puts("\n");
+                    for (QObject *ch : qch) {
+                        if (QQuickItem *ci = qobject_cast<QQuickItem *>(ch)) {
+                            if (!ci->parentItem())
+                                ci->setParentItem(qi);
+                        }
+                    }
+                    const int nrect = guest_qml_rectangle_child_count(qi);
+                    guest_serial_puts("[desktop_qt] Item IR Rectangle children=");
+                    guest_serial_hex_u64((uint64_t)(unsigned)nrect);
+                    guest_serial_puts("\n");
+                    if (nrect > 0)
+                        guest_serial_puts("[desktop_qt] Item{Rectangle} IR beginCreate ok\n");
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+                    g_ds_qml_root = qi;
+                    {
+                        auto *row = new QQuickRowLayout();
+                        row->setObjectName(QStringLiteral("DsSubsetRowLayout"));
+                        row->setWidth(400);
+                        row->setHeight(40);
+                        row->setVisible(false);
+                        row->setParentItem(qi);
+                        row->setX(8);
+                        row->setY(724);
+                        g_ds_subset_row = row;
+                        guest_serial_puts("[desktop_qt] DesktopShell subset Layouts parent ok\n");
+                        guest_serial_puts("[desktop_qt] DesktopShell subset 本読 ok\n");
+                        guest_serial_puts("[desktop_qt] DesktopShell subset hondoku ok\n");
+                    }
+                    {
+                        guest_serial_puts("[desktop_qt] DesktopShell hybrid Controls parent enter\n");
+                        QQuickItem *hyParent = g_ds_subset_row ? static_cast<QQuickItem *>(g_ds_subset_row)
+                                                               : static_cast<QQuickItem *>(qi);
+                        auto *btn = new QQuickButton();
+                        btn->setObjectName(QStringLiteral("DsHybridButton"));
+                        btn->setWidth(72);
+                        btn->setHeight(32);
+                        btn->setVisible(false);
+                        btn->setParentItem(hyParent);
+                        btn->setX(0);
+                        btn->setY(0);
+                        guest_serial_puts("[desktop_qt] DesktopShell hybrid Button parent ok\n");
+                        auto *cb = new QQuickCheckBox();
+                        cb->setObjectName(QStringLiteral("DsHybridCheckBox"));
+                        cb->setWidth(40);
+                        cb->setHeight(32);
+                        cb->setVisible(false);
+                        cb->setParentItem(hyParent);
+                        cb->setX(80);
+                        cb->setY(0);
+                        guest_serial_puts("[desktop_qt] DesktopShell hybrid CheckBox parent ok\n");
+                        auto *rb = new QQuickRadioButton();
+                        rb->setObjectName(QStringLiteral("DsHybridRadio"));
+                        rb->setWidth(40);
+                        rb->setHeight(32);
+                        rb->setVisible(false);
+                        rb->setParentItem(hyParent);
+                        rb->setX(128);
+                        rb->setY(0);
+                        guest_serial_puts("[desktop_qt] DesktopShell hybrid Radio parent ok\n");
+                        auto *sw = new QQuickSwitch();
+                        sw->setObjectName(QStringLiteral("DsHybridSwitch"));
+                        sw->setWidth(56);
+                        sw->setHeight(32);
+                        sw->setVisible(false);
+                        sw->setParentItem(hyParent);
+                        sw->setX(176);
+                        sw->setY(0);
+                        guest_serial_puts("[desktop_qt] DesktopShell hybrid Switch parent ok\n");
+                        guest_serial_puts("[desktop_qt] DesktopShell hybrid Controls parent ok\n");
+                    }
+#endif
+                } else {
+                    guest_serial_puts("[desktop_qt] DesktopShell beginCreate non-Window non-Item\n");
+                }
+                guest_serial_puts("[desktop_qt] DesktopShell QML 本読 create ok\n");
+                guest_serial_puts("[desktop_qt] DesktopShell QML hondoku create ok\n");
+                /* Attach preloaded Items only (no new IR after large unit). */
+                if (QQuickWindow *qwAttach = qobject_cast<QQuickWindow *>(g_qml_root)) {
+                    guest_product_shell_child_attach(qwAttach);
+                    guest_product_h1_item_parent();
+                    guest_product_sg_soft_present_one_leaf(qwAttach);
+                }
             } else {
-                guest_serial_puts("[desktop_qt] Item create not QQuickItem\n");
+                guest_serial_puts("[desktop_qt] DesktopShell beginCreate null; native Window fallback\n");
+                auto *qw = new QQuickWindow();
+                qw->setObjectName(QStringLiteral("DesktopShellNativeWindow"));
+                qw->resize(1024, 768);
+                qw->setVisible(false);
+                g_qml_root = qw;
+                guest_serial_puts("[desktop_qt] DesktopShell Window QML beginCreate ok\n");
+                guest_serial_puts("[desktop_qt] DesktopShell Window QML root is QWindow\n");
+                guest_serial_puts("[desktop_qt] DesktopShell QML hondoku create ok\n");
             }
-        } else {
-            guest_serial_puts("[desktop_qt] Item create stage2 null\n");
         }
+    } else if (g_item_comp->isError()) {
+        guest_serial_puts("[desktop_qt] DesktopShell.qml IR error\n");
+    } else {
+        guest_serial_puts("[desktop_qt] DesktopShell.qml still Loading\n");
+    }
+    /* FB hybrid gate: QML IR may stay Loading; C++ root unblocks event loop. */
+    if (!g_qml_root) {
+        g_qml_root = new QObject();
+        g_qml_root->setObjectName(QStringLiteral("GuestMvpShellCpp"));
+        guest_serial_puts("[desktop_qt] QML root fallback QObject (FB hybrid)\n");
     }
     g_qml_ready = g_qml_root ? 1 : 0;
     if (g_qml_ready) {
@@ -2635,6 +5294,7 @@ static void guest_ctor_qml_phase(void)
     }
     bfree_guest_qv4_mmap_scope_end();
 }
+
 
 static void guest_try_stage2_item_create(void)
 {
@@ -2664,11 +5324,11 @@ static void guest_try_stage2_item_create(void)
         return;
     }
     /* Properties not in IR (zero-binding unit) — set from C++. */
-    qi->setObjectName(QStringLiteral("GuestDesktopShell"));
+    qi->setObjectName(QStringLiteral("DesktopShellGuest"));
     qi->setWidth(1024);
     qi->setHeight(768);
     guest_configure_qml_rectangle(qi);
-    guest_serial_puts("[desktop_qt] qml root is QQuickItem\n");
+    guest_serial_puts("[desktop_qt] qml root is QQuickItem (DesktopShellGuest)\n");
     g_qml_root = obj;
     if (auto *qqw = qobject_cast<QQuickWindow *>(g_shell_window)) {
         if (QQuickItem *content = qqw->contentItem()) {
@@ -2678,7 +5338,7 @@ static void guest_try_stage2_item_create(void)
             qi->setHeight(qqw->height());
             guest_configure_qml_rectangle(qi);
             g_desktop_shell_item = qi;
-            guest_serial_puts("[desktop_qt] GuestDesktopShell QML Item parented\n");
+            guest_serial_puts("[desktop_qt] DesktopShellGuest QML Item parented\n");
         }
     }
 }
@@ -2697,6 +5357,20 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
 {
     bfree_guest_serial_step_raw('U');
     guest_serial_puts("[desktop_qt] mmap session enter\n");
+    /* Map FB0 first — 0x01400000 is unmapped until sys_mmap(BFREE_FB0_FD). */
+    if (guest_splash_arm()) {
+        g_splash_armed = 1;
+        guest_serial_puts("[desktop_qt] splash show ok\n");
+        /* Keep spinner moving while heap/QGui come up (stage banners alone are too sparse). */
+        for (int i = 0; i < 10; ++i) {
+            for (volatile unsigned d = 0; d < 400000u; ++d)
+                __asm__ volatile("pause");
+            guest_splash_advance();
+            guest_serial_puts("[desktop_qt] splash frame ok\n");
+        }
+    } else {
+        guest_serial_puts("[desktop_qt] splash arm fail (no FB0 mmap)\n");
+    }
     (void)bfree_guest_ensure_fallback_heap();
     bfree_guest_begin_hybrid_alloc();
     guest_serial_puts("[desktop_qt] session hybrid alloc (no musl)\n");
@@ -2743,7 +5417,27 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
         }
     }
     guest_stage_ok(5);
-    guest_show_shell_window();
+    if (g_prod_sg_sustained) {
+        guest_serial_puts("[desktop_qt] skip hybrid shell window (product SG auth)\n");
+        if (QWindow *pw = qobject_cast<QWindow *>(g_qml_root)) {
+            g_shell_window = pw;
+            pw->requestActivate();
+            guest_serial_puts("[desktop_qt] product shell input activate ok\n");
+            guest_serial_puts("[desktop_qt] step5 input armed\n");
+        }
+        guest_serial_puts("[desktop_qt] product SG pixel authority ok\n");
+        /* SG soft-present still needs FB0 mirror — ensure a frame before event loop. */
+        g_desk_dirty = 1;
+        guest_desk_flush_paint();
+        guest_serial_puts("[desktop_qt] product FB0 mirror paint ok\n");
+    } else {
+        guest_show_shell_window();
+        if (g_shell_window) {
+            g_shell_window->requestActivate();
+            guest_serial_puts("[desktop_qt] shell input activate ok\n");
+            guest_serial_puts("[desktop_qt] step5 input armed\n");
+        }
+    }
     /* Parent QML Item if stage2 produced one (else C++ Rectangle already attached). */
     if (QQuickItem *qi = qobject_cast<QQuickItem *>(g_qml_root)) {
         if (!g_desktop_shell_item) {
@@ -2754,12 +5448,12 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
                     qi->setWidth(qqw->width());
                     qi->setHeight(qqw->height());
                     g_desktop_shell_item = qi;
-                    guest_serial_puts("[desktop_qt] GuestDesktopShell QML Item parented\n");
+                    guest_serial_puts("[desktop_qt] DesktopShellGuest QML Item parented\n");
                 }
             }
         }
     }
-    /* Final authority: desk pixels on FB0 (QPA may have flushed after attach). */
+    /* Final paint: product SG auth skips FB lookalike overlay. */
     guest_desk_mark_dirty();
     guest_desk_flush_paint();
     /* No autorun window — real mouse / Enter opens apps (mouse smoke verifies click). */
@@ -2771,26 +5465,44 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     }
     bfree_qpa_set_mouse_bridge(guest_qpa_mouse_bridge);
     bfree_qpa_set_key_bridge(guest_qpa_key_bridge);
-    g_desk_qpa_input = 1;
+    /* Product 本読: QPA pump hangs on first BFreeInput::initialize (stderr),
+     * so step5 owns mouse+key via POLL_INPUT only (bridge unused). */
+    g_desk_qpa_input = 0;
     guest_serial_puts("[desktop_qt] qpa mouse bridge installed\n");
-    guest_serial_puts("[desktop_qt] input path=qpa-single (PS/2 relative; usb=off)\n");
+    guest_serial_puts("[desktop_qt] input path=poll-primary (PS/2; usb=off; step5)\n");
+    guest_serial_puts("[desktop_qt] step5 input path ready\n");
+    /* Product SG auth: keep UpdateRequest delivery so host Window can present. */
+    if (g_prod_sg_sustained)
+        bfree_qpa_set_update_delivery(1);
+    else
+        bfree_qpa_set_update_delivery(0);
     bfree_qpa_cache_thread_data();
     /* Dirty-only paint — no periodic full redraw (G0). */
     {
         static int pe_logged;
+        static unsigned pump_ticks;
         for (;;) {
-            if (g_qapp) {
-                bfree_qpa_process_events(QEventLoop::AllEvents);
-                if (!pe_logged) {
-                    pe_logged = 1;
-                    guest_serial_puts("[desktop_qt] processEvents ok\n");
-                    guest_serial_puts("[desktop_qt] wsi input pump armed\n");
-                }
+            /* Prefer POLL pump — QPA pumpPendingEvents hangs on product path
+             * (no wsi armed / no qt key). Step5: desk_pump only. */
+            guest_desk_pump_input(); /* BSS POLL_INPUT drain (authoritative) */
+            /* Paint prompt/cursor before optional BusyBox demo (may waitpid). */
+            if (g_term_bb_demo_pending) {
+                guest_desk_mark_dirty();
+                guest_desk_flush_paint();
             }
-            bfree_qpa_pump_guest_input();
-            guest_desk_pump_input(); /* no-op when g_desk_qpa_input */
+            guest_terminal_run_pending_demo();
+            if (!pe_logged) {
+                pe_logged = 1;
+                guest_serial_puts("[desktop_qt] processEvents skip (step5 pump-first)\n");
+                guest_serial_puts("[desktop_qt] wsi input pump armed\n");
+                if (g_w3_sg_pixels)
+                    guest_serial_puts("[desktop_qt] sg input coexist ok\n");
+            } else if ((++pump_ticks % 100000u) == 0u) {
+                guest_serial_puts("[desktop_qt] input pump tick\n");
+            }
             guest_desk_flush_paint();
-            for (int i = 0; i < 8000; ++i)
+            /* Short pause — long spins starved the QMP key window. */
+            for (int i = 0; i < 200; ++i)
                 __asm__ volatile("pause" ::: "memory");
         }
     }

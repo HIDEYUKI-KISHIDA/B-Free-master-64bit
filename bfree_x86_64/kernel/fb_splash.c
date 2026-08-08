@@ -526,57 +526,101 @@ void fb_draw_userland_active(void) {
 }
 
 // ---- 公開 API ---------------------------------------------------------------
-void fb_draw_splash(void) {
-    struct vbe_info vi;
-    vbe_get_info(&vi);
+#include "fb_splash_brand_data.h"
 
-    if (vi.vram_phys == 0 || vi.width == 0 || vi.height == 0) return;
-
-    s_vram  = (uint8_t *)(uintptr_t)vi.vram_phys;
-    s_pitch = vi.pitch;
-    s_w     = vi.width;
-    s_h     = vi.height;
-
-    draw_background();
-    draw_taskbar(0);
-    draw_splash_handoff_panel();
+static void blit_argb(int dst_x, int dst_y, const uint32_t *src, unsigned sw, unsigned sh)
+{
+    for (unsigned y = 0; y < sh; ++y) {
+        for (unsigned x = 0; x < sw; ++x) {
+            uint32_t argb = src[y * sw + x];
+            if ((argb >> 24) < 8u)
+                continue;
+            pset((uint32_t)(dst_x + (int)x), (uint32_t)(dst_y + (int)y), argb & 0x00FFFFFFu);
+        }
+    }
 }
 
-void fb_draw_splash_frame(uint32_t frame) {
+static void draw_white_brand_frame(uint32_t frame)
+{
+    /* Full white — no blue desktop mock / taskbar / OS window. */
+    fill_rect(0, 0, s_w, s_h, C_WHITE);
+
+    if (g_brand_logo_w == 0 || g_brand_logo_h == 0 || g_brand_nframes == 0)
+        return;
+
+    int logo_x = ((int)s_w - (int)g_brand_logo_w) / 2;
+    int logo_y = (int)s_h / 2 + 24; /* slightly below center */
+    blit_argb(logo_x, logo_y, g_brand_logo_px, g_brand_logo_w, g_brand_logo_h);
+
+    unsigned fi = frame % g_brand_nframes;
+    unsigned sw = g_brand_sp_w[fi];
+    unsigned sh = g_brand_sp_h[fi];
+    int sp_x = ((int)s_w - (int)sw) / 2;
+    int sp_y = logo_y + (int)g_brand_logo_h + 20;
+    blit_argb(sp_x, sp_y, g_brand_sp_px[fi], sw, sh);
+}
+
+static void splash_bind_vbe(void)
+{
     struct vbe_info vi;
     vbe_get_info(&vi);
-    if (vi.vram_phys == 0 || vi.width == 0 || vi.height == 0) return;
-
-    s_vram  = (uint8_t *)(uintptr_t)vi.vram_phys;
+    if (vi.vram_phys == 0 || vi.width == 0 || vi.height == 0) {
+        s_vram = 0;
+        return;
+    }
+    s_vram = (uint8_t *)(uintptr_t)vi.vram_phys;
     s_pitch = vi.pitch;
-    s_w     = vi.width;
-    s_h     = vi.height;
+    s_w = vi.width;
+    s_h = vi.height;
+}
 
-    // 0..100 の単調増加ループ（オーバーランなし）
-    uint32_t progress = frame % 101U;
-    uint32_t sec = frame / 8U;
-    uint32_t phase = (frame / 8U) % 4U;
-    uint32_t beat = (frame / 12U) & 1U;
+void fb_draw_splash(void)
+{
+    splash_bind_vbe();
+    if (!s_vram)
+        return;
+    draw_white_brand_frame(0);
+}
 
-    draw_background();
-    draw_taskbar(sec);
-    draw_window(progress, phase, beat);
+void fb_draw_splash_frame(uint32_t frame)
+{
+    splash_bind_vbe();
+    if (!s_vram)
+        return;
+    draw_white_brand_frame(frame);
+}
+
+/* Busy-wait frame delay (cli section — no IRQ timer). ~20–24 fps @ QEMU. */
+static void splash_frame_delay(void)
+{
+    for (volatile uint32_t i = 0; i < 900000u; ++i)
+        __asm__ volatile("pause");
+}
+
+void fb_run_boot_splash_anim(uint32_t cycles)
+{
+    splash_bind_vbe();
+    if (!s_vram)
+        return;
+    if (cycles == 0)
+        cycles = 2;
+    uint32_t n = g_brand_nframes ? g_brand_nframes : 1u;
+    for (uint32_t c = 0; c < cycles; ++c) {
+        for (uint32_t f = 0; f < n; ++f) {
+            draw_white_brand_frame(f);
+            splash_frame_delay();
+        }
+    }
 }
 
 void fb_draw_desktop_ready_frame(uint32_t frame) {
-    struct vbe_info vi;
-    vbe_get_info(&vi);
-    if (vi.vram_phys == 0 || vi.width == 0 || vi.height == 0) return;
-
-    s_vram  = (uint8_t *)(uintptr_t)vi.vram_phys;
-    s_pitch = vi.pitch;
-    s_w     = vi.width;
-    s_h     = vi.height;
-
-    uint32_t sec = frame / 8U;
+    /* Legacy mock desktop — unused on brand boot path. */
+    splash_bind_vbe();
+    if (!s_vram)
+        return;
     uint32_t phase = (frame / 8U) % 4U;
-
     draw_background();
-    draw_taskbar(sec);
+    draw_taskbar(frame / 8U);
     draw_desktop_ready_panel(phase);
 }
+

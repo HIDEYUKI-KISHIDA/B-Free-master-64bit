@@ -23,9 +23,9 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 <!-- PHONE_END -->
 
+
 書き方の例:
 - `次へ`
-- `W3.3 で sustained SG を試せ`
 - `止まって。スモークだけ回せ`
 - `ISO を作り直して`
 
@@ -34,16 +34,29 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 ## 常設方針（エージェント用・スマホでは触らなくてよい）
 
 **正本:** `C:\Users\h_kis\Desktop\B-Free-master`（詳細: `docs/CANONICAL.md`）。`J:\B-Free-master` は古いコピー・使わない。
-本線: `work/posix-holes-redo`。**実用 Desktop = FB 画素権威**（W3.5 hybrid）。SG／DesktopShell 本読は別トラック。
+本線: `work/posix-holes-redo`。
+
+**優先: ホスト DesktopShell 必須の 3 穴。** 薄い塊寄せは据え置き。
+
+| # | 穴 | 状態（強化プローブ 2026-08-08） |
+|---|-----|------|
+| H1 | Item↔Item `setParentItem` | **緑**（QML↔QML / bare Item / nested）— 製品ツリー解禁候補 |
+| H2 | SG flush | 単純 `UpdateRequest` **緑**；**H2b 緑**（プロトコル＋ Quick nullkids） |
+| H3 | kde/wabi 子 IR | **緑**（ClockApplet create+parent；下記） |
+
+**着手順（残り）:** 必須 8 + 拡張 4（ホスト権威 1〜12）は 2026-08-08 本線スモーク緑。相対 CU `addImport` は **H3 URL bypass**（soft-rel はハングで据え置き）。
+
+**H2b:** unexpose → contentItem 兄弟を hidden で attach → re-expose → leaf update → `requestUpdate`（hidden）→ show → `requestUpdate`。
+
+**H3 根因:** 古い `guest_clock_applet_qmlcache` が HIT 直後 `QString::replaceArgEscapes` で PF@CR2=0x29000000。URL 自体は無害（Child ユニットを Clock URL に載せると緑）。修正: `ClockApplet.qml` を `import QtQuick`（**バージョン無し**；`2.15` 付き極小ユニットは赤）で再 qmlcachegen + `install_guest_qmlcache_unit.py --ref guest_product_child_qmlcache.cpp`（`tools/_tmp_rebuild_clock_qmlcache.sh`）。Timer / Date / formatDateTime 付き本番相当で緑。
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-07-29（LTP curated ABI hole suite）
-- **ゲート:** curated **679 PASS** / LTP curated **PASS n=38** / phase3 **ALL PASS** / desktop 意図しない ENOSYS **0**
-- **LTP curated:** FS 基本 + process/wait（fork/exit/wait/waitpid/vfork/getppid）+ pipe/fd（dup2/dup3/fcntl/close/writev/readv/pread）+ signals（kill/sigaction/sigprocmask/alarm/SIGPIPE）；スモークは busybox AUTO_LOGIN
-- **スタブ実体化:** `setitimer`/`getitimer`（alarm 共用）・`sched_getaffinity`；policy 94 は未着手のまま
-- **wait 安定化:** ash `wait`（WNOHANG+sigsuspend）向け soft-zombie；`waitpid` は 1 子/呼出し；blocking `-1` は runnable へ yield；`rt_sigsuspend` 配線
-- **phase3 ハーネス:** 後期 `cat|grep` / `$(pwd)` を回避（`true & wait $!` で waitall）
-- **Desktop 本線:** W0–W3.5 + FB authority + Explorer。wm smoke GREEN
-- **天井の壁（次へ回す）:** clone 本スレッド、`cat FILE|grep` 後期楔、双方向 TCP、コマンド置換 PF；LTP 次ラウンドは mmap／深い socket
-- **Next:** clone THREAD 深化、または `cat|grep` 後期パイプライン修繕。Desktop 並行可
+- **Updated:** 2026-08-09（**early white + smooth spinner GREEN**）
+- **Boot:** `vbe_init` 直後と VMM 直後に白地描画（黒待ち短縮）；`Early brand splash` 確認
+- **Spinner:** シート順は右列→左列；表示は 12f@30° 回転で滑らか化；ISO `out/bfree-ds-visual.iso`
+- **Verify:** `out/brand-splash.txt` GREEN（EARLY=1）
+- **未:** 本番 Start/トレイはまだ FB lookalike；アプリ窓は Qt 枠ではなく FB mini-WM（真 SG→FB0 / host DesktopShell 権威が次）
+- **注意:** host `.a` 直結禁止；`addImportFile` 再試しない
+
+

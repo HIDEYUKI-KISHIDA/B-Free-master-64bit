@@ -425,9 +425,13 @@ void knl_main(void) {
     extern void register_irq_handler(int irq, void* handler);
 
     // --- MB2 フレームバッファ情報をパース (低メモリのうちに実行) ---
-    // ※ 描画 (fb_draw_splash) は uart_init & PCI scan の後で行う
+    // Boot PT は VRAM identity map 済み → すぐ白地を出して黒画面を潰す
     extern void vbe_init_from_mb2(const uint8_t *);
+    extern void fb_draw_splash(void);
+    extern void fb_draw_splash_frame(uint32_t frame);
+    extern void fb_run_boot_splash_anim(uint32_t cycles);
     vbe_init_from_mb2((const uint8_t *)(uintptr_t)g_mb2_info);
+    fb_draw_splash(); /* earliest white + logo + spinner frame0 */
 
     // --- PMM を先に初期化しないと、user ELF / user stack が 0x0,0x1000...
     // を踏んで低物理メモリを壊す ---
@@ -443,6 +447,23 @@ void knl_main(void) {
 
     vmm_init_kernel_page_table();
     vmm_activate_kernel_page_table();
+    /* Kernel PT drops boot MMIO maps — remap VRAM and re-paint before long init. */
+    {
+        extern page_table_t kernel_page_table;
+        struct vbe_info vi;
+        vbe_get_info(&vi);
+        if (vi.vram_phys != 0 && vi.width != 0 && vi.height != 0 && vi.pitch != 0) {
+            uintptr_t base = vi.vram_phys & ~(PAGE_SIZE - 1);
+            uintptr_t end = (vi.vram_phys + (uintptr_t)vi.pitch * (uintptr_t)vi.height
+                             + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+            for (uintptr_t a = base; a < end; a += 0x200000ULL) {
+                if (vmm_map_mmio_huge(&kernel_page_table, a, a) != 0)
+                    break;
+            }
+            fb_draw_splash();
+            uart_puts("[BOOT] Early brand splash (post-VMM)\n");
+        }
+    }
     init_task_page_table(&tcb1);
     extern void bfree_sysret_exec_globals_init(void);
     bfree_sysret_exec_globals_init();
@@ -531,6 +552,7 @@ void knl_main(void) {
     // 既定: init.elf（PID1 + FB UI）。無ければ shell.elf → user_hello.elf。
     uart_puts("[BOOT] Preparing to launch userland.\n");
     uart_puts("[KERNEL] Loading user ELF...\n");
+    fb_draw_splash_frame(1);
     const char *target_elf = boot_primary_elf;
     int res = load_elf_image(target_elf, &user_entry, tcb1.page_table_base);
     if (res != 0) {
@@ -538,13 +560,16 @@ void knl_main(void) {
         uart_puthex64((uint64_t)(int64_t)res);
         uart_puts("), fallback to shell.elf\n");
         target_elf = "shell.elf";
+        fb_draw_splash_frame(2);
         res = load_elf_image(target_elf, &user_entry, tcb1.page_table_base);
         if (res != 0) {
             uart_puts("[KERNEL] shell.elf fallback failed, trying user_hello.elf\n");
             target_elf = "user_hello.elf";
+            fb_draw_splash_frame(3);
             res = load_elf_image(target_elf, &user_entry, tcb1.page_table_base);
         }
     }
+    fb_draw_splash_frame(4);
     /* load_elf_image restores the caller's CR3; boot needs the task PT active. */
     if (tcb1.page_table_base) {
         __asm__ volatile("mov %0, %%cr3" :: "r"(tcb1.page_table_base) : "memory");
@@ -623,17 +648,17 @@ void knl_main(void) {
                 uart_puts(" h=");
                 uart_puthex64((uint64_t)vi.height);
                 uart_puts("\n");
-                uart_puts("[SPLASH] VRAM mapped, drawing...\n");
-                fb_draw_splash();
+                uart_puts("[SPLASH] VRAM mapped, drawing brand splash...\n");
+                /* Already painted early; one smooth cycle before ring3. */
+                fb_run_boot_splash_anim(1);
                 uart_puts("[BOOT] Framebuffer splash drawn.\n");
+                uart_puts("[BOOT] Brand splash anim done -> ring3 init.\n");
             } else {
                 uart_puts("[SPLASH] vbe_info invalid, skip.\n");
             }
         }
 
-        /* Skip kernel FB phases 2–3: loading animation, desktop-ready preview, userland-mock (init redraws). */
-        uart_puts("[BOOT] Mid FB animations skipped (splash only -> ring3 init).\n");
-
+        /* Blue mock desktop / mid FB phases removed — brand splash only. */
         // CR3 切替してユーザー空間へ
         uart_puts("[USERLAND] Switching CR3 to task page table: ");
         uart_puthex64((uint64_t)tcb1.page_table_base);
@@ -720,8 +745,10 @@ void knl_main(void) {
 
     // --- フレームバッファ スプラッシュ描画 (uart_init & PCI scan 後) ---
     // PCI scan 後に GPU BAR が確定するので、ここで描画する
-    extern void fb_draw_splash(void);
-    fb_draw_splash();
+    {
+        extern void fb_run_boot_splash_anim(uint32_t cycles);
+        fb_run_boot_splash_anim(1);
+    }
     uart_puts("[BOOT] Framebuffer splash drawn.\n");
 
     uart_puts("OK\n");
