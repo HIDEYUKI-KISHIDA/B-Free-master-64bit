@@ -47,6 +47,12 @@ typedef struct {
     uint32_t rcv_nxt;
     int rx_len;
     uint8_t rx[TCP_RX_MAX];
+    int tx_pending;
+    int tx_wait_rx;
+    uint32_t tx_seq;
+    size_t tx_len;
+    uint8_t tx_buf[512];
+    uint32_t tx_pump_ticks;
 } tcp_pcb_t;
 
 static tcp_pcb_t g_pcb[BFREE_TCP_MAX];
@@ -99,13 +105,23 @@ static uint16_t tcp_checksum(uint32_t src, uint32_t dst, const uint8_t *tcp, siz
     return htons16((uint16_t)~sum);
 }
 
+static int tcp_tx_flags(tcp_pcb_t *p, uint8_t flags, const uint8_t *payload, size_t plen,
+                        int retransmit);
+
 static int tcp_tx(tcp_pcb_t *p, uint8_t flags, const uint8_t *payload, size_t plen)
+{
+    return tcp_tx_flags(p, flags, payload, plen, 0);
+}
+
+static int tcp_tx_flags(tcp_pcb_t *p, uint8_t flags, const uint8_t *payload, size_t plen,
+                        int retransmit)
 {
     uint8_t buf[64 + 1400];
     tcp_hdr_t *h;
     size_t tcp_len;
     int rc;
     uint32_t lip = ipv4_get_local_ip();
+    uint32_t seq;
 
     if (sizeof(tcp_hdr_t) + plen > sizeof(buf))
         return -1;
@@ -113,7 +129,8 @@ static int tcp_tx(tcp_pcb_t *p, uint8_t flags, const uint8_t *payload, size_t pl
     h = (tcp_hdr_t *)buf;
     h->src_port = htons16(p->lport);
     h->dst_port = htons16(p->rport);
-    h->seq = htonl32(p->snd_nxt);
+    seq = retransmit ? p->tx_seq : p->snd_nxt;
+    h->seq = htonl32(seq);
     h->ack = htonl32(p->rcv_nxt);
     h->data_off = (uint8_t)(5u << 4);
     h->flags = flags;
@@ -132,16 +149,25 @@ static int tcp_tx(tcp_pcb_t *p, uint8_t flags, const uint8_t *payload, size_t pl
     }
     if (rc != NET_SEND_OK)
         return -101;
-    if (flags & TCP_SYN) {
-        if (!p->syn_on_wire) {
-            p->snd_nxt += 1;
-            p->syn_on_wire = 1;
+    if (!retransmit) {
+        if (flags & TCP_SYN) {
+            if (!p->syn_on_wire) {
+                p->snd_nxt += 1;
+                p->syn_on_wire = 1;
+            }
         }
+        if (plen) {
+            if (plen <= sizeof(p->tx_buf) && payload) {
+                memcpy(p->tx_buf, payload, plen);
+                p->tx_len = plen;
+                p->tx_seq = seq;
+                p->tx_pending = 1;
+            }
+            p->snd_nxt = seq + (uint32_t)plen;
+        }
+        if (flags & TCP_FIN)
+            p->snd_nxt += 1;
     }
-    if (plen)
-        p->snd_nxt += (uint32_t)plen;
-    if (flags & TCP_FIN)
-        p->snd_nxt += 1;
     return (int)plen;
 }
 
@@ -226,6 +252,11 @@ void tcp_min_input(uint32_t src_ip, const uint8_t *pkt, size_t len)
     if (p->state != TCP_ST_ESTABLISHED)
         return;
 
+    if ((h->flags & TCP_ACK) && p->tx_pending && p->tx_len > 0 && !p->tx_wait_rx) {
+        if (ack >= p->tx_seq + (uint32_t)p->tx_len)
+            p->tx_pending = 0;
+    }
+
     if (plen > 0) {
         if (seq == p->rcv_nxt) {
             size_t n = plen;
@@ -293,8 +324,16 @@ int tcp_min_pump(int pcb)
         return -9;
     p = &g_pcb[pcb];
     net_runtime_poll();
-    if (p->state == TCP_ST_ESTABLISHED)
+    if (p->state == TCP_ST_ESTABLISHED) {
+        if (p->tx_pending && p->tx_len > 0) {
+            ++p->tx_pump_ticks;
+            if ((p->tx_pump_ticks & 0x3fu) == 0u) {
+                (void)tcp_tx_flags(p, (uint8_t)(TCP_PSH | TCP_ACK), p->tx_buf, p->tx_len, 1);
+                uart_puts("[TCP] rexmit\n");
+            }
+        }
         return 0;
+    }
     if (p->state == TCP_ST_CLOSED_DONE) {
         p->used = 0;
         return -111;
@@ -345,6 +384,8 @@ int tcp_min_send(int pcb, const uint8_t *data, size_t len)
             break;
         net_runtime_poll();
     }
+    if (rc > 0)
+        p->tx_wait_rx = 1;
     return rc;
 }
 
@@ -358,12 +399,13 @@ int tcp_min_recv(int pcb, uint8_t *buf, size_t len)
     if (pcb < 0 || pcb >= BFREE_TCP_MAX || !g_pcb[pcb].used)
         return -9;
     p = &g_pcb[pcb];
-    for (spins = 0; spins < 8; ++spins) {
+    for (spins = 0; spins < 64; ++spins) {
         pr = tcp_min_pump(pcb);
         if (pr == 0)
             break;
         if (pr != -115)
             return pr;
+        net_runtime_poll();
     }
     if (p->state != TCP_ST_ESTABLISHED && p->rx_len <= 0)
         return -115;
@@ -380,6 +422,8 @@ int tcp_min_recv(int pcb, uint8_t *buf, size_t len)
             p->rx[j] = p->rx[n + j];
     }
     p->rx_len -= (int)n;
+    p->tx_wait_rx = 0;
+    p->tx_pending = 0;
     return (int)n;
 }
 

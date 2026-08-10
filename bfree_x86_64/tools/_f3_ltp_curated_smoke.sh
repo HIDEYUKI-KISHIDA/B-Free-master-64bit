@@ -75,6 +75,18 @@ else
   echo "FAIL COW_break (lazy fork COW not observed)"
   fail=1
 fi
+if grep -aq 'TPASS: mmap06_cow_refcnt' "$QLOG"; then
+  echo "PASS mmap06_cow_refcnt"
+else
+  echo "FAIL mmap06_cow_refcnt"
+  fail=1
+fi
+if grep -aq '\[COW\] ref free' "$QLOG"; then
+  echo "PASS COW_ref_free"
+else
+  echo "FAIL COW_ref_free (shared phys not freed on last unmap)"
+  fail=1
+fi
 if grep -aq 'TFAIL' "$QLOG"; then
   echo "FAIL has_TFAIL"
   fail=1

@@ -1198,6 +1198,40 @@ static void mmap05_cow_break(void)
     report("mmap05_cow_break", ok);
 }
 
+/* Clear2: fork COW + child write + parent munmap exercises refcnt/free path. */
+static void mmap06_cow_refcnt(void)
+{
+    size_t psz = 4096;
+    char *p;
+    pid_t pid;
+    int st = -1;
+    int ok = 0;
+
+    p = (char *)mmap(NULL, psz, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) {
+        report("mmap06_cow_refcnt", 0);
+        return;
+    }
+    p[0] = 'P';
+    reap_zombies_nonblock();
+    pid = fork();
+    if (pid < 0) {
+        (void)munmap(p, psz);
+        report("mmap06_cow_refcnt", 0);
+        return;
+    }
+    if (pid == 0) {
+        p[0] = 'C';
+        _exit(0);
+    }
+    if (waitpid(pid, &st, 0) == pid && WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+        ok = (p[0] == 'P');
+    }
+    (void)munmap(p, psz);
+    report("mmap06_cow_refcnt", ok);
+}
+
 static void munmap01(void)
 {
     size_t psz = 4096;
@@ -5543,6 +5577,7 @@ int main(void)
     mmap03_shared_msync();
     mmap04_shared_live();
     mmap05_cow_break();
+    mmap06_cow_refcnt();
     munmap01();
     rename01();
     ftruncate01();

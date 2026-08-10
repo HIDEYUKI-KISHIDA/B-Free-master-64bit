@@ -42,6 +42,72 @@ static int vmm_pte_direct(uint64_t pt_phys)
 /* Software-available PTE bit: page is write-protected for lazy COW after fork. */
 #define VMM_PTE_COW (1ULL << 9)
 
+#define VMM_COW_REFCNT_SLOTS 256
+
+static struct {
+    uint64_t phys;
+    uint32_t refs;
+} g_vmm_cow_refcnt[VMM_COW_REFCNT_SLOTS];
+
+static int vmm_cow_ref_slot(uint64_t phys, int create)
+{
+    int free_i = -1;
+    int i;
+
+    for (i = 0; i < VMM_COW_REFCNT_SLOTS; ++i) {
+        if (g_vmm_cow_refcnt[i].phys == phys)
+            return i;
+        if (free_i < 0 && g_vmm_cow_refcnt[i].refs == 0)
+            free_i = i;
+    }
+    if (!create || free_i < 0)
+        return -1;
+    g_vmm_cow_refcnt[free_i].phys = phys;
+    g_vmm_cow_refcnt[free_i].refs = 0;
+    return free_i;
+}
+
+static void vmm_cow_ref_inc(uint64_t phys)
+{
+    int i;
+
+    if (!phys)
+        return;
+    i = vmm_cow_ref_slot(phys, 1);
+    if (i < 0)
+        return;
+    ++g_vmm_cow_refcnt[i].refs;
+}
+
+static void vmm_cow_ref_dec(uint64_t phys)
+{
+    int i;
+
+    if (!phys)
+        return;
+    i = vmm_cow_ref_slot(phys, 0);
+    if (i < 0)
+        return;
+    if (g_vmm_cow_refcnt[i].refs == 0)
+        return;
+    --g_vmm_cow_refcnt[i].refs;
+    if (g_vmm_cow_refcnt[i].refs == 0) {
+        g_vmm_cow_refcnt[i].phys = 0;
+        pmm_free((void *)(uintptr_t)phys);
+        uart_puts("[COW] ref free phys=");
+        uart_puthex64(phys);
+        uart_puts("\n");
+    }
+}
+
+static void vmm_cow_share_phys(uint64_t phys)
+{
+    /* First COW share: parent mapping + child mapping. */
+    if (vmm_cow_ref_slot(phys, 0) < 0)
+        vmm_cow_ref_inc(phys);
+    vmm_cow_ref_inc(phys);
+}
+
 extern page_table_t kernel_page_table;
 
 
@@ -244,6 +310,7 @@ static int vmm_cow_break_at(page_table_t *pt, uint64_t va, uint64_t old_pte)
         pmm_free(newpage);
         return -1;
     }
+    vmm_cow_ref_dec(old_phys);
     vmm_drop_identity_alias(pt, (uint64_t)(uintptr_t)newpage);
     vmm_drop_identity_alias(&kernel_page_table, (uint64_t)(uintptr_t)newpage);
     __asm__ volatile("invlpg (%0)" : : "r"(va) : "memory");
@@ -659,8 +726,14 @@ int vmm_unmap_page(page_table_t *pt, uint64_t vaddr) {
     {
         uint64_t pt_phys = (uint64_t)(uintptr_t)pt_slot;
         int embedded = (pd_index < PT_EMBEDDED_COUNT) ? 1 : 0;
+        uint64_t pte = 0;
         uint64_t zero = 0;
 
+        if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) == 0 &&
+            (pte & 0x001ULL) != 0ULL && (pte & 0x004ULL) != 0ULL &&
+            (pte & VMM_PTE_COW) != 0ULL) {
+            vmm_cow_ref_dec(pte & 0x000FFFFFFFFFF000ULL);
+        }
         if (vmm_pte_store(pt_phys, pt_index, zero, embedded) != 0) {
             return -1;
         }
@@ -1106,6 +1179,7 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
                     return -1;
                 if (vmm_map_page(dst, va, paddr, cow_flags) != 0)
                     return -1;
+                vmm_cow_share_phys(paddr);
                 vmm_drop_identity_alias(dst, paddr);
                 continue;
             }

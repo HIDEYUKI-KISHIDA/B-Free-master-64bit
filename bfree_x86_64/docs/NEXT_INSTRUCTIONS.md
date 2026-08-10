@@ -52,12 +52,12 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-08-10（**Deep follow-on 1→2→3 完了**）
-- **Deep1（QML RIP=0）:** 根因＝activate 後の sync `UpdateRequest` 塗装。配送 OFF で **`setX` 解禁** → `RESULT=GREEN qml-mainline-1-4-deep1` / PF=0（`post-act termX place ok`）。dense UR / setVisible は配送 ON のまま据え置き
-- **Deep2（lazy COW）:** fork 時 RW ページを共有 PTE（RO+COW bit）→ write #PF で copy；`[COW] break` 観測；**`LTP_CURATED_RESULT: PASS n=240`** + f3 に COW ゲート
-- **Deep3（e1000）:** `_f2_e1000_tcp_smoke.sh` — 3RTT 後 close → **第2接続** + RTT4 緑（CONNECT2/RTT4）
+- **Updated:** 2026-08-10（**Clear 1→2→3 完了**）
+- **Clear1（dense UR ON）:** post-activate **H2b プロトコル**（unexpose → term setVisible → reexpose → delivery ON で UR）→ `RESULT=GREEN qml-mainline-1-4-clear1` / PF=0（`post-act dense UR ok` + `post-act term setVisible ok`）
+- **Clear2（COW refcnt/free）:** 共有 phys に refcnt；COW break / munmap で `[COW] ref free`；**`mmap06_cow_refcnt` TPASS**；**`LTP_CURATED_RESULT: PASS n=241`**
+- **Clear3（TCP loss/rexmit）:** host が初回 PONG を drop → guest `tx_wait_rx` + pump `[TCP] rexmit` → RTT1 回復；`RESULT=GREEN f2-e1000-tcp-clear3`
+- **Deep1–3:** 前回どおり（setX/UR off、lazy COW break、2nd conn）
 - **① Desktop ENOSYS:** 維持（unique=0）
-- **据え置き（さらに）:** post-activate dense UR を安全に ON；COW 参照カウント/解放；TCP 窓・ロス再送の意図的試験
 - **Next:** スマホ指示待ち
 
 ---

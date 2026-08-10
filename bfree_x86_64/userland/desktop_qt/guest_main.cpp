@@ -3288,6 +3288,53 @@ static void guest_prod_sg_soft_pulse_no_ur(void)
     (void)g_prod_sg_win;
 }
 
+/* Clear1: H2b-style dense SG + UpdateRequest after activate (unexpose first). */
+static void guest_prod_post_activate_dense_sg(void)
+{
+    if (!g_prod_sg_win)
+        return;
+    guest_serial_puts("[desktop_qt] post-act dense SG enter\n");
+    bfree_guest_ensure_drawhelpers();
+    g_prod_sg_pulse_hold = 1;
+    guest_serial_puts("[desktop_qt] post-act dense unexpose enter\n");
+    if (QWindowPrivate *wd = QWindowPrivate::get(g_prod_sg_win)) {
+        wd->exposed = false;
+        wd->receivedExpose = false;
+    }
+    guest_serial_puts("[desktop_qt] post-act dense unexpose ok\n");
+    /* Terminal show while window unexposed (H2b sibling-show pattern). */
+    if (g_qml_term_ok && g_qml_term_item) {
+        guest_serial_puts("[desktop_qt] post-act term setVisible enter\n");
+        g_qml_term_item->setFlag(QQuickItem::ItemHasContents, false);
+        g_qml_term_item->setVisible(true);
+        g_qml_term_item->setFlag(QQuickItem::ItemHasContents, true);
+        guest_serial_puts("[desktop_qt] post-act term setVisible ok\n");
+    }
+    guest_serial_puts("[desktop_qt] post-act dense reexpose enter\n");
+    bfree_guest_ensure_drawhelpers();
+    bfree_qpa_set_update_delivery(0);
+    if (QWindowPrivate *wd = QWindowPrivate::get(g_prod_sg_win)) {
+        wd->receivedExpose = true;
+        wd->exposed = true;
+        wd->resizeEventPending = false;
+    }
+    guest_serial_puts("[desktop_qt] post-act dense reexpose flags ok\n");
+    bfree_guest_set_prefer_fallback_alloc(1);
+    if (g_qml_term_item)
+        g_qml_term_item->update();
+    if (QQuickItem *ci = g_prod_sg_win->contentItem())
+        ci->update();
+    g_prod_sg_win->requestUpdate();
+    guest_serial_puts("[desktop_qt] post-act dense UR enter\n");
+    bfree_qpa_set_update_delivery(1);
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+    guest_serial_puts("[desktop_qt] post-act dense UR ok\n");
+    bfree_guest_set_prefer_fallback_alloc(0);
+    g_prod_sg_pulse_hold = 0;
+    guest_prod_sg_repair_blank_fb();
+    guest_serial_puts("[desktop_qt] post-act dense SG ok\n");
+}
+
 static void guest_qml_terminal_show_post_activate(void)
 {
     if (!g_qml_term_ok || !g_qml_term_item) {
@@ -3295,18 +3342,10 @@ static void guest_qml_terminal_show_post_activate(void)
         return;
     }
     guest_serial_puts("[desktop_qt] product post-activate Terminal show enter\n");
-    /* Deep1: dirtying mutators PF because sync UpdateRequest paints with a null
-     * fnptr after activate. Gate delivery OFF, then prove setX place. */
+    /* Clear1: dense SG path already showed Terminal; refresh geometry only. */
     g_prod_sg_pulse_hold = 1;
-    bfree_qpa_set_update_delivery(0);
-    guest_serial_puts("[desktop_qt] post-act term1 HC off\n");
-    g_qml_term_item->setFlag(QQuickItem::ItemHasContents, false);
-    guest_serial_puts("[desktop_qt] post-act term2 HC on\n");
-    g_qml_term_item->setFlag(QQuickItem::ItemHasContents, true);
-    guest_serial_puts("[desktop_qt] post-act termX place enter\n");
-    g_qml_term_item->setX(108); /* create used 100 — must change to dirty Position */
-    guest_serial_puts("[desktop_qt] post-act termX place ok\n");
-    /* Keep delivery OFF: sticky updateRequestPending if dirtied while gated. */
+    g_qml_term_item->setX(108);
+    g_qml_term_item->setY(60);
     g_prod_sg_pulse_hold = 0;
     guest_serial_puts("[desktop_qt] product post-activate Terminal show ok\n");
 }
@@ -3323,9 +3362,7 @@ static void guest_prod_post_activate_arm_once(void)
     }
     guest_serial_puts("[desktop_qt] product post-activate SG arm enter\n");
     g_prod_post_activate_sg = 1;
-    /* Marker: soft host-wall pulse still deferred (PF@setVisible); leaf path is Max1. */
-    guest_serial_puts("[desktop_qt] product post-activate SG pulse enter\n");
-    guest_serial_puts("[desktop_qt] product post-activate SG pulse ok\n");
+    guest_prod_post_activate_dense_sg();
     guest_qml_terminal_show_post_activate();
     guest_serial_puts("[desktop_qt] product post-activate SG arm ok\n");
 }

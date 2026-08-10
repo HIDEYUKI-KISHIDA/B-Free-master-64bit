@@ -185,7 +185,7 @@ sed -i 's/^set default=.*/set default=0/' "$ISO_STAGE/boot/grub/grub.cfg"
 grub-mkrescue -o "$ISO" "$ISO_STAGE" -- -volid BFREE >/tmp/mkf2tcp.log 2>&1
 
 # Host echo: conn1 2×4B+16B, then conn2 1×4B.
-python3 - "$PORT" <<'PY' &
+python3 - "$PORT" <<'PY' > /tmp/bfree-f2tcp-host.log 2>&1 &
 import socket, sys
 port = int(sys.argv[1])
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -195,10 +195,11 @@ s.listen(2)
 s.settimeout(90)
 print("HOST_LISTEN", port, flush=True)
 
-def one_conn(label, rounds):
+def one_conn(label, rounds, drop_first_reply=False):
     c, addr = s.accept()
     print("HOST_ACCEPT", label, addr, flush=True)
     c.settimeout(60)
+    dropped = False
     for round_i, need, reply in rounds:
         data = b""
         while len(data) < need:
@@ -207,6 +208,11 @@ def one_conn(label, rounds):
                 break
             data += chunk
         if len(data) >= need:
+            if drop_first_reply and not dropped:
+                dropped = True
+                print("HOST_DROP_REPLY_ONCE", label, round_i, flush=True)
+                data = b""
+                continue
             c.sendall(reply)
             print("HOST_ECHO_OK", label, round_i, data[:need], flush=True)
         else:
@@ -219,7 +225,7 @@ try:
         (1, 4, b"PONG"),
         (2, 4, b"PONG"),
         (3, 16, b"PONG16-REPLY!!!!"),
-    ))
+    ), drop_first_reply=True)
     one_conn(2, (
         (1, 4, b"PONG"),
     ))
@@ -245,7 +251,7 @@ if command -v tcpdump >/dev/null 2>&1 && [ -f /tmp/bfree-f2tcp.pcap ]; then
   tcpdump -nn -r /tmp/bfree-f2tcp.pcap 2>/dev/null | head -40 || true
 fi
 
-echo '=== F2 e1000 TCP Deep3 ==='
+echo '=== F2 e1000 TCP Clear3 ==='
 fail=0
 for tag in CONNECT_OK RTT1_OK RTT2_OK RTT3_OK CLOSE1_OK CONNECT2_OK RTT4_OK F2_E1000_TCP_OK; do
   if grep -aq "$tag" "$QLOG"; then
@@ -255,6 +261,18 @@ for tag in CONNECT_OK RTT1_OK RTT2_OK RTT3_OK CLOSE1_OK CONNECT2_OK RTT4_OK F2_E
     fail=1
   fi
 done
+if grep -aq 'HOST_DROP_REPLY_ONCE' /tmp/bfree-f2tcp-host.log; then
+  echo "PASS HOST_DROP_REPLY_ONCE"
+else
+  echo "FAIL HOST_DROP_REPLY_ONCE"
+  fail=1
+fi
+if grep -aq '\[TCP\] rexmit' "$QLOG"; then
+  echo "PASS TCP_rexmit"
+else
+  echo "FAIL TCP_rexmit (data retransmit not observed)"
+  fail=1
+fi
 if grep -aqiE 'Page Fault|PANIC' "$QLOG"; then
   echo 'FAIL panic'
   fail=1
@@ -262,4 +280,7 @@ else
   echo 'PASS no_panic'
 fi
 grep -aE '\[f2tcp\]|\[TCP\]|\[NET\]|F2_|PANIC|Page Fault' "$QLOG" | tail -60
+if [[ "$fail" -eq 0 ]]; then
+  echo 'RESULT=GREEN f2-e1000-tcp-clear3'
+fi
 exit "$fail"

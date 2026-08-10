@@ -101,10 +101,11 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **679**） | `LIBC_TEST_CURATED_RESULT` |
 | B2.22 | `setitimer`/`getitimer`/`sched_getaffinity` | **DONE**（2026-07-29；ITIMER_REAL↔alarm；affinity=CPU0） | curated ENOSYS 0 |
 | B2.23 | ash wait / waitpid heal | **DONE**（soft-zombie；1-reap；blocking `-1` yield；phase3 ALL PASS；**late `cat\|grep` + cmdsubst** 2026-07-30：`_late_pipe_smoke` ALL PASS） | AS-copy forkshell + waitpid status + expbackq wait-before-read |
-| B2.24 | LTP curated ABI hole suite | **DONE**（2026-08-10；**n=240**） | +F…+S；B1/B2；`mmap04_shared_live`；`mmap05_cow_break`；smoke PASS |
+| B2.24 | LTP curated ABI hole suite | **DONE**（2026-08-10；**n=241**） | +F…+S；B1/B2；`mmap04_shared_live`；`mmap05_cow_break`；`mmap06_cow_refcnt`；smoke PASS |
 | B2.25 | Depth min slices 1–3 | **DONE**（2026-08-10） | S1 QML PF=0 mainline；S2 SHARED alias；S3 e1000 2RTT TCP |
 | B2.26 | Depth max follow-on 1–3 | **DONE**（2026-08-10） | M1 post-act HC dance；M2 cow_break n=240；M3 e1000 3RTT+16B |
 | B2.27 | Depth deep follow-on 1–3 | **DONE**（2026-08-10） | D1 setX w/ UR off；D2 lazy COW+`[COW] break`；D3 e1000 2nd conn |
+| B2.29 | Clear 1→2→3 | **DONE**（2026-08-10） | C1 dense UR+setVisible；C2 refcnt+`mmap06` n=241；C3 TCP drop+rexmit |
 | B2.24b | Desktop product ENOSYS gate | **DONE**（2026-08-10） | `_desktop_enosys_smoke.sh` → unique=0 + transfer；`guest_desktop_smoke.sh` に ENOSYS 集計ゲート；埋める nr なし |
 | B2.25 | Full ABI-hole finder（syscall ENOSYS） | **DONE**（2026-07-30） | 静的 extract + ゲスト確認；impl≈153 / holes≈297；`tools/_abi_hole_finder_smoke.sh` ALL PASS。upstream フル LTP ではない |
 | B2.26 | Practical 21 ABI holes | **DONE**（2026-07-30） | must12+should5+compat4 すべて dispatch；curated 685 PASS；finder impl=176 holes=274；tkill/robust_list 番号修正 |
