@@ -1120,6 +1120,84 @@ static void mmap03_shared_msync(void)
     report("mmap03", ok);
 }
 
+/* Two MAP_SHARED maps of the same /tmp vfile must see writes without msync. */
+static void mmap04_shared_live(void)
+{
+    const char *path = "/tmp/ltp_shared_live";
+    int fd;
+    char *p1;
+    char *p2;
+    size_t psz = 4096;
+    int ok = 0;
+
+    fd = open(path, O_RDWR | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        report("mmap04_shared_live", 0);
+        return;
+    }
+    if (ftruncate(fd, (off_t)psz) != 0) {
+        close(fd);
+        (void)unlink(path);
+        report("mmap04_shared_live", 0);
+        return;
+    }
+    p1 = (char *)mmap(NULL, psz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    p2 = (char *)mmap(NULL, psz, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (p1 == MAP_FAILED || p2 == MAP_FAILED) {
+        if (p1 != MAP_FAILED) {
+            (void)munmap(p1, psz);
+        }
+        if (p2 != MAP_FAILED) {
+            (void)munmap(p2, psz);
+        }
+        close(fd);
+        (void)unlink(path);
+        report("mmap04_shared_live", 0);
+        return;
+    }
+    p1[0] = 'Z';
+    ok = (p2[0] == 'Z');
+    (void)munmap(p1, psz);
+    (void)munmap(p2, psz);
+    close(fd);
+    (void)unlink(path);
+    report("mmap04_shared_live", ok);
+}
+
+/* After fork, MAP_PRIVATE anon write in child must not change parent (COW/AS-copy). */
+static void mmap05_cow_break(void)
+{
+    size_t psz = 4096;
+    char *p;
+    pid_t pid;
+    int st = -1;
+    int ok = 0;
+
+    p = (char *)mmap(NULL, psz, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) {
+        report("mmap05_cow_break", 0);
+        return;
+    }
+    p[0] = 'A';
+    reap_zombies_nonblock();
+    pid = fork();
+    if (pid < 0) {
+        (void)munmap(p, psz);
+        report("mmap05_cow_break", 0);
+        return;
+    }
+    if (pid == 0) {
+        p[0] = 'B';
+        _exit(p[0] == 'B' ? 0 : 1);
+    }
+    if (waitpid(pid, &st, 0) == pid && WIFEXITED(st) && WEXITSTATUS(st) == 0) {
+        ok = (p[0] == 'A');
+    }
+    (void)munmap(p, psz);
+    report("mmap05_cow_break", ok);
+}
+
 static void munmap01(void)
 {
     size_t psz = 4096;
@@ -5463,6 +5541,8 @@ int main(void)
     mmap01_anon();
     mmap02_file_private();
     mmap03_shared_msync();
+    mmap04_shared_live();
+    mmap05_cow_break();
     munmap01();
     rename01();
     ftruncate01();

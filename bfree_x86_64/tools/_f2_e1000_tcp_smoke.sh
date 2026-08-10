@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# F2 TCP: guest connect(10.0.2.2:PORT) → host echo via QEMU slirp NAT; PING→PONG.
+# F2 TCP (Max3 deepen): guest connect(10.0.2.2:PORT) → host echo via QEMU slirp.
+# Three RTTs on one connection: PING→PONG, PNG2→PONG, then 16B PAY3→PONG16.
 # Prefer gateway 10.0.2.2 (host) over guestfwd: guestfwd often accepts on host
 # without delivering SYN-ACK to a minimal guest TCP stack.
 set -eu
@@ -24,8 +25,6 @@ cat > /tmp/bfree_f2_tcp.c <<EOF
 #define SYS_read 0
 #define SYS_socket 41
 #define SYS_connect 42
-#define SYS_sendto 44
-#define SYS_recvfrom 45
 #define SYS_exit 60
 #define AF_INET 2
 #define SOCK_STREAM 1
@@ -62,46 +61,89 @@ static int eq4(const char *a, const char *b)
 {
     return a[0]==b[0] && a[1]==b[1] && a[2]==b[2] && a[3]==b[3];
 }
+static int eqn(const char *a, const char *b, int n)
+{
+    int i;
+    for (i = 0; i < n; ++i)
+        if (a[i] != b[i]) return 0;
+    return 1;
+}
+static long write_all(long fd, const char *msg, long len)
+{
+    long wr = -115;
+    int spins;
+    for (spins = 0; spins < 400000; ++spins) {
+        wr = sys6(SYS_write, fd, (long)msg, len, 0, 0, 0);
+        if (wr == len) return wr;
+        if (wr != -115 && wr != -11) return wr;
+    }
+    return wr;
+}
+static long read_want(long fd, char *buf, long want)
+{
+    long n = 0, got = 0;
+    int spins;
+    for (spins = 0; spins < 400000 && got < want; ++spins) {
+        n = sys6(SYS_read, fd, (long)(buf + got), want - got, 0, 0, 0);
+        if (n == -115 || n == -11) continue;
+        if (n <= 0) return n;
+        got += n;
+    }
+    return got;
+}
 void _start(void)
 {
     long fd, n, wr, rc;
     struct sockaddr_in dst;
     char buf[64];
-    int spins;
+    static const char pay3[16] = {
+        'P','A','Y','3','-','A','B','C','D','E','F','G','H','I','J','K'
+    };
+    static const char pong16[16] = {
+        'P','O','N','G','1','6','-','R','E','P','L','Y','!','!','!','!'
+    };
 
     fd = sys6(SYS_socket, AF_INET, SOCK_STREAM, 0, 0, 0, 0);
     if (fd < 0) { ser("[f2tcp] FAIL socket\\n"); sys6(SYS_exit, 1, 0, 0, 0, 0, 0); }
     dst.sin_family = AF_INET;
     dst.sin_port = htons16(${PORT});
-    dst.sin_addr = htonl32(${GUEST_DST_HEX}U); /* ${GUEST_DST} slirp host/gateway */
-    /* Non-blocking connect: SYN sent, handshake completes across write/read syscalls. */
+    dst.sin_addr = htonl32(${GUEST_DST_HEX}U);
     rc = sys6(SYS_connect, fd, (long)&dst, 16, 0, 0, 0);
     if (rc != 0 && rc != -115) {
         ser("[f2tcp] FAIL connect\\n");
         for (;;) { __asm__ volatile("pause"); }
     }
     ser("[f2tcp] CONNECT_OK\\n");
-    wr = -115;
-    for (spins = 0; spins < 400000; ++spins) {
-        wr = sys6(SYS_write, fd, (long)"PING", 4, 0, 0, 0);
-        if (wr == 4) break;
-        if (wr != -115 && wr != -11) break;
+
+    wr = write_all(fd, "PING", 4);
+    if (wr != 4) { ser("[f2tcp] FAIL write1\\n"); sys6(SYS_exit, 3, 0, 0, 0, 0, 0); }
+    n = read_want(fd, buf, 4);
+    if (n < 4 || !eq4(buf, "PONG")) {
+        ser("[f2tcp] FAIL recv1\\n");
+        sys6(SYS_exit, 4, 0, 0, 0, 0, 0);
     }
-    if (wr != 4) {
-        ser("[f2tcp] FAIL write\\n");
-        sys6(SYS_exit, 3, 0, 0, 0, 0, 0);
+    ser("[f2tcp] RTT1_OK\\n");
+
+    wr = write_all(fd, "PNG2", 4);
+    if (wr != 4) { ser("[f2tcp] FAIL write2\\n"); sys6(SYS_exit, 5, 0, 0, 0, 0, 0); }
+    n = read_want(fd, buf, 4);
+    if (n < 4 || !eq4(buf, "PONG")) {
+        ser("[f2tcp] FAIL recv2\\n");
+        sys6(SYS_exit, 6, 0, 0, 0, 0, 0);
     }
-    for (spins = 0; spins < 200000; ++spins) {
-        n = sys6(SYS_read, fd, (long)buf, 64, 0, 0, 0);
-        if (n == -115 || n == -11) continue;
-        if (n >= 4 && eq4(buf, "PONG")) {
-            ser("[f2tcp] F2_E1000_TCP_OK\\n");
-            for (;;) { __asm__ volatile("pause"); }
-        }
-        if (n < 0) break;
+    ser("[f2tcp] RTT2_OK\\n");
+
+    /* Max3: larger payload on same socket (16B). */
+    wr = write_all(fd, pay3, 16);
+    if (wr != 16) { ser("[f2tcp] FAIL write3\\n"); sys6(SYS_exit, 7, 0, 0, 0, 0, 0); }
+    n = read_want(fd, buf, 16);
+    if (n < 16 || !eqn(buf, pong16, 16)) {
+        ser("[f2tcp] FAIL recv3\\n");
+        sys6(SYS_exit, 8, 0, 0, 0, 0, 0);
     }
-    ser("[f2tcp] FAIL recv\\n");
-    sys6(SYS_exit, 4, 0, 0, 0, 0, 0);
+    ser("[f2tcp] RTT3_OK\\n");
+    ser("[f2tcp] F2_E1000_TCP_OK\\n");
+    for (;;) { __asm__ volatile("pause"); }
 }
 EOF
 
@@ -121,9 +163,9 @@ cp -f iso_root/boot/grub/grub.cfg "$ISO_STAGE/boot/grub/grub.cfg"
 sed -i 's/^set default=.*/set default=0/' "$ISO_STAGE/boot/grub/grub.cfg"
 grub-mkrescue -o "$ISO" "$ISO_STAGE" -- -volid BFREE >/tmp/mkf2tcp.log 2>&1
 
-# Host echo on all interfaces: slirp maps guest 10.0.2.2:PORT → host :PORT.
+# Host echo: 2×4B then 16B payload.
 python3 - "$PORT" <<'PY' &
-import socket, sys, time
+import socket, sys
 port = int(sys.argv[1])
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -134,17 +176,24 @@ print("HOST_LISTEN", port, flush=True)
 try:
     c, addr = s.accept()
     print("HOST_ACCEPT", addr, flush=True)
-    data = b""
-    while len(data) < 4:
-        chunk = c.recv(64)
-        if not chunk:
+    c.settimeout(60)
+    for round_i, need, reply in (
+        (1, 4, b"PONG"),
+        (2, 4, b"PONG"),
+        (3, 16, b"PONG16-REPLY!!!!"),
+    ):
+        data = b""
+        while len(data) < need:
+            chunk = c.recv(64)
+            if not chunk:
+                break
+            data += chunk
+        if len(data) >= need:
+            c.sendall(reply)
+            print("HOST_ECHO_OK", round_i, data[:need], flush=True)
+        else:
+            print("HOST_BAD", round_i, data, flush=True)
             break
-        data += chunk
-    if data[:4] == b"PING":
-        c.sendall(b"PONG")
-        print("HOST_ECHO_OK", flush=True)
-    else:
-        print("HOST_BAD", data, flush=True)
     c.close()
 except Exception as e:
     print("HOST_ECHO_FAIL", e, flush=True)
@@ -168,25 +217,21 @@ if command -v tcpdump >/dev/null 2>&1 && [ -f /tmp/bfree-f2tcp.pcap ]; then
   tcpdump -nn -r /tmp/bfree-f2tcp.pcap 2>/dev/null | head -40 || true
 fi
 
-echo '=== F2 e1000 TCP ==='
+echo '=== F2 e1000 TCP Max3 ==='
 fail=0
-if grep -aq 'CONNECT_OK' "$QLOG"; then
-  echo 'PASS CONNECT_OK'
-else
-  echo 'FAIL CONNECT_OK'
-  fail=1
-fi
-if grep -aq 'F2_E1000_TCP_OK' "$QLOG"; then
-  echo 'PASS F2_E1000_TCP_OK'
-else
-  echo 'FAIL F2_E1000_TCP_OK'
-  fail=1
-fi
+for tag in CONNECT_OK RTT1_OK RTT2_OK RTT3_OK F2_E1000_TCP_OK; do
+  if grep -aq "$tag" "$QLOG"; then
+    echo "PASS $tag"
+  else
+    echo "FAIL $tag"
+    fail=1
+  fi
+done
 if grep -aqiE 'Page Fault|PANIC' "$QLOG"; then
   echo 'FAIL panic'
   fail=1
 else
   echo 'PASS no_panic'
 fi
-grep -aE '\[f2tcp\]|\[TCP\]|\[NET\]|F2_|PANIC|Page Fault' "$QLOG" | tail -40
+grep -aE '\[f2tcp\]|\[TCP\]|\[NET\]|F2_|PANIC|Page Fault' "$QLOG" | tail -50
 exit "$fail"

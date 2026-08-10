@@ -3518,6 +3518,86 @@ static int bfree_guest_shared_mmap_track(int vfile_idx, uint64_t va, size_t map_
     return -1; /* table full — mapping still usable as PRIVATE-like copy */
 }
 
+/* Slice 2: find a live MAP_SHARED track overlapping the same vfile file range. */
+static bfree_guest_shared_mmap_t *bfree_guest_shared_mmap_find_overlap(int vfile_idx,
+                                                                      size_t file_off,
+                                                                      size_t map_len)
+{
+    int i;
+    size_t new_hi;
+
+    if (vfile_idx < 0 || map_len == 0) {
+        return 0;
+    }
+    new_hi = file_off + map_len;
+    for (i = 0; i < BFREE_GUEST_SHARED_MMAP_SLOTS; ++i) {
+        bfree_guest_shared_mmap_t *sm = &g_guest_shared_mmaps[i];
+        size_t sm_hi;
+
+        if (!sm->used || sm->vfile_idx != vfile_idx) {
+            continue;
+        }
+        sm_hi = sm->file_off + sm->map_len;
+        if (sm_hi > file_off && sm->file_off < new_hi) {
+            return sm;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Remap new_va pages onto the same physical frames as donor for overlapping
+ * file offsets. Fresh anon pages from the preceding mmap are orphaned (munmap
+ * never frees guest heap phys today) — acceptable for minimal live SHARED.
+ * Returns 0 if at least one page was aliased, -1 otherwise.
+ */
+static int bfree_guest_shared_mmap_alias_pages(uint64_t new_va, size_t new_file_off,
+                                              size_t map_len,
+                                              const bfree_guest_shared_mmap_t *donor)
+{
+    page_table_t *pt;
+    size_t off;
+    int aliased = 0;
+
+    if (!donor || map_len == 0 || !knl_current_task ||
+        !knl_current_task->page_table_base) {
+        return -1;
+    }
+    pt = (page_table_t *)knl_current_task->page_table_base;
+    new_va &= ~(PAGE_SIZE - 1ULL);
+    map_len = (map_len + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+
+    for (off = 0; off < map_len; off += (size_t)PAGE_SIZE) {
+        size_t file_byte = new_file_off + off;
+        uint64_t src_va;
+        uint64_t dst_va;
+        uint64_t phys = 0;
+
+        if (file_byte < donor->file_off) {
+            continue;
+        }
+        if (file_byte >= donor->file_off + donor->map_len) {
+            continue;
+        }
+        src_va = donor->va + (uint64_t)(file_byte - donor->file_off);
+        src_va &= ~(PAGE_SIZE - 1ULL);
+        dst_va = new_va + (uint64_t)off;
+        if (vmm_user_virt_to_phys(pt, src_va, &phys) != 0) {
+            continue;
+        }
+        (void)vmm_unmap_page(pt, dst_va);
+        if (vmm_map_page(pt, dst_va, phys, 0x007ULL) != 0) {
+            return -1;
+        }
+        aliased = 1;
+    }
+    if (aliased) {
+        __asm__ volatile("mov %0, %%cr3" :: "r"(pt) : "memory");
+        return 0;
+    }
+    return -1;
+}
+
 #define BFREE_GUEST_ALIAS_SLOTS 32
 typedef struct {
     int used;
@@ -3827,6 +3907,21 @@ static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, 
     if (mapped < 0) {
         return mapped;
     }
+    vidx = (int)(vf - g_guest_vfiles);
+    /* Slice 2: second MAP_SHARED of same vfile range aliases first's phys pages
+     * so in-process peers see writes without msync. */
+    if (shared && length > 0) {
+        bfree_guest_shared_mmap_t *donor =
+            bfree_guest_shared_mmap_find_overlap(vidx, off, (size_t)length);
+
+        if (donor &&
+            bfree_guest_shared_mmap_alias_pages((uint64_t)(uintptr_t)mapped, off,
+                                               (size_t)length, donor) == 0) {
+            (void)bfree_guest_shared_mmap_track(vidx, (uint64_t)(uintptr_t)mapped,
+                                                (size_t)length, off);
+            return mapped;
+        }
+    }
     copy_n = vf->len - off;
     if (length > 0 && (size_t)length < copy_n) {
         copy_n = (size_t)length;
@@ -3836,7 +3931,6 @@ static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, 
         dst[i] = vf->data[off + i];
     }
     if (shared && length > 0) {
-        vidx = (int)(vf - g_guest_vfiles);
         (void)bfree_guest_shared_mmap_track(vidx, (uint64_t)(uintptr_t)mapped,
                                             (size_t)length, off);
     }

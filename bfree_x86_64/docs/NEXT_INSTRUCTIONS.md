@@ -52,15 +52,18 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-08-10（**① Desktop ENOSYS 再計測＋ゲート化 / ② 製品スモーク**）
-- **① Desktop ENOSYS:** `tools/_desktop_enosys_smoke.sh` → `DESKTOP_ENOSYS_RESULT: PASS unique=0 transfer=1 qml_ready=1`（埋める nr なし；証拠 `out/desktop_enosys/`）
-- **① ゲート:** 同上スクリプトが unique≠0 または transfer なしで exit 1；`guest_desktop_smoke.sh` もシリアルに ENOSYS 集計を追加し unique≠0 なら FAIL
-- **② LTP curated:** 維持緑 `PASS n=238 fail=0`（前回 S+B）
-- **据え置き / Next slices:**
-  - 真 CoW SHARED: 次スライス＝同一物理ページ map→write COW break 最小プローブ
-  - LAN TCP e1000: 次スライス＝tcp_min 1シナリオ緑拡大
-  - 本番 QML post-activate PF: ABI外・本線ログで PF1件収束
-- **Next:** QML 本線 or CoW slice
+- **Updated:** 2026-08-10（**Depth max follow-on 1→2→3 完了**）
+- **Max1（QML post-activate）:** 本線 `_tmp_qml_mainline_14_smoke.sh` → `RESULT=GREEN qml-mainline-1-4-max1` / **PF=0**
+  - Terminal は create 時から visible+onscreen；イベントループ直前に **ItemHasContents flag dance** 緑
+  - **据え置き:** post-activate `setVisible` / `setX` / `setColor` / `setParentItem` / host-wall update / dense `UpdateRequest` はいずれも **RIP=0 PF**（未解禁）
+- **Max2（COW break）:** `mmap05_cow_break`（fork 後 child write → parent は `'A'` のまま）→ **`LTP_CURATED_RESULT: PASS n=240 fail=0`**（AS-copy 隔離；lazy PTE COW は未）
+- **Max3（e1000 TCP）:** `_f2_e1000_tcp_smoke.sh` **3RTT**（4B+4B+16B）→ CONNECT/RTT1–3/`F2_E1000_TCP_OK` 緑
+- **① Desktop ENOSYS:** 維持（unique=0；嘘埋めなし）
+- **据え置き（さらに深い本番）:**
+  - QML post-activate mutator/UR の RIP=0 根因
+  - lazy MAP_PRIVATE COW（共有 PTE→fault copy）
+  - e1000 再送・窓・複数接続
+- **Next:** スマホ指示待ち
 
 ---
 ---

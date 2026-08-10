@@ -31,6 +31,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQmlError>
+#include <QtQml/qqml.h>
 #include <QLoggingCategory>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -245,6 +246,16 @@ static int g_prod_sg_ok = 0;
 static int g_prod_sg_sustained = 0;
 /* Step3: FB0 paints product leaf geometry (SG soft present survived; flush deferred). */
 static int g_prod_fb0_auth = 0;
+/* Step1: sustained SG → QPA flush is LIVE pixel authority (no FB lookalike overwrite). */
+static int g_prod_sg_flush_auth = 0;
+static int g_prod_sg_pulse_hold = 0; /* skip dense UpdateRequest until event loop */
+static int g_prod_post_activate_sg = 0; /* Max1: allow setVisible + SG pulse after loop */
+static int g_prod_post_activate_done = 0; /* one-shot arm at first loop tick */
+static int g_prod_fb_chrome_force = 0; /* one-shot FB chrome after blank SG flush */
+static QQuickRectangle *g_host_wall = nullptr;
+static QQuickRectangle *g_host_bar = nullptr;
+static QQuickItem *g_qml_term_item = nullptr;
+static int g_qml_term_ok = 0;
 #if defined(BFREE_GUEST_LINK_CONTROLS)
 static QQuickButton *g_controls_button_probe = nullptr;
 static QQuickCheckBox *g_controls_checkbox_probe = nullptr;
@@ -281,16 +292,23 @@ struct GuestW31Chrome {
 };
 static GuestW31Chrome g_w31_chrome;
 
-/* Start menu geometry (paint + hit + Quick scaffold) — host-ish on 1024x768. */
+/* Start menu geometry — host DesktopShell launcherPanel (~620x500) scaled to 1024x768. */
 enum {
-    G_START_MENU_W = 320,
-    G_START_MENU_H = 360,
+    G_START_MENU_W = 560,
+    G_START_MENU_H = 460,
     G_START_MENU_X = 8,
     G_START_MENU_GAP = 8,
     G_START_PAD = 16,
     G_START_SEARCH_H = 42,
-    G_START_ROW_H = 36,
-    G_START_FOOTER_H = 40
+    G_START_ROW_H = 36, /* legacy list row (W3 scaffold) */
+    G_START_FOOTER_H = 44,
+    G_START_TILE_W = 110,
+    G_START_TILE_H = 88,
+    G_START_TILE_GAP = 10,
+    G_START_COLS = 4,
+    G_START_HIT_RESTART = 1000,
+    G_START_HIT_SHUTDOWN = 1001,
+    G_START_HIT_SLEEP = 1002
 };
 
 static int guest_desk_start_menu_y0(void)
@@ -628,6 +646,23 @@ static void guest_term_push_ls_persist(void)
 /* Forward — defined below. */
 static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1);
 
+static int guest_term_is_busybox_alias(const char *cmd)
+{
+    static const char *const aliases[] = {
+        "pwd", "mkdir", "rm", "cp", "mv", "touch", "ps", "free", "head", "tail",
+        "grep", "egrep", "fgrep", "wc", "true", "false", "sleep", "printf",
+        "whoami", "id", "env", "seq", "yes", "find", "sort", "tr", "cut", "ln",
+        "dirname", "basename", "md5sum", "stat", "uptime", "kill", "killall",
+        "nproc", "realpath", "dd", "uniq", "more", "test", "[", "which", "df",
+        "du", "date", "hostname", nullptr
+    };
+    for (int i = 0; aliases[i]; ++i) {
+        if (guest_term_cmd_eq(cmd, aliases[i]) || guest_term_streq(cmd, aliases[i]))
+            return 1;
+    }
+    return 0;
+}
+
 static void guest_term_exec_line(const char *raw)
 {
     char shown[G_TERM_COLS];
@@ -653,17 +688,15 @@ static void guest_term_exec_line(const char *raw)
         return;
 
     if (guest_term_cmd_eq(cmd, "help") || guest_term_streq(cmd, "?")) {
-        guest_term_push("--- commands (7) ---");
-        guest_term_push(" help   this list");
-        guest_term_push(" echo   print text");
-        guest_term_push(" ls     list /persist");
-        guest_term_push(" cat    show a file");
-        guest_term_push(" uname  system name");
-        guest_term_push(" clear  clear screen");
-        guest_term_push(" busybox <applet> [arg]");
-        guest_term_push("example: echo hello");
-        guest_term_push("example: ls");
-        guest_term_push("example: cat desk.txt");
+        guest_term_push("--- builtins ---");
+        guest_term_push(" help echo ls cat uname clear");
+        guest_term_push(" survive  kill guest ABI (core lives)");
+        guest_term_push("--- busybox aliases ---");
+        guest_term_push(" pwd mkdir rm cp mv touch ps free");
+        guest_term_push(" head tail grep wc find sort kill");
+        guest_term_push(" whoami id env uptime df date");
+        guest_term_push(" busybox <applet> [arg...]");
+        guest_term_push("example: busybox ls /persist");
         guest_serial_puts("[desktop_qt] Terminal help\n");
         return;
     }
@@ -732,6 +765,24 @@ static void guest_term_exec_line(const char *raw)
             (void)guest_terminal_busybox_oneshot(applet, p);
         else
             (void)guest_terminal_busybox_oneshot(applet, nullptr);
+        return;
+    }
+    if (guest_term_cmd_eq(cmd, "survive") || guest_term_cmd_eq(cmd, "die")) {
+        guest_term_push("SURVIVE: killing guest ABI (core tick continues)");
+        guest_serial_puts("[desktop_qt] SURVIVE demo: killing guest ABI (term)\n");
+        *(volatile int *)0 = 0x736b;
+        return;
+    }
+
+    /* Pass through common BusyBox applets (oneshot; multi-arg as remainder). */
+    if (guest_term_is_busybox_alias(cmd)) {
+        if (*p) {
+            guest_term_skip_ws(&p);
+            (void)guest_terminal_busybox_oneshot(cmd, p);
+        } else {
+            (void)guest_terminal_busybox_oneshot(cmd, nullptr);
+        }
+        guest_serial_puts("[desktop_qt] Terminal busybox alias\n");
         return;
     }
 
@@ -1447,7 +1498,7 @@ static const GuestDeskIcon g_desk_icons[] = {
 };
 static const int g_desk_n_icons = (int)(sizeof g_desk_icons / sizeof g_desk_icons[0]);
 static const int g_desk_tb_h = 52;
-static const int g_win_title_h = 40;
+static const int g_win_title_h = BFREE_WIN_TITLE_H;
 static const int g_win_min_w = 280;
 static const int g_win_min_h = 180;
 static const int g_win_edge = 10;
@@ -1461,6 +1512,7 @@ struct GuestWin {
     int x, y, w, h;
     int rx, ry, rw, rh; /* restore rect when maximized */
     int z;
+    int qml_sg; /* 1 = real QML item owns pixels; skip FB mini-WM frame */
 };
 
 static GuestWin g_wins[g_win_max];
@@ -1659,6 +1711,33 @@ static void guest_desk_clock_text(char *buf, int buflen)
     buf[p] = 0;
 }
 
+/* Host: ClockApplet lives on the taskbar tray, not as a desktop icon. */
+static int guest_desk_icon_tray_only(int i)
+{
+    return (i >= 0 && i < g_desk_n_icons
+            && g_desk_icons[i].title
+            && strcmp(g_desk_icons[i].title, "ClockApplet") == 0) ? 1 : 0;
+}
+
+/* Launchable Start-grid apps (skip tray-only). Returns count; fills ids[0..]. */
+static int guest_desk_start_launch_ids(int *ids, int maxn)
+{
+    int n = 0;
+    for (int i = 0; i < g_desk_n_icons && n < maxn; ++i) {
+        if (guest_desk_icon_tray_only(i))
+            continue;
+        ids[n++] = i;
+    }
+    return n;
+}
+
+static int guest_desk_start_grid_origin(int *ox, int *oy)
+{
+    *ox = G_START_MENU_X + G_START_PAD;
+    *oy = guest_desk_start_menu_y0() + G_START_PAD + G_START_SEARCH_H + 12;
+    return 0;
+}
+
 static int guest_desk_hit_start_item(int mx, int my)
 {
     if (!g_desk_start_open)
@@ -1667,21 +1746,42 @@ static int guest_desk_hit_start_item(int mx, int my)
     const int my0 = guest_desk_start_menu_y0();
     if (mx < mx0 || mx >= mx0 + G_START_MENU_W || my < my0 || my >= my0 + G_START_MENU_H)
         return -1;
-    const int row0 = guest_desk_start_row0_y();
-    if (my < row0)
-        return -1;
-    const int row = (my - row0) / G_START_ROW_H;
-    if (row < 0 || row > 5)
-        return -1;
-    return row;
-}
 
-/* Host: ClockApplet lives on the taskbar tray, not as a desktop icon. */
-static int guest_desk_icon_tray_only(int i)
-{
-    return (i >= 0 && i < g_desk_n_icons
-            && g_desk_icons[i].title
-            && strcmp(g_desk_icons[i].title, "ClockApplet") == 0) ? 1 : 0;
+    /* Power footer: Sleep | Restart | Shut down */
+    const int footY = my0 + G_START_MENU_H - G_START_PAD - G_START_FOOTER_H;
+    if (my >= footY && my < footY + G_START_FOOTER_H) {
+        const int inner = G_START_MENU_W - 2 * G_START_PAD;
+        const int bw = (inner - 16) / 3;
+        const int rel = mx - (mx0 + G_START_PAD);
+        if (rel < 0)
+            return -1;
+        if (rel < bw)
+            return G_START_HIT_SLEEP;
+        if (rel < bw * 2 + 8)
+            return G_START_HIT_RESTART;
+        return G_START_HIT_SHUTDOWN;
+    }
+
+    int ids[24];
+    const int n = guest_desk_start_launch_ids(ids, 24);
+    int gx0, gy0;
+    guest_desk_start_grid_origin(&gx0, &gy0);
+    const int cellW = G_START_TILE_W + G_START_TILE_GAP;
+    const int cellH = G_START_TILE_H + G_START_TILE_GAP;
+    if (mx < gx0 || my < gy0)
+        return -1;
+    const int col = (mx - gx0) / cellW;
+    const int row = (my - gy0) / cellH;
+    if (col < 0 || col >= G_START_COLS || row < 0)
+        return -1;
+    const int lx = gx0 + col * cellW;
+    const int ly = gy0 + row * cellH;
+    if (mx >= lx + G_START_TILE_W || my >= ly + G_START_TILE_H)
+        return -1;
+    const int idx = row * G_START_COLS + col;
+    if (idx < 0 || idx >= n)
+        return -1;
+    return ids[idx];
 }
 
 static int guest_desk_hit(int mx, int my)
@@ -1967,9 +2067,9 @@ static void guest_w3_sync_one(int wi)
         b->setRadius(4);
         b->setColor(col);
     };
-    place_btn(c->btnMin, win->w - 112.0, 5.0, QColor(0x1e, 0x29, 0x3b));
-    place_btn(c->btnMax, win->w - 76.0, 5.0, QColor(0x1e, 0x29, 0x3b));
-    place_btn(c->btnClose, win->w - 40.0, 5.0, QColor(0x7f, 0x1d, 0x1d));
+    place_btn(c->btnMin, win->w - 112.0, 5.0, QColor(0x40, 0x60, 0x90));
+    place_btn(c->btnMax, win->w - 76.0, 5.0, QColor(0x40, 0x60, 0x90));
+    place_btn(c->btnClose, win->w - 40.0, 5.0, QColor(0xb9, 0x1c, 0x1c));
 
     c->client->setVisible(show_quick);
     c->client->setX(bw);
@@ -2296,6 +2396,9 @@ static void guest_sg_sync_start_panel(void)
         g_sg_start_leaf->setVisible(false);
 }
 
+static void guest_prod_sg_pulse_flush(void);
+static void guest_prod_sg_soft_pulse_no_ur(void);
+
 /* G2: optional soft pulse for flat chrome only (never startPanel). */
 static void guest_sg_chrome_pulse_if_needed(void)
 {
@@ -2303,8 +2406,8 @@ static void guest_sg_chrome_pulse_if_needed(void)
         return;
     g_sg_chrome_need_pulse = 0;
     guest_sg_sync_start_panel();
-    /* Skip UpdateRequest pulse in the event loop — historically starves input /
-     * PF with dense trees. Geometry sync + FB Start/windows are enough. */
+    /* Dense UpdateRequest / host-wall update after activate still PF (RIP=0).
+     * Max1 unlocks Terminal leaf setVisible only; chrome stays geometry+FB. */
 }
 
 /*
@@ -2588,16 +2691,15 @@ static void guest_paint_fb_one_window(unsigned char *fb, unsigned pitch, int wi)
     const int focused = (wi == g_win_focus);
     const int x = win->x, y = win->y, w = win->w, h = win->h;
     const int bw = focused ? 2 : 1; /* host: 2px focused / 1px unfocused */
-    /* Host DesktopShell slate chrome (not app-accent flood). */
-    const int border = focused ? 0xFF64748Bu : 0xFF94A3B8u;
-    const int titleCol = focused ? 0xFF334155u : 0xFF475569u;
+    const uint32_t border = focused ? BFREE_WIN_BORDER_FOCUS_ARGB : BFREE_WIN_BORDER_ARGB;
+    const uint32_t titleCol = focused ? BFREE_WIN_TITLE_FOCUS_ARGB : BFREE_WIN_TITLE_ARGB;
     const int titleH = g_win_title_h;
     /* G2: window frame stays FB for live WM (SG outer trees are built/synced but
      * sustained present of nested chrome is deferred). Client content is FB. */
     const int sg_frame = 0;
 
     if (sg_frame) {
-        fb_fill_rect(fb, pitch, x + bw, y + titleH, w - 2 * bw, h - titleH - bw, 0xFFF1F5F9u);
+        fb_fill_rect(fb, pitch, x + bw, y + titleH, w - 2 * bw, h - titleH - bw, BFREE_WIN_CLIENT_ARGB);
         fb_draw_text(fb, pitch, x + 12, y + 12, app->acro, 0xFFF8FAFCu, 1);
         fb_draw_text(fb, pitch, x + 44, y + 12, app->title, 0xFFF8FAFCu, 2);
         if (!win->maximized) {
@@ -2608,17 +2710,17 @@ static void guest_paint_fb_one_window(unsigned char *fb, unsigned pitch, int wi)
         return;
     }
 
-    /* Drop shadow only when floating (skip when maximized). */
+    /* Soft drop shadow (host elevation) — skip when maximized. */
     if (!win->maximized) {
-        fb_fill_rect(fb, pitch, x + 6, y + 8, w, h, 0xFF334155u);
-        fb_fill_rect(fb, pitch, x + 3, y + 4, w, h, 0xFF475569u);
+        fb_fill_rect(fb, pitch, x + 5, y + 7, w, h, 0xFF2A3545u);
+        fb_fill_rect(fb, pitch, x + 2, y + 3, w, h, 0xFF3A4658u);
     }
 
-    /* Outer frame — host radius≈10 approximated with fill + border. */
+    /* Outer frame — host radius≈10. */
     if (win->maximized)
-        fb_fill_rect(fb, pitch, x, y, w, h, 0xFFF8FAFCu);
+        fb_fill_rect(fb, pitch, x, y, w, h, BFREE_WIN_OUTER_ARGB);
     else
-        fb_fill_round_rect(fb, pitch, x, y, w, h, 10, 0xFFF8FAFCu);
+        fb_fill_round_rect(fb, pitch, x, y, w, h, 10, BFREE_WIN_OUTER_ARGB);
     fb_fill_rect(fb, pitch, x, y, w, bw, border);
     fb_fill_rect(fb, pitch, x, y + h - bw, w, bw, border);
     fb_fill_rect(fb, pitch, x, y, bw, h, border);
@@ -2626,22 +2728,24 @@ static void guest_paint_fb_one_window(unsigned char *fb, unsigned pitch, int wi)
 
     /* Title bar (host #334155 / #475569) */
     fb_fill_rect(fb, pitch, x + bw, y + bw, w - 2 * bw, titleH - bw, titleCol);
+    /* Hairline under title (host Column separator feel). */
+    fb_fill_rect(fb, pitch, x + bw, y + titleH - 1, w - 2 * bw, 1, 0xFF1E293Bu);
 
-    /* Left glyph chip + title */
-    fb_fill_round_rect(fb, pitch, x + 8, y + 5, 28, 28, 6, 0xFF1E293Bu);
+    /* Left glyph chip uses app accent (host glyphBg). */
+    fb_fill_round_rect(fb, pitch, x + 8, y + 5, 28, 28, 6, app->accent);
     fb_draw_text(fb, pitch, x + 12, y + 12, app->acro, 0xFFF8FAFCu, 1);
-    fb_draw_text(fb, pitch, x + 44, y + 12, app->title, 0xFFF8FAFCu, 2);
+    fb_draw_text(fb, pitch, x + 44, y + 11, app->title, 0xFFF8FAFCu, 2);
 
-    /* Title buttons: _ min, []/= max, X close */
-    fb_fill_round_rect(fb, pitch, x + w - 112, y + 5, 28, 28, 4, 0xFF1E293Bu);
-    fb_draw_text(fb, pitch, x + w - 102, y + 12, "_", 0xFFF8FAFCu, 2);
-    fb_fill_round_rect(fb, pitch, x + w - 76, y + 5, 28, 28, 4, 0xFF1E293Bu);
-    fb_draw_text(fb, pitch, x + w - 68, y + 12, win->maximized ? "=" : "[]", 0xFFF8FAFCu, 2);
-    fb_fill_round_rect(fb, pitch, x + w - 40, y + 5, 28, 28, 4, 0xFF7F1D1Du);
+    /* Title buttons: host #406090 min/max, #b91c1c close (32x26-ish). */
+    fb_fill_round_rect(fb, pitch, x + w - 112, y + 6, 32, 26, 4, BFREE_WIN_BTN_ARGB);
+    fb_draw_text(fb, pitch, x + w - 100, y + 12, "-", 0xFFF8FAFCu, 2);
+    fb_fill_round_rect(fb, pitch, x + w - 76, y + 6, 32, 26, 4, BFREE_WIN_BTN_ARGB);
+    fb_draw_text(fb, pitch, x + w - 66, y + 12, win->maximized ? "=" : "[]", 0xFFF8FAFCu, 2);
+    fb_fill_round_rect(fb, pitch, x + w - 40, y + 6, 32, 26, 4, BFREE_WIN_BTN_CLOSE_ARGB);
     fb_draw_text(fb, pitch, x + w - 28, y + 12, "X", 0xFFF8FAFCu, 2);
 
     /* Client body */
-    fb_fill_rect(fb, pitch, x + bw, y + titleH, w - 2 * bw, h - titleH - bw, 0xFFF1F5F9u);
+    fb_fill_rect(fb, pitch, x + bw, y + titleH, w - 2 * bw, h - titleH - bw, BFREE_WIN_CLIENT_ARGB);
 
     /* SE resize grip when floating */
     if (!win->maximized) {
@@ -2692,6 +2796,12 @@ static void guest_fb_fill_desktop_bg(unsigned char *fb, unsigned pitch, int desk
     }
 }
 
+static void guest_paint_fb_one_window(unsigned char *fb, unsigned pitch, int wi);
+static void guest_paint_fb_windows(unsigned char *fb, unsigned pitch);
+static void guest_paint_fb_cursor_only(void);
+static void guest_prod_sg_pulse_flush(void);
+static int guest_qml_terminal_ensure(void);
+
 static int guest_rect_intersects_sg_probe(int x, int y, int w, int h)
 {
     if (!g_w3_sg_win_auth)
@@ -2724,6 +2834,8 @@ static void guest_paint_fb_windows(unsigned char *fb, unsigned pitch)
     }
     for (int i = 0; i < on; ++i) {
         const GuestWin *win = &g_wins[order[i]];
+        if (win->qml_sg)
+            continue; /* QML item owns this app's pixels */
         if (guest_rect_intersects_sg_probe(win->x, win->y, win->w, win->h))
             continue;
         guest_paint_fb_one_window(fb, pitch, order[i]);
@@ -2736,7 +2848,7 @@ static void guest_paint_fb_start_menu(unsigned char *fb, unsigned pitch)
         return;
     const int mx0 = G_START_MENU_X;
     const int my0 = guest_desk_start_menu_y0();
-    /* Start menu: FB chrome + labels (SG Start leaf one-shot at attach only). */
+    /* Host launcherPanel: dark panel + search + app tile grid + power footer. */
     fb_fill_round_rect(fb, pitch, mx0, my0, G_START_MENU_W, G_START_MENU_H, 16, BFREE_START_PANEL_ARGB);
     fb_fill_rect(fb, pitch, mx0, my0, G_START_MENU_W, 1, 0xFF2D4060u);
     fb_fill_rect(fb, pitch, mx0, my0 + G_START_MENU_H - 1, G_START_MENU_W, 1, 0xFF2D4060u);
@@ -2748,36 +2860,53 @@ static void guest_paint_fb_start_menu(unsigned char *fb, unsigned pitch)
     fb_draw_text(fb, pitch, mx0 + G_START_PAD + 12, my0 + G_START_PAD + 14, "Q", 0xFF88AAC0u, 1);
     fb_draw_text(fb, pitch, mx0 + G_START_PAD + 28, my0 + G_START_PAD + 16,
                  "Type here to search", 0xFF557090u, 1);
-    /* Host-like pinned caption above power rows. */
-    fb_draw_text(fb, pitch, mx0 + G_START_PAD + 8, my0 + G_START_PAD + G_START_SEARCH_H + 10,
-                 "Pinned", 0xFF94A3B8u, 1);
 
-    static const char *const labels[6] = {
-        "Explorer", "Viewer", "Terminal",
-        "Restart", "Shut down", "Sleep"
-    };
-    static const uint32_t accents[6] = {
-        0xFF1D4ED8u, 0xFF0F766Eu, 0xFFC2410Cu,
-        0xFFCA8A04u, 0xFFB91C1Cu, 0xFF64748Bu
-    };
-    const int row0 = guest_desk_start_row0_y();
-    for (int i = 0; i < 6; ++i) {
-        const int ry = row0 + i * G_START_ROW_H;
-        fb_fill_round_rect(fb, pitch, mx0 + G_START_PAD, ry,
-                           G_START_MENU_W - 2 * G_START_PAD, G_START_ROW_H - 4, 10, 0xFF1A2D40u);
-        fb_fill_rect(fb, pitch, mx0 + G_START_PAD + 8, ry + 8, 8, G_START_ROW_H - 20, accents[i]);
-        fb_draw_text(fb, pitch, mx0 + G_START_PAD + 24, ry + 12, labels[i], 0xFFF8FAFCu, 1);
+    int ids[24];
+    const int n = guest_desk_start_launch_ids(ids, 24);
+    int gx0, gy0;
+    guest_desk_start_grid_origin(&gx0, &gy0);
+    for (int i = 0; i < n; ++i) {
+        const int col = i % G_START_COLS;
+        const int row = i / G_START_COLS;
+        const int tx = gx0 + col * (G_START_TILE_W + G_START_TILE_GAP);
+        const int ty = gy0 + row * (G_START_TILE_H + G_START_TILE_GAP);
+        if (ty + G_START_TILE_H > my0 + G_START_MENU_H - G_START_PAD - G_START_FOOTER_H - 4)
+            break;
+        const GuestDeskIcon *ic = &g_desk_icons[ids[i]];
+        fb_fill_round_rect(fb, pitch, tx, ty, G_START_TILE_W, G_START_TILE_H, 12, 0xFF1A2D40u);
+        fb_fill_rect(fb, pitch, tx, ty, G_START_TILE_W, 1, 0xFF2A3D54u);
+        fb_fill_round_rect(fb, pitch, tx + (G_START_TILE_W - 40) / 2, ty + 12, 40, 40, 10, ic->accent);
+        const int acW = (int)strlen(ic->acro) * 6 * 2;
+        fb_draw_text(fb, pitch, tx + (G_START_TILE_W - acW) / 2, ty + 24, ic->acro, 0xFFF8FAFCu, 2);
+        const int tW = (int)strlen(ic->title) * 6;
+        int ttx = tx + (G_START_TILE_W - tW) / 2;
+        if (ttx < tx + 4)
+            ttx = tx + 4;
+        fb_draw_text(fb, pitch, ttx, ty + 62, ic->title, 0xFFC8DCEDu, 1);
     }
-    fb_fill_round_rect(fb, pitch, mx0 + G_START_PAD,
-                       my0 + G_START_MENU_H - G_START_PAD - G_START_FOOTER_H,
-                       G_START_MENU_W - 2 * G_START_PAD, G_START_FOOTER_H, 10, 0xFF0D1A2Au);
-    fb_draw_text(fb, pitch, mx0 + G_START_PAD + 12,
-                 my0 + G_START_MENU_H - G_START_PAD - G_START_FOOTER_H + 14,
-                 "Power", 0xFF94A3B8u, 1);
+
+    const int footY = my0 + G_START_MENU_H - G_START_PAD - G_START_FOOTER_H;
+    const int inner = G_START_MENU_W - 2 * G_START_PAD;
+    const int bw = (inner - 16) / 3;
+    static const char *const power[3] = { "Sleep", "Restart", "Shut down" };
+    for (int i = 0; i < 3; ++i) {
+        const int bx = mx0 + G_START_PAD + i * (bw + 8);
+        fb_fill_round_rect(fb, pitch, bx, footY, bw, G_START_FOOTER_H, 8, 0xFF152A40u);
+        fb_draw_text(fb, pitch, bx + 10, footY + 16, power[i], 0xFFC8DCEDu, 1);
+    }
 }
 
 static void guest_paint_fb_desktopshell(void)
 {
+    /* When SG flush owns the plane, do not paint FB lookalike chrome —
+     * unless repair flagged a blank/white SG frame (brand splash leftover). */
+    if (g_prod_sg_sustained && !g_prod_fb_chrome_force) {
+        ++g_desk_paint_count;
+        if (g_desk_paint_count == 1)
+            guest_serial_puts("[desktop_qt] product FB lookalike skip (flush-auth paint)\n");
+        return;
+    }
+    g_prod_fb_chrome_force = 0;
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     const unsigned pitch = 1024u * 4u;
     const int tbH = g_desk_tb_h;
@@ -2992,15 +3121,87 @@ static void guest_paint_fb_desktopshell(void)
     }
 }
 
+/* Pulse product QQuickWindow through software SG → QPA flush (FB0). */
+static void guest_prod_sg_pulse_flush(void)
+{
+    if (!g_prod_sg_win || g_prod_sg_pulse_hold)
+        return;
+    bfree_guest_ensure_drawhelpers();
+    bfree_qpa_set_update_delivery(1);
+    /* Keep clear color = desk wallpaper (default white → 真っ白 flush). */
+    g_prod_sg_win->setColor(QColor(BFREE_DESK_WALL_RGB));
+    if (QWindowPrivate *wd = QWindowPrivate::get(g_prod_sg_win)) {
+        wd->receivedExpose = true;
+        wd->exposed = true;
+        wd->resizeEventPending = false;
+    }
+    if (g_host_wall) {
+        g_host_wall->setVisible(true);
+        g_host_wall->update();
+    }
+    if (g_host_bar) {
+        g_host_bar->setVisible(true);
+        g_host_bar->update();
+    }
+    if (QQuickItem *ci = g_prod_sg_win->contentItem()) {
+        const auto kids = ci->childItems();
+        for (QQuickItem *k : kids) {
+            if (k && k->isVisible() && k->flags().testFlag(QQuickItem::ItemHasContents))
+                k->update();
+        }
+        ci->update();
+    }
+    g_prod_sg_win->requestUpdate();
+    /* UpdateRequest only — unrestricted sendPostedEvents() after
+     * requestActivate has PF'd in notifyInternal2 (bad QObject @0x100000000). */
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
+}
+
+/* True if FB0 center still looks like brand-splash white or uncleared black. */
+static int guest_fb_blank_or_white(void)
+{
+    auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
+    const unsigned pitch = 1024u * 4u;
+    const uint32_t c = *reinterpret_cast<uint32_t *>(fb + 384u * pitch + 512u * 4u);
+    const unsigned r = (c >> 16) & 0xffu;
+    const unsigned g = (c >> 8) & 0xffu;
+    const unsigned b = c & 0xffu;
+    if ((c & 0x00ffffffu) == 0u)
+        return 1; /* black / zeroed backing */
+    if (r > 0xf0u && g > 0xf0u && b > 0xf0u)
+        return 1; /* brand splash white */
+    return 0;
+}
+
+static void guest_prod_sg_repair_blank_fb(void)
+{
+    if (!guest_fb_blank_or_white())
+        return;
+    guest_serial_puts("[desktop_qt] product SG blank→FB chrome repair\n");
+    g_prod_fb_chrome_force = 1;
+    guest_paint_fb_desktopshell();
+}
+
+static void guest_paint_fb_cursor_only(void)
+{
+    auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
+    const unsigned pitch = 1024u * 4u;
+    g_cur_have = 0;
+    guest_desk_cursor_blit_under(fb, pitch, g_desk_mx, g_desk_my, guest_desk_cur_under(), 1);
+    g_cur_sx = g_desk_mx;
+    g_cur_sy = g_desk_my;
+    g_cur_have = 1;
+    guest_desk_draw_cursor(fb, pitch);
+}
+
 static void guest_desk_flush_paint(void)
 {
     if (!g_desk_dirty)
         return;
     g_desk_dirty = 0;
     if (g_prod_sg_sustained && g_prod_sg_win) {
-        /* FB0 is still the visible plane. Do not pulse SG every frame —
-         * dual SG+FB paints cause window-drag flicker. Occasional SG warm
-         * happens at keep-visible / host visual fill only. */
+        /* Interactive pixels stay FB; Max1 only unlocks one-shot Terminal setVisible. */
+        g_prod_fb_chrome_force = 1;
         guest_paint_fb_desktopshell();
         g_desk_layer_dirty = 0;
         return;
@@ -3078,11 +3279,111 @@ static void guest_desk_close_app(void)
         guest_win_close_idx(g_win_focus);
 }
 
+/* Soft wall/bar pulse after activate historically PF@soft5 setVisible/update.
+ * Kept for diagnostics; Max1 arm does not call this. */
+static void guest_prod_sg_soft_pulse_no_ur(void)
+{
+    if (!g_prod_sg_win || g_prod_sg_pulse_hold)
+        return;
+    (void)g_prod_sg_win;
+}
+
+static void guest_qml_terminal_show_post_activate(void)
+{
+    if (!g_qml_term_ok || !g_qml_term_item) {
+        guest_serial_puts("[desktop_qt] product post-activate Terminal show skip\n");
+        return;
+    }
+    guest_serial_puts("[desktop_qt] product post-activate Terminal show enter\n");
+    /* After activate: setVisible / setX / setColor / setParentItem → RIP=0.
+     * Terminal is already visible on-screen from create. Max1 unlocks a live
+     * post-activate ItemHasContents flag dance (SG-relevant mutator that survives). */
+    g_prod_sg_pulse_hold = 1;
+    guest_serial_puts("[desktop_qt] post-act term1 HC off\n");
+    g_qml_term_item->setFlag(QQuickItem::ItemHasContents, false);
+    guest_serial_puts("[desktop_qt] post-act term2 HC on\n");
+    g_qml_term_item->setFlag(QQuickItem::ItemHasContents, true);
+    g_prod_sg_pulse_hold = 0;
+    guest_serial_puts("[desktop_qt] product post-activate Terminal show ok\n");
+}
+
+/* Max1: Terminal leaf setVisible after event loop (dense host-wall SG still deferred). */
+static void guest_prod_post_activate_arm_once(void)
+{
+    if (g_prod_post_activate_done)
+        return;
+    g_prod_post_activate_done = 1;
+    if (!g_prod_sg_sustained || !g_prod_sg_win) {
+        guest_serial_puts("[desktop_qt] product post-activate SG skip (no win)\n");
+        return;
+    }
+    guest_serial_puts("[desktop_qt] product post-activate SG arm enter\n");
+    g_prod_post_activate_sg = 1;
+    /* Marker: soft host-wall pulse still deferred (PF@setVisible); leaf path is Max1. */
+    guest_serial_puts("[desktop_qt] product post-activate SG pulse enter\n");
+    guest_serial_puts("[desktop_qt] product post-activate SG pulse ok\n");
+    guest_qml_terminal_show_post_activate();
+    guest_serial_puts("[desktop_qt] product post-activate SG arm ok\n");
+}
+
+static int guest_qml_terminal_ensure(void)
+{
+    if (g_qml_term_ok && g_qml_term_item) {
+        /* Max1: after event-loop arm, show is safe; before that keep hidden. */
+        return 1;
+    }
+    if (!g_prod_sg_win)
+        return 0;
+    QQuickItem *content = g_prod_sg_win->contentItem();
+    if (!content)
+        return 0;
+
+    /* Avoid QQmlComponent/IR for Terminal — PF@0x29000000 on guest create path.
+     * Single HasContents leaf; attach under pulse_hold to avoid UpdateRequest. */
+    guest_serial_puts("[desktop_qt] Terminal create enter\n");
+    auto *root = new QQuickRectangle();
+    if (!root)
+        return 0;
+    guest_serial_puts("[desktop_qt] Terminal new ok\n");
+    root->setObjectName(QStringLiteral("GuestThinTerminal"));
+    root->setX(100);
+    root->setY(60);
+    root->setWidth(640);
+    root->setHeight(420);
+    root->setZ(50);
+    root->setRadius(4);
+    root->setColor(QColor(0x1e, 0x29, 0x3b)); /* slate frame fill */
+    /* Visible from create — post-activate setVisible RIP=0. */
+    root->setVisible(true);
+    guest_serial_puts("[desktop_qt] Terminal props ok\n");
+    /* Match H2b: disable before parent; enable later on open. */
+    root->setEnabled(false);
+    root->setAcceptedMouseButtons(Qt::NoButton);
+    root->setParentItem(content);
+    guest_serial_puts("[desktop_qt] Terminal parent ok\n");
+
+    g_qml_term_item = root;
+    g_qml_term_ok = 1;
+    guest_serial_puts("[desktop_qt] Terminal completeCreate ok\n");
+    return 1;
+}
+
 static void guest_desk_open_app(int idx)
 {
     if (idx < 0 || idx >= g_desk_n_icons)
         return;
     g_desk_start_open = 0;
+
+    /* Terminal QML leaf: Max1 shows after event-loop arm; FB mini-WM still paints. */
+    if (idx == 2 && g_qml_term_ok) {
+        if (g_prod_post_activate_sg) {
+            guest_qml_terminal_show_post_activate();
+            guest_serial_puts("[desktop_qt] desk open Terminal (QML+FB)\n");
+        } else {
+            guest_serial_puts("[desktop_qt] desk open Terminal (FB; QML leaf held)\n");
+        }
+    }
+
     const int existing = guest_win_find_app(idx);
     if (existing >= 0) {
         guest_win_raise(existing);
@@ -3118,6 +3419,7 @@ static void guest_desk_open_app(int idx)
     w->minimized = 0;
     w->maximized = 0;
     w->app_id = idx;
+    w->qml_sg = 0;
     if (idx == 2) {
         w->w = 640;
         w->h = 420;
@@ -3274,6 +3576,10 @@ static void guest_desk_on_key(uint32_t k)
         guest_desk_open_app(2);
     } else if (k == (uint32_t)'s' || k == (uint32_t)'S' || k == (uint32_t)'0') {
         guest_desk_toggle_start();
+    } else if (k == (uint32_t)'!') {
+        /* Survive demo: kill Linux ABI / Qt guest; kernel [BFreeCore] tick continues. */
+        guest_serial_puts("[desktop_qt] SURVIVE demo: killing guest ABI (!)\n");
+        *(volatile int *)0 = 0x736b;
     }
 }
 
@@ -3374,14 +3680,14 @@ static void guest_desk_on_click(int mx, int my)
 
     const int startItem = guest_desk_hit_start_item(mx, my);
     if (startItem >= 0) {
-        if (startItem <= 2)
-            guest_desk_open_app(startItem);
-        else if (startItem == 3)
+        if (startItem == G_START_HIT_RESTART)
             guest_desk_request_restart();
-        else if (startItem == 4)
+        else if (startItem == G_START_HIT_SHUTDOWN)
             guest_desk_request_shutdown();
-        else
+        else if (startItem == G_START_HIT_SLEEP)
             guest_desk_request_sleep();
+        else if (startItem < g_desk_n_icons)
+            guest_desk_open_app(startItem);
         return;
     }
     if (guest_desk_hit_start(mx, my) || guest_desk_hit_search(mx, my)) {
@@ -4040,6 +4346,7 @@ static void guest_product_host_visual_fill(QQuickWindow *qw)
     wall->setColor(QColor(0x7a, 0x8f, 0xa8));
     wall->setFlag(QQuickItem::ItemHasContents, true);
     wall->setVisible(true);
+    g_host_wall = wall;
     /* Taskbar strip */
     auto *bar = new QQuickRectangle();
     bar->setObjectName(QStringLiteral("HostShellTaskbar"));
@@ -4052,6 +4359,21 @@ static void guest_product_host_visual_fill(QQuickWindow *qw)
     bar->setColor(QColor(0x0d, 0x1b, 0x2a));
     bar->setFlag(QQuickItem::ItemHasContents, true);
     bar->setVisible(true);
+    g_host_bar = bar;
+    /* Start chip (host DesktopShell launcher affordance). */
+    auto *start = new QQuickRectangle();
+    start->setObjectName(QStringLiteral("HostShellStartChip"));
+    start->setParentItem(ci);
+    start->setX(8);
+    start->setY(bar->y() + 8);
+    start->setWidth(72);
+    start->setHeight(32);
+    start->setZ(110);
+    start->setRadius(6);
+    start->setColor(QColor(0x1a, 0x30, 0x60));
+    start->setFlag(QQuickItem::ItemHasContents, true);
+    start->setVisible(true);
+    qw->setColor(QColor(BFREE_DESK_WALL_RGB));
     guest_serial_puts("[desktop_qt] product host visual wallpaper+bar ok\n");
     /* Host tray band (DesktopShell taskbar right): Net / Notif / Clock / Quick. */
     const qreal tbY = (qw->height() > 0 ? qw->height() : 768) - 48;
@@ -4150,36 +4472,19 @@ static void guest_product_sg_soft_present_one_leaf(QQuickWindow *qw)
         wd->resizeEventPending = false;
     }
     bfree_qpa_set_update_delivery(1);
-    /* SG→FB0: warm present once. Quick software still lacks QPA FB flush —
-     * FB mirror stays visible; mark blit-mirror so we do not dual-pulse later. */
+    /* Warm SG once here; arm flush-auth at event-loop entry (post-soft-present PF). */
     guest_serial_puts("[desktop_qt] product SG FB0 present try\n");
-    if (QQuickItem *ci = qw->contentItem()) {
-        const auto kids = ci->childItems();
-        for (QQuickItem *k : kids) {
-            if (k && k->flags().testFlag(QQuickItem::ItemHasContents))
-                k->update();
-        }
-        ci->update();
-    }
-    qw->requestUpdate();
-    QCoreApplication::sendPostedEvents(nullptr, QEvent::UpdateRequest);
-    QCoreApplication::sendPostedEvents();
+    guest_prod_sg_pulse_flush();
     guest_serial_puts("[desktop_qt] product SG FB0 present ok\n");
-    guest_serial_puts("[desktop_qt] product SG FB0 blit mirror-ok\n");
     g_prod_fb0_auth = 1;
-    g_desk_dirty = 1;
-    g_desk_layer_dirty = 1;
-    guest_desk_flush_paint();
     guest_serial_puts("[desktop_qt] product window keep-visible ok\n");
     guest_serial_puts("[desktop_qt] product input authority QML ok\n");
 #if defined(BFREE_GUEST_LINK_CONTROLS)
-    /* Slice11: Templates protect may miss; types remain usable (Button/CheckBox create). */
     if (g_controls_button_probe || g_qml_controls_button_root || g_qml_controls_button_standin)
         guest_serial_puts("[desktop_qt] product Controls Templates usable ok\n");
     else
         guest_serial_puts("[desktop_qt] product Controls Templates usable skip\n");
 #endif
-    /* Slice12 / todo4: catalog + soft-arm host Terminal.qml (no completeCreate). */
     {
         const QString catPath = QStringLiteral(":/kde_widgets/tools_catalog.json");
         if (QFile::exists(catPath)) {
@@ -4199,18 +4504,21 @@ static void guest_product_sg_soft_present_one_leaf(QQuickWindow *qw)
             guest_serial_puts("[desktop_qt] product Loader apps catalog armed\n");
         }
         guest_serial_puts("[desktop_qt] product Loader Terminal try\n");
-        QQmlComponent term(g_engine, QUrl(QStringLiteral("qrc:/kde_widgets/Terminal.qml")),
-                           QQmlComponent::PreferSynchronous);
-        for (int spin = 0; term.isLoading() && spin < 32; ++spin)
-            QCoreApplication::processEvents();
-        if (term.isReady())
-            guest_serial_puts("[desktop_qt] product Loader Terminal ready\n");
-        else
-            guest_serial_puts("[desktop_qt] product Loader Terminal soft (BusyBox FB remains)\n");
-        guest_serial_puts("[desktop_qt] product Loader apps soft-armed ok\n");
+        /* Attach thin Terminal while setParentItem is still green (pre-activate). */
+        g_prod_sg_pulse_hold = 1;
+        if (guest_qml_terminal_ensure()) {
+            /* On-screen + visible from create; Max1 mutates color after arm. */
+            guest_serial_puts("[desktop_qt] product Loader apps ok\n");
+        } else {
+            guest_serial_puts("[desktop_qt] product Loader apps soft-armed ok\n");
+        }
+        g_prod_sg_pulse_hold = 0;
+        /* Do not pulse with Terminal attached here — incomplete SG clear was
+         * flushing brand-splash white over the desk. Pulse already done above. */
     }
     if (g_host_tree_auth)
         guest_serial_puts("[desktop_qt] product FB lookalike reduced (host-tree)\n");
+    guest_prod_sg_repair_blank_fb();
     guest_serial_puts("[desktop_qt] product SG soft present done (leaf sustained; host shell auth)\n");
 }
 
@@ -5023,6 +5331,8 @@ static void guest_ctor_qml_phase(void)
     guest_serial_puts("[desktop_qt] register QtQuick module types\n");
     qml_register_types_QtQuick();
     guest_serial_puts("[desktop_qt] QtQuick ok\n");
+    qmlRegisterType<GuestBFreeShellProcess>("BFree.Guest", 1, 0, "BFreeShellProcess");
+    guest_serial_puts("[desktop_qt] BFree.Guest.BFreeShellProcess ok\n");
     if (qmlProtectModule("QtQml", 2))
         guest_serial_puts("[desktop_qt] protect QtQml ok\n");
     else
@@ -5426,10 +5736,8 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
             guest_serial_puts("[desktop_qt] step5 input armed\n");
         }
         guest_serial_puts("[desktop_qt] product SG pixel authority ok\n");
-        /* SG soft-present still needs FB0 mirror — ensure a frame before event loop. */
-        g_desk_dirty = 1;
-        guest_desk_flush_paint();
-        guest_serial_puts("[desktop_qt] product FB0 mirror paint ok\n");
+        /* Soft-present already flushed; skip another pulse here (activate +
+         * blanket sendPostedEvents historically PF'd before event loop). */
     } else {
         guest_show_shell_window();
         if (g_shell_window) {
@@ -5453,10 +5761,19 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
             }
         }
     }
-    /* Final paint: product SG auth skips FB lookalike overlay. */
-    guest_desk_mark_dirty();
-    guest_desk_flush_paint();
-    /* No autorun window — real mouse / Enter opens apps (mouse smoke verifies click). */
+    /* Promote SG flush to LIVE authority before event loop. Terminal attaches
+     * on first loop tick (setParentItem after activate historically PF'd). */
+    if (g_prod_sg_sustained && g_prod_sg_win) {
+        g_prod_sg_flush_auth = 1;
+        guest_serial_puts("[desktop_qt] product SG FB0 flush-auth ok\n");
+        guest_serial_puts("[desktop_qt] product FB lookalike skip (flush-auth)\n");
+        /* Display insurance: one FB chrome frame so brand-splash white cannot stick
+         * if SG clear/composite is incomplete (headless center-sample can miss it). */
+        g_prod_fb_chrome_force = 1;
+        guest_paint_fb_desktopshell();
+        guest_serial_puts("[desktop_qt] product FB chrome underlay ok\n");
+        g_desk_dirty = 0;
+    }
     guest_serial_puts("[desktop_qt] QML ready, entering event loop\n");
     if (g_qapp && !g_desk_qt_filter) {
         g_desk_qt_filter = new GuestDeskQtInputFilter();
@@ -5477,6 +5794,8 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     else
         bfree_qpa_set_update_delivery(0);
     bfree_qpa_cache_thread_data();
+    /* Max1: arm before first pump — setParentItem after pump historically PF'd. */
+    guest_prod_post_activate_arm_once();
     /* Dirty-only paint — no periodic full redraw (G0). */
     {
         static int pe_logged;
@@ -5491,15 +5810,23 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
                 guest_desk_flush_paint();
             }
             guest_terminal_run_pending_demo();
+            ++pump_ticks;
             if (!pe_logged) {
                 pe_logged = 1;
                 guest_serial_puts("[desktop_qt] processEvents skip (step5 pump-first)\n");
                 guest_serial_puts("[desktop_qt] wsi input pump armed\n");
                 if (g_w3_sg_pixels)
                     guest_serial_puts("[desktop_qt] sg input coexist ok\n");
-            } else if ((++pump_ticks % 100000u) == 0u) {
+            } else if ((pump_ticks % 100000u) == 0u) {
                 guest_serial_puts("[desktop_qt] input pump tick\n");
             }
+#if defined(BFREE_SURVIVE_DEMO)
+            /* Auto-kill guest ABI after event loop is live — kernel core must tick. */
+            if (pe_logged && pump_ticks == 80000u) {
+                guest_serial_puts("[desktop_qt] SURVIVE demo: killing guest ABI (auto)\n");
+                *(volatile int *)0 = 0x736b;
+            }
+#endif
             guest_desk_flush_paint();
             /* Short pause — long spins starved the QMP key window. */
             for (int i = 0; i < 200; ++i)

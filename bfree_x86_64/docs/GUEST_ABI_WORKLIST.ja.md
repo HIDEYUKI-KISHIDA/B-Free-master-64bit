@@ -21,7 +21,7 @@ bash tools/phase3_guest_auto.sh   # RESULT: ALL PASS 維持
 | A2 | Linux `case 56` / `sys_linux_clone` | clone | **P0** | THREAD+VM → coop threads；VFORK → vfork；**それ以外 → AS-copy fork**（2026-07-27 **DONE**） | musl 静的が process-spawn `clone` で ENOSYS しない |
 | A3 | Linux `case 247` | `waitid` = ENOSYS | **P0** | ~~wait4 相当を waitid ABI で実装~~ **DONE** | BusyBox/musl waitid 呼び出し OK |
 | A4 | `sys_linux_execve` 非 fork 時 | fork 外 exec = -38 | **P0** | ~~単独 execve~~ **DONE**（in-place replace）+ 子は private AS 必須 | `BFREE_NOFORK_ALL=0` で外部 applet が Page Fault しない |
-| A5 | `sys_mmap` fd 付き | ファイル mmap | **P1** | ~~ENOSYS~~ **DONE（簡易）**：`/tmp` vfile を anon+memcpy；R9 offset；**MAP_SHARED は msync/munmap/read 前 writeback**（2026-07-30 live msync）。真の CoW/ページ共有は未 | SHARED 書込が `msync` 後 `read()` で見える；PRIVATE はコピー |
+| A5 | `sys_mmap` fd 付き | ファイル mmap | **P1** | ~~ENOSYS~~ **DONE（簡易+live SHARED）**：`/tmp` vfile anon+memcpy；R9 offset；msync writeback；**2026-08-10** 同一 vfile 2×`MAP_SHARED` は物理ページ alias（`mmap04_shared_live`）。fork COW break は未 | SHARED live 可視 + msync/`read`；PRIVATE はコピー |
 | A6 | `sys_shm_open` | vfile `shm/<name>` | **P2** | ~~ENOSYS~~ **DONE**（`bfree_guest_shm_open` → `/tmp` vfile + publish） | shm_open+mmap(+SHARED) が通る |
 | A7 | `sys_shm_unlink` | vfile unlink | **P2** | ~~ENOSYS~~ **DONE**（`bfree_guest_shm_unlink`） | unlink 後 open が ENOENT |
 | A8 | 旧 `sys_pipe` (B-Free 番号) | ホスト向け ENOSYS | **P3** | ゲスト Linux は `pipe2` 済み。触らない／削除候補 | ゲスト回帰に影響しない |
@@ -101,7 +101,9 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **679**） | `LIBC_TEST_CURATED_RESULT` |
 | B2.22 | `setitimer`/`getitimer`/`sched_getaffinity` | **DONE**（2026-07-29；ITIMER_REAL↔alarm；affinity=CPU0） | curated ENOSYS 0 |
 | B2.23 | ash wait / waitpid heal | **DONE**（soft-zombie；1-reap；blocking `-1` yield；phase3 ALL PASS；**late `cat\|grep` + cmdsubst** 2026-07-30：`_late_pipe_smoke` ALL PASS） | AS-copy forkshell + waitpid status + expbackq wait-before-read |
-| B2.24 | LTP curated ABI hole suite | **DONE**（2026-08-10；**n=238**） | +F…+S；B1 futex01；B2 inotify02；smoke PASS |
+| B2.24 | LTP curated ABI hole suite | **DONE**（2026-08-10；**n=240**） | +F…+S；B1/B2；`mmap04_shared_live`；`mmap05_cow_break`；smoke PASS |
+| B2.25 | Depth min slices 1–3 | **DONE**（2026-08-10） | S1 QML PF=0 mainline；S2 SHARED alias；S3 e1000 2RTT TCP |
+| B2.26 | Depth max follow-on 1–3 | **DONE**（2026-08-10） | M1 post-act HC dance；M2 cow_break n=240；M3 e1000 3RTT+16B |
 | B2.24b | Desktop product ENOSYS gate | **DONE**（2026-08-10） | `_desktop_enosys_smoke.sh` → unique=0 + transfer；`guest_desktop_smoke.sh` に ENOSYS 集計ゲート；埋める nr なし |
 | B2.25 | Full ABI-hole finder（syscall ENOSYS） | **DONE**（2026-07-30） | 静的 extract + ゲスト確認；impl≈153 / holes≈297；`tools/_abi_hole_finder_smoke.sh` ALL PASS。upstream フル LTP ではない |
 | B2.26 | Practical 21 ABI holes | **DONE**（2026-07-30） | must12+should5+compat4 すべて dispatch；curated 685 PASS；finder impl=176 holes=274；tkill/robust_list 番号修正 |
