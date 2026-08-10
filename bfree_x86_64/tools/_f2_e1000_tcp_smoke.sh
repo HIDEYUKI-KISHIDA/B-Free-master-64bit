@@ -23,6 +23,7 @@ cat > /tmp/bfree_f2_tcp.c <<EOF
 #include <stdint.h>
 #define SYS_write 1
 #define SYS_read 0
+#define SYS_close 3
 #define SYS_socket 41
 #define SYS_connect 42
 #define SYS_exit 60
@@ -142,6 +143,26 @@ void _start(void)
         sys6(SYS_exit, 8, 0, 0, 0, 0, 0);
     }
     ser("[f2tcp] RTT3_OK\\n");
+    sys6(SYS_close, fd, 0, 0, 0, 0, 0);
+    ser("[f2tcp] CLOSE1_OK\\n");
+
+    /* Deep3: second connection after close (multi-PCB / ephemeral port). */
+    fd = sys6(SYS_socket, AF_INET, SOCK_STREAM, 0, 0, 0, 0);
+    if (fd < 0) { ser("[f2tcp] FAIL socket2\\n"); sys6(SYS_exit, 9, 0, 0, 0, 0, 0); }
+    rc = sys6(SYS_connect, fd, (long)&dst, 16, 0, 0, 0);
+    if (rc != 0 && rc != -115) {
+        ser("[f2tcp] FAIL connect2\\n");
+        sys6(SYS_exit, 10, 0, 0, 0, 0, 0);
+    }
+    ser("[f2tcp] CONNECT2_OK\\n");
+    wr = write_all(fd, "PING", 4);
+    if (wr != 4) { ser("[f2tcp] FAIL write4\\n"); sys6(SYS_exit, 11, 0, 0, 0, 0, 0); }
+    n = read_want(fd, buf, 4);
+    if (n < 4 || !eq4(buf, "PONG")) {
+        ser("[f2tcp] FAIL recv4\\n");
+        sys6(SYS_exit, 12, 0, 0, 0, 0, 0);
+    }
+    ser("[f2tcp] RTT4_OK\\n");
     ser("[f2tcp] F2_E1000_TCP_OK\\n");
     for (;;) { __asm__ volatile("pause"); }
 }
@@ -163,25 +184,22 @@ cp -f iso_root/boot/grub/grub.cfg "$ISO_STAGE/boot/grub/grub.cfg"
 sed -i 's/^set default=.*/set default=0/' "$ISO_STAGE/boot/grub/grub.cfg"
 grub-mkrescue -o "$ISO" "$ISO_STAGE" -- -volid BFREE >/tmp/mkf2tcp.log 2>&1
 
-# Host echo: 2×4B then 16B payload.
+# Host echo: conn1 2×4B+16B, then conn2 1×4B.
 python3 - "$PORT" <<'PY' &
 import socket, sys
 port = int(sys.argv[1])
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("0.0.0.0", port))
-s.listen(1)
+s.listen(2)
 s.settimeout(90)
 print("HOST_LISTEN", port, flush=True)
-try:
+
+def one_conn(label, rounds):
     c, addr = s.accept()
-    print("HOST_ACCEPT", addr, flush=True)
+    print("HOST_ACCEPT", label, addr, flush=True)
     c.settimeout(60)
-    for round_i, need, reply in (
-        (1, 4, b"PONG"),
-        (2, 4, b"PONG"),
-        (3, 16, b"PONG16-REPLY!!!!"),
-    ):
+    for round_i, need, reply in rounds:
         data = b""
         while len(data) < need:
             chunk = c.recv(64)
@@ -190,11 +208,21 @@ try:
             data += chunk
         if len(data) >= need:
             c.sendall(reply)
-            print("HOST_ECHO_OK", round_i, data[:need], flush=True)
+            print("HOST_ECHO_OK", label, round_i, data[:need], flush=True)
         else:
-            print("HOST_BAD", round_i, data, flush=True)
+            print("HOST_BAD", label, round_i, data, flush=True)
             break
     c.close()
+
+try:
+    one_conn(1, (
+        (1, 4, b"PONG"),
+        (2, 4, b"PONG"),
+        (3, 16, b"PONG16-REPLY!!!!"),
+    ))
+    one_conn(2, (
+        (1, 4, b"PONG"),
+    ))
 except Exception as e:
     print("HOST_ECHO_FAIL", e, flush=True)
 finally:
@@ -217,9 +245,9 @@ if command -v tcpdump >/dev/null 2>&1 && [ -f /tmp/bfree-f2tcp.pcap ]; then
   tcpdump -nn -r /tmp/bfree-f2tcp.pcap 2>/dev/null | head -40 || true
 fi
 
-echo '=== F2 e1000 TCP Max3 ==='
+echo '=== F2 e1000 TCP Deep3 ==='
 fail=0
-for tag in CONNECT_OK RTT1_OK RTT2_OK RTT3_OK F2_E1000_TCP_OK; do
+for tag in CONNECT_OK RTT1_OK RTT2_OK RTT3_OK CLOSE1_OK CONNECT2_OK RTT4_OK F2_E1000_TCP_OK; do
   if grep -aq "$tag" "$QLOG"; then
     echo "PASS $tag"
   else
@@ -233,5 +261,5 @@ if grep -aqiE 'Page Fault|PANIC' "$QLOG"; then
 else
   echo 'PASS no_panic'
 fi
-grep -aE '\[f2tcp\]|\[TCP\]|\[NET\]|F2_|PANIC|Page Fault' "$QLOG" | tail -50
+grep -aE '\[f2tcp\]|\[TCP\]|\[NET\]|F2_|PANIC|Page Fault' "$QLOG" | tail -60
 exit "$fail"

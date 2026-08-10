@@ -62,11 +62,12 @@ loop=$(score 'QML ready, entering event loop')
 pa_term=$(score 'product post-activate Terminal show ok')
 pa_pulse=$(score 'product post-activate SG pulse ok')
 pa_arm=$(score 'product post-activate SG arm ok')
+pa_x=$(score 'post-act termX place ok')
 pf=$(score 'Page Fault')
-echo "REG=$reg FLUSH=$flush TERM=$term SKIP=$skip LOOP=$loop PA_TERM=$pa_term PA_PULSE=$pa_pulse PA_ARM=$pa_arm PF=$pf"
-if [[ "$reg" == 1 && "$flush" == 1 && "$term" == 1 && "$skip" == 1 && "$loop" == 1 && "$pa_term" == 1 && "$pa_pulse" == 1 && "$pa_arm" == 1 && "$pf" == 0 ]]; then
-  echo 'RESULT=GREEN qml-mainline-1-4-max1' | tee "$OUT/qml-mainline-1-4.txt"
+echo "REG=$reg FLUSH=$flush TERM=$term SKIP=$skip LOOP=$loop PA_TERM=$pa_term PA_PULSE=$pa_pulse PA_ARM=$pa_arm PA_X=$pa_x PF=$pf"
+if [[ "$reg" == 1 && "$flush" == 1 && "$term" == 1 && "$skip" == 1 && "$loop" == 1 && "$pa_term" == 1 && "$pa_pulse" == 1 && "$pa_arm" == 1 && "$pa_x" == 1 && "$pf" == 0 ]]; then
+  echo 'RESULT=GREEN qml-mainline-1-4-deep1' | tee "$OUT/qml-mainline-1-4.txt"
 else
-  echo 'RESULT=RED qml-mainline-1-4-max1' | tee "$OUT/qml-mainline-1-4.txt"
+  echo 'RESULT=RED qml-mainline-1-4-deep1' | tee "$OUT/qml-mainline-1-4.txt"
   exit 1
 fi

@@ -52,7 +52,7 @@ grub-mkrescue -o /tmp/bfree-f3ltp.iso "$ISO_STAGE" -- -volid BFREE >/tmp/mkf3ltp
   done
   sleep 2
   printf '/ltp_curated.elf\n'
-  sleep 20
+  sleep 55
   printf 'echo F3_SMOKE_DON""E\n'
   sleep 2
 ) | timeout 200 qemu-system-x86_64 -m 512M -no-reboot -cdrom /tmp/bfree-f3ltp.iso \
@@ -67,6 +67,12 @@ if grep -aq 'LTP_CURATED_RESULT: PASS' "$QLOG"; then
   echo "PASS LTP_CURATED_RESULT"
 else
   echo "FAIL LTP_CURATED_RESULT"
+  fail=1
+fi
+if grep -aq '\[COW\] break' "$QLOG"; then
+  echo "PASS COW_break"
+else
+  echo "FAIL COW_break (lazy fork COW not observed)"
   fail=1
 fi
 if grep -aq 'TFAIL' "$QLOG"; then

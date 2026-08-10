@@ -52,17 +52,12 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-08-10（**Depth max follow-on 1→2→3 完了**）
-- **Max1（QML post-activate）:** 本線 `_tmp_qml_mainline_14_smoke.sh` → `RESULT=GREEN qml-mainline-1-4-max1` / **PF=0**
-  - Terminal は create 時から visible+onscreen；イベントループ直前に **ItemHasContents flag dance** 緑
-  - **据え置き:** post-activate `setVisible` / `setX` / `setColor` / `setParentItem` / host-wall update / dense `UpdateRequest` はいずれも **RIP=0 PF**（未解禁）
-- **Max2（COW break）:** `mmap05_cow_break`（fork 後 child write → parent は `'A'` のまま）→ **`LTP_CURATED_RESULT: PASS n=240 fail=0`**（AS-copy 隔離；lazy PTE COW は未）
-- **Max3（e1000 TCP）:** `_f2_e1000_tcp_smoke.sh` **3RTT**（4B+4B+16B）→ CONNECT/RTT1–3/`F2_E1000_TCP_OK` 緑
-- **① Desktop ENOSYS:** 維持（unique=0；嘘埋めなし）
-- **据え置き（さらに深い本番）:**
-  - QML post-activate mutator/UR の RIP=0 根因
-  - lazy MAP_PRIVATE COW（共有 PTE→fault copy）
-  - e1000 再送・窓・複数接続
+- **Updated:** 2026-08-10（**Deep follow-on 1→2→3 完了**）
+- **Deep1（QML RIP=0）:** 根因＝activate 後の sync `UpdateRequest` 塗装。配送 OFF で **`setX` 解禁** → `RESULT=GREEN qml-mainline-1-4-deep1` / PF=0（`post-act termX place ok`）。dense UR / setVisible は配送 ON のまま据え置き
+- **Deep2（lazy COW）:** fork 時 RW ページを共有 PTE（RO+COW bit）→ write #PF で copy；`[COW] break` 観測；**`LTP_CURATED_RESULT: PASS n=240`** + f3 に COW ゲート
+- **Deep3（e1000）:** `_f2_e1000_tcp_smoke.sh` — 3RTT 後 close → **第2接続** + RTT4 緑（CONNECT2/RTT4）
+- **① Desktop ENOSYS:** 維持（unique=0）
+- **据え置き（さらに）:** post-activate dense UR を安全に ON；COW 参照カウント/解放；TCP 窓・ロス再送の意図的試験
 - **Next:** スマホ指示待ち
 
 ---

@@ -3295,14 +3295,18 @@ static void guest_qml_terminal_show_post_activate(void)
         return;
     }
     guest_serial_puts("[desktop_qt] product post-activate Terminal show enter\n");
-    /* After activate: setVisible / setX / setColor / setParentItem → RIP=0.
-     * Terminal is already visible on-screen from create. Max1 unlocks a live
-     * post-activate ItemHasContents flag dance (SG-relevant mutator that survives). */
+    /* Deep1: dirtying mutators PF because sync UpdateRequest paints with a null
+     * fnptr after activate. Gate delivery OFF, then prove setX place. */
     g_prod_sg_pulse_hold = 1;
+    bfree_qpa_set_update_delivery(0);
     guest_serial_puts("[desktop_qt] post-act term1 HC off\n");
     g_qml_term_item->setFlag(QQuickItem::ItemHasContents, false);
     guest_serial_puts("[desktop_qt] post-act term2 HC on\n");
     g_qml_term_item->setFlag(QQuickItem::ItemHasContents, true);
+    guest_serial_puts("[desktop_qt] post-act termX place enter\n");
+    g_qml_term_item->setX(108); /* create used 100 — must change to dirty Position */
+    guest_serial_puts("[desktop_qt] post-act termX place ok\n");
+    /* Keep delivery OFF: sticky updateRequestPending if dirtied while gated. */
     g_prod_sg_pulse_hold = 0;
     guest_serial_puts("[desktop_qt] product post-activate Terminal show ok\n");
 }

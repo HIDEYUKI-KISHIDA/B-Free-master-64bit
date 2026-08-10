@@ -7,6 +7,8 @@ void uart_puthex64(uint64_t val);
 void *pmm_alloc(void);
 void *pmm_alloc_pt_page(void);
 void pmm_free(void *addr);
+int vmm_map_page(page_table_t *pt, uint64_t vaddr, uint64_t paddr, uint64_t flags);
+void vmm_drop_identity_alias(page_table_t *pt, uint64_t phys);
 
 #define VMM_PHYS_IDENTITY_LIMIT ((uint64_t)PT_EMBEDDED_COUNT * 0x200000ULL)
 
@@ -36,6 +38,9 @@ static int vmm_pte_direct(uint64_t pt_phys)
 #define VMM_PTE_RW 0x002ULL
 
 #define VMM_PTE_NX (1ULL << 63)
+
+/* Software-available PTE bit: page is write-protected for lazy COW after fork. */
+#define VMM_PTE_COW (1ULL << 9)
 
 extern page_table_t kernel_page_table;
 
@@ -215,6 +220,44 @@ static uint64_t *bfree_pf_save_all_frame(void *regs_arg)
 
 // ページフォールト例外ハンドラ
 
+static int vmm_cow_break_at(page_table_t *pt, uint64_t va, uint64_t old_pte)
+{
+    uint64_t old_phys = old_pte & 0x000FFFFFFFFFF000ULL;
+    void *newpage;
+    static uint8_t cow_page_buf[PAGE_SIZE];
+    uint64_t i;
+
+    if (!pt || (old_pte & VMM_PTE_COW) == 0ULL)
+        return -1;
+    newpage = pmm_alloc();
+    if (!newpage)
+        return -1;
+    if (bfree_kernel_peek_phys(old_phys, cow_page_buf, PAGE_SIZE) != 0) {
+        pmm_free(newpage);
+        return -1;
+    }
+    if (bfree_kernel_poke_phys((uint64_t)(uintptr_t)newpage, cow_page_buf, PAGE_SIZE) != 0) {
+        pmm_free(newpage);
+        return -1;
+    }
+    if (vmm_map_page(pt, va, (uint64_t)(uintptr_t)newpage, 0x007ULL) != 0) {
+        pmm_free(newpage);
+        return -1;
+    }
+    vmm_drop_identity_alias(pt, (uint64_t)(uintptr_t)newpage);
+    vmm_drop_identity_alias(&kernel_page_table, (uint64_t)(uintptr_t)newpage);
+    __asm__ volatile("invlpg (%0)" : : "r"(va) : "memory");
+    uart_puts("[COW] break va=");
+    uart_puthex64(va);
+    uart_puts(" old=");
+    uart_puthex64(old_phys);
+    uart_puts(" new=");
+    uart_puthex64((uint64_t)(uintptr_t)newpage);
+    uart_puts("\n");
+    (void)i;
+    return 0;
+}
+
 void vmm_page_fault_handler(void* frame) {
 
     uint64_t cr2;
@@ -226,6 +269,33 @@ void vmm_page_fault_handler(void* frame) {
     __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
 
     __asm__ volatile ("mov %%cr3, %0" : "=r"(cr3));
+
+    /* Deep2: lazy COW — user write to present RO+COW page → private copy, resume. */
+    if (save && ((save[17] & 3ULL) == 3ULL)) {
+        uint64_t errcode = save[15];
+        if ((errcode & 0x7ULL) == 0x7ULL) {
+            page_table_t *pt = (page_table_t *)(uintptr_t)(cr3 & ~0xFFFULL);
+            uint64_t pd_index = 0;
+            uint64_t pt_index = 0;
+            pte_t *pt_slot;
+            uint64_t pte = 0;
+            int embedded;
+
+            if (vmm_get_indices(cr2, &pd_index, &pt_index) == 0) {
+                pt_slot = vmm_pt_slot_existing(pt, pd_index);
+                if (pt_slot) {
+                    uint64_t pt_phys = (uint64_t)(uintptr_t)pt_slot;
+                    embedded = (pd_index < PT_EMBEDDED_COUNT) ? 1 : 0;
+                    if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) == 0 &&
+                        (pte & VMM_PTE_COW) != 0ULL &&
+                        (pte & 0x001ULL) != 0ULL) {
+                        if (vmm_cow_break_at(pt, cr2 & ~0xFFFULL, pte) == 0)
+                            return;
+                    }
+                }
+            }
+        }
+    }
 
     uart_puts("[EXCEPTION] Page Fault CR2=");
 
@@ -435,7 +505,20 @@ void vmm_page_fault_handler(void* frame) {
 
     }
 
-
+    /*
+     * Survive demo: user-mode (#CPL3) PF parks the Linux ABI / Qt guest but
+     * MUST NOT cli;hlt the whole machine — IRQ0 timer_handler keeps printing
+     * [BFreeCore] tick=… as structural proof that the RTOS core outlives the
+     * compatibility persona.
+     */
+    if (save && ((save[17] & 3ULL) == 3ULL)) {
+        uart_puts("[SURVIVE] user-mode Page Fault — parking guest ABI\n");
+        uart_puts("[SURVIVE] expect BFreeCore tick to continue\n");
+        uart_puts("[SURVIVE] demo ok\n");
+        for (;;) {
+            __asm__ volatile ("sti; hlt" ::: "memory");
+        }
+    }
 
     while (1) { __asm__ volatile ("cli; hlt"); }
 
@@ -851,6 +934,10 @@ void vmm_destroy_user_mappings_keep(page_table_t *pt, page_table_t *keep)
     uint64_t pt_index;
     extern uint64_t g_bfree_shell_text_phys;
     extern int bfree_shell_page_pinned(uint64_t phys);
+    /* One-shot parent phys set — avoids O(n·m) vmm_user_maps_phys per page. */
+    enum { KEEP_HASH = 16384 };
+    static uint64_t keep_hash[KEEP_HASH];
+    uint64_t hi;
 
     if (!pt) {
         return;
@@ -858,6 +945,45 @@ void vmm_destroy_user_mappings_keep(page_table_t *pt, page_table_t *keep)
     if (!keep) {
         vmm_destroy_user_mappings(pt);
         return;
+    }
+    for (hi = 0; hi < (uint64_t)KEEP_HASH; ++hi) {
+        keep_hash[hi] = 0;
+    }
+    for (pd_index = 0; pd_index < (uint64_t)PT_LEVEL_MAX; ++pd_index) {
+        pte_t *pt_slot = vmm_pt_slot_existing(keep, pd_index);
+        uint64_t pt_phys;
+        int embedded;
+
+        if (!pt_slot) {
+            continue;
+        }
+        pt_phys = (uint64_t)(uintptr_t)pt_slot;
+        embedded = (pd_index < PT_EMBEDDED_COUNT) ? 1 : 0;
+        for (pt_index = 0; pt_index < PTE_COUNT; ++pt_index) {
+            uint64_t pte = 0;
+            uint64_t pp;
+            uint64_t slot;
+            uint64_t probe;
+
+            if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) != 0) {
+                continue;
+            }
+            if ((pte & 0x005ULL) != 0x005ULL && (pte & 0x007ULL) != 0x007ULL) {
+                continue;
+            }
+            pp = pte & ~(PAGE_SIZE - 1ULL);
+            if (pp == 0) {
+                continue;
+            }
+            slot = (pp >> 12) & (uint64_t)(KEEP_HASH - 1);
+            for (probe = 0; probe < 32ULL; ++probe) {
+                uint64_t i = (slot + probe) & (uint64_t)(KEEP_HASH - 1);
+                if (keep_hash[i] == 0 || keep_hash[i] == pp) {
+                    keep_hash[i] = pp;
+                    break;
+                }
+            }
+        }
     }
     for (pd_index = 0; pd_index < (uint64_t)PT_LEVEL_MAX; ++pd_index) {
         pte_t *pt_slot = vmm_pt_slot_existing(pt, pd_index);
@@ -870,6 +996,9 @@ void vmm_destroy_user_mappings_keep(page_table_t *pt, page_table_t *keep)
             uint64_t pte = 0;
             uint64_t pt_phys = (uint64_t)(uintptr_t)pt_slot;
             int embedded = (pd_index < PT_EMBEDDED_COUNT) ? 1 : 0;
+            int in_keep = 0;
+            uint64_t slot;
+            uint64_t probe;
 
             if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) != 0) {
                 continue;
@@ -891,8 +1020,25 @@ void vmm_destroy_user_mappings_keep(page_table_t *pt, page_table_t *keep)
                 continue;
             }
             if ((g_bfree_shell_text_phys != 0 && paddr == g_bfree_shell_text_phys) ||
-                bfree_shell_page_pinned(paddr) ||
-                vmm_user_maps_phys(keep, paddr)) {
+                bfree_shell_page_pinned(paddr)) {
+                continue;
+            }
+            slot = (paddr >> 12) & (uint64_t)(KEEP_HASH - 1);
+            for (probe = 0; probe < 32ULL; ++probe) {
+                uint64_t i = (slot + probe) & (uint64_t)(KEEP_HASH - 1);
+                if (keep_hash[i] == 0) {
+                    break;
+                }
+                if (keep_hash[i] == paddr) {
+                    in_keep = 1;
+                    break;
+                }
+            }
+            if (in_keep) {
+                continue;
+            }
+            /* Hash miss: exact walk fallback (rare collisions / overflow). */
+            if (vmm_user_maps_phys(keep, paddr)) {
                 continue;
             }
             pmm_free((void *)(uintptr_t)paddr);
@@ -950,6 +1096,17 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
             paddr = pte & 0x000FFFFFFFFFF000ULL;
             va = (pd_index * 0x200000ULL) + (pt_index * PAGE_SIZE);
             if (paddr == va && (pte & 0x004ULL) == 0ULL) {
+                continue;
+            }
+
+            /* Deep2 lazy COW: share RW user pages as RO+COW (break on write PF). */
+            if ((pte & 0x007ULL) == 0x007ULL) {
+                uint64_t cow_flags = 0x005ULL | VMM_PTE_COW | (pte & VMM_PTE_NX);
+                if (vmm_map_page(src, va, paddr, cow_flags) != 0)
+                    return -1;
+                if (vmm_map_page(dst, va, paddr, cow_flags) != 0)
+                    return -1;
+                vmm_drop_identity_alias(dst, paddr);
                 continue;
             }
 
