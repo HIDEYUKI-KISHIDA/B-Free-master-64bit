@@ -21,7 +21,7 @@ bash tools/phase3_guest_auto.sh   # RESULT: ALL PASS 維持
 | A2 | Linux `case 56` / `sys_linux_clone` | clone | **P0** | THREAD+VM → coop threads；VFORK → vfork；**それ以外 → AS-copy fork**（2026-07-27 **DONE**） | musl 静的が process-spawn `clone` で ENOSYS しない |
 | A3 | Linux `case 247` | `waitid` = ENOSYS | **P0** | ~~wait4 相当を waitid ABI で実装~~ **DONE** | BusyBox/musl waitid 呼び出し OK |
 | A4 | `sys_linux_execve` 非 fork 時 | fork 外 exec = -38 | **P0** | ~~単独 execve~~ **DONE**（in-place replace）+ 子は private AS 必須 | `BFREE_NOFORK_ALL=0` で外部 applet が Page Fault しない |
-| A5 | `sys_mmap` fd 付き | ファイル mmap | **P1** | ~~ENOSYS~~ **DONE（簡易）**：`/tmp` vfile を anon+memcpy；R9 offset；**MAP_SHARED は munmap/read 前 writeback**（2026-07-28）。真の CoW/ページ共有は未 | SHARED 書込が `read()` で見える；PRIVATE はコピー |
+| A5 | `sys_mmap` fd 付き | ファイル mmap | **P1** | ~~ENOSYS~~ **DONE（簡易）**：`/tmp` vfile を anon+memcpy；R9 offset；**MAP_SHARED は msync/munmap/read 前 writeback**（2026-07-30 live msync）。真の CoW/ページ共有は未 | SHARED 書込が `msync` 後 `read()` で見える；PRIVATE はコピー |
 | A6 | `sys_shm_open` | vfile `shm/<name>` | **P2** | ~~ENOSYS~~ **DONE**（`bfree_guest_shm_open` → `/tmp` vfile + publish） | shm_open+mmap(+SHARED) が通る |
 | A7 | `sys_shm_unlink` | vfile unlink | **P2** | ~~ENOSYS~~ **DONE**（`bfree_guest_shm_unlink`） | unlink 後 open が ENOENT |
 | A8 | 旧 `sys_pipe` (B-Free 番号) | ホスト向け ENOSYS | **P3** | ゲスト Linux は `pipe2` 済み。触らない／削除候補 | ゲスト回帰に影響しない |
@@ -84,27 +84,33 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B2.5q | curated round-16 bold pure libc | **DONE** | +77 mathl/complexf/fpclassify/wchar/stdio/inet；**627** |
 | B2.5r | curated round-17 bold pure libc | **DONE** | +52 mathl/complex/fpclassify/wchar/stdio/string/locale；**679** |
 | B2.6 | `flock` / fcntl ロック | **DONE** | P8_FLOCK |
-| B2.7 | `clone` スレッドフラグ | partial（coop THREAD） | TLS + スケジューラ |
-| B2.8 | futex 深化 | 部分 stub | WAIT 実待ち・WAKE |
+| B2.7 | `clone` スレッドフラグ | **Desktop DONE**＋curated raw CLONE_THREAD **DONE**＋standalone `-pthread` gate **DONE**（2026-07-31） | in-curated フル musl `-pthread` は非採用（fork 衝突）；`libc_test_pthread` + slim wrap |
+| B2.8 | futex 深化 | **Desktop/Qt DONE**（waiter queue + timed WAIT；Qt clear residual） | 汎用 WAIT 深化は残 |
 | B2.9 | `set_robust_list` | **DONE（no-op set）** | set 実装 |
 | B2.10 | `exit_group` | **DONE** | exit と同居 |
-| B2.11 | `tgkill` / `rt_tgsigqueueinfo` | 要確認 | スレッドシグナル |
+| B2.11 | `tgkill` / `rt_tgsigqueueinfo` | **DONE**（2026-07-30；tkill/tgkill/rt_tgsigqueueinfo→kill） | スレッド別配送は簡易 |
 | B2.12 | `sigaltstack` | **DONE** | |
 | B2.13 | `rt_sigreturn` | **DONE** | |
-| B2.14 | `rt_sigtimedwait` / `rt_sigsuspend` | **partial DONE**（`rt_sigsuspend`=130：soft-zombie+SIGCHLD+EINTR 2026-07-29） | timedwait 未 |
+| B2.14 | `rt_sigtimedwait` / `rt_sigsuspend` | **DONE**（2026-07-30；timedwait + pending + queueinfo） | B2.26 |
 | B2.15 | `clock_nanosleep` | あり | Linux 230 と整合 |
 | B2.16 | `clock_getres` | **DONE** | P8_MISC |
-| B2.17 | `sysinfo` / `prlimit64` | 部分 | musl が期待する値 |
+| B2.17 | `sysinfo` / `prlimit64` | **DONE（harden）**（2026-07-30；getrlimit/setrlimit/prlimit が STACK/NOFILE を永続） | curated `sys_sysinfo`/`sys_getrlimit` PASS |
 | B2.18 | `membarrier` / `rseq` | **DONE（空成功）** | |
 | B2.19 | `getrandom` | **DONE** | 品質は簡易 |
 | B2.20 | 静的 hello/musl スモーク | **追加**（`/musl_hello.elf`） | B2_MUSL_HELLO_OK |
 | B2.21 | musl libc-test サブセット | **追加**（`libc_test_curated` **679**） | `LIBC_TEST_CURATED_RESULT` |
 | B2.22 | `setitimer`/`getitimer`/`sched_getaffinity` | **DONE**（2026-07-29；ITIMER_REAL↔alarm；affinity=CPU0） | curated ENOSYS 0 |
-| B2.23 | ash wait / waitpid heal | **DONE**（soft-zombie；1-reap；blocking `-1` yield；phase3 ALL PASS） | `cat FILE\|grep` 後期はハーネス回避・本修繕は次 |
-| B2.24 | LTP curated ABI hole suite | **DONE**（2026-07-29；**n=38**） | process/wait + pipe/fd + signals；`_f3_ltp_curated_smoke` PASS；mmap/TCP は次 |
+| B2.23 | ash wait / waitpid heal | **DONE**（soft-zombie；1-reap；blocking `-1` yield；phase3 ALL PASS；**late `cat\|grep` + cmdsubst** 2026-07-30：`_late_pipe_smoke` ALL PASS） | AS-copy forkshell + waitpid status + expbackq wait-before-read |
+| B2.24 | LTP curated ABI hole suite | **DONE**（2026-08-10；**n=238**） | +F…+S；B1 futex01；B2 inotify02；smoke PASS |
+| B2.24b | Desktop product ENOSYS gate | **DONE**（2026-08-10） | `_desktop_enosys_smoke.sh` → unique=0 + transfer；`guest_desktop_smoke.sh` に ENOSYS 集計ゲート；埋める nr なし |
+| B2.25 | Full ABI-hole finder（syscall ENOSYS） | **DONE**（2026-07-30） | 静的 extract + ゲスト確認；impl≈153 / holes≈297；`tools/_abi_hole_finder_smoke.sh` ALL PASS。upstream フル LTP ではない |
+| B2.26 | Practical 21 ABI holes | **DONE**（2026-07-30） | must12+should5+compat4 すべて dispatch；curated 685 PASS；finder impl=176 holes=274；tkill/robust_list 番号修正 |
+| B2.26b | getresuid/setresgid nr swap | **DONE**（2026-08-02） | x86_64 `118=getresuid` / `119=setresgid` が逆だったのを修正；`abi_practical_holes.py` も追随 |
+| B2.27 | Musl remaining walls crush | **DONE**（2026-07-30） | live msync；curated `thread_clone_join`；rlimit store；`rt_tgsigqueueinfo`。upstream: `tools/fetch_libc_test.sh`（bytecodealliance mirror） |
+| B2.28 | 本丸 pthread + timedwait gate | **DONE**（2026-07-31） | `libc_test_pthread` slim wrap ALL PASS；curated **686**（`signal_sigtimedwait`）；CLONE_THREAD under fork_active + child RSP SysV align |
 
 **完了条件:** musl-gcc 静的 `hello` + 小規模 CLI がゲストで実行可。  
-→ 2026-07-29: curated **679** + phase3 **ALL PASS** + desktop ENOSYS **0**（round-17 +52）。Walls: thread / `cat FILE|grep` 後期 / TCP / cmdsubst PF.
+→ 2026-07-31: curated **686** + pthread gate **4 PASS** + late-pipe + practical holes + live msync + thread_clone_join。残（非ゴール寄り）: 真の MAP_SHARED CoW / フル musl `-pthread` in-curated / preempt TLS 本線。
 
 ### B3 — Qt / デスクトップ向け（Phase 6 後半〜）〜15 項目
 
@@ -121,7 +127,7 @@ A1/A2/A5–A7 は 2026-07-27〜28 スプリントで上記どおり更新。`mem
 | B3.15 | 大スタック / TLS / 例外 | P1 | **定着**（256MiB mmap session stack；W3.5 まで GREEN） |
 
 **完了条件:** `[desktop_qt] QML ready` が再現する、または明確な次のブロッカー 1 個に収束。  
-→ **2026-07-28:** `QML ready` + W3.5 KEY PASS。次ブロッカー = `g_w3_sg_pixels=1` / DesktopShell 本読（早期 PF）。
+→ **2026-08-01:** `QML ready` + W3.5 KEY PASS 維持。**W3.2 SG bar one-shot force-expose GREEN**（null/poison ガード付き `qquickitem`；drain 後 hide/unparent は不可）。次は sustained SG（expose 維持）／Quick extras 安全復活。`g_w3_sg_pixels=1` / DesktopShell 本読はまだ早い。
 
 ### B4 — バッファ（必要になったら）〜10–20
 

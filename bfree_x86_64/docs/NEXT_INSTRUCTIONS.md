@@ -52,11 +52,16 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-08-09（**early white + smooth spinner GREEN**）
-- **Boot:** `vbe_init` 直後と VMM 直後に白地描画（黒待ち短縮）；`Early brand splash` 確認
-- **Spinner:** シート順は右列→左列；表示は 12f@30° 回転で滑らか化；ISO `out/bfree-ds-visual.iso`
-- **Verify:** `out/brand-splash.txt` GREEN（EARLY=1）
-- **未:** 本番 Start/トレイはまだ FB lookalike；アプリ窓は Qt 枠ではなく FB mini-WM（真 SG→FB0 / host DesktopShell 権威が次）
-- **注意:** host `.a` 直結禁止；`addImportFile` 再試しない
+- **Updated:** 2026-08-10（**① Desktop ENOSYS 再計測＋ゲート化 / ② 製品スモーク**）
+- **① Desktop ENOSYS:** `tools/_desktop_enosys_smoke.sh` → `DESKTOP_ENOSYS_RESULT: PASS unique=0 transfer=1 qml_ready=1`（埋める nr なし；証拠 `out/desktop_enosys/`）
+- **① ゲート:** 同上スクリプトが unique≠0 または transfer なしで exit 1；`guest_desktop_smoke.sh` もシリアルに ENOSYS 集計を追加し unique≠0 なら FAIL
+- **② LTP curated:** 維持緑 `PASS n=238 fail=0`（前回 S+B）
+- **据え置き / Next slices:**
+  - 真 CoW SHARED: 次スライス＝同一物理ページ map→write COW break 最小プローブ
+  - LAN TCP e1000: 次スライス＝tcp_min 1シナリオ緑拡大
+  - 本番 QML post-activate PF: ABI外・本線ログで PF1件収束
+- **Next:** QML 本線 or CoW slice
 
+---
+---
 

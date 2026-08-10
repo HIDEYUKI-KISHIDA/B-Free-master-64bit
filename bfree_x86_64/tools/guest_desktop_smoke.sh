@@ -151,5 +151,21 @@ elif [[ "$status" == 2 ]]; then
 fi
 
 echo "[smoke] log kept: $SERIAL"
+
+# Product-path ENOSYS gate (①): unique [ENOSYS] nr must be 0 on this boot log.
+ENOSYS_UNIQUE=$(grep -aoE '\[ENOSYS\] nr=[0-9a-fA-Fx]+' "$SERIAL" 2>/dev/null \
+  | sed 's/.*nr=//' | sort -u | wc -l | tr -d ' ' || true)
+ENOSYS_UNIQUE=${ENOSYS_UNIQUE:-0}
+if [[ "$ENOSYS_UNIQUE" -eq 0 ]]; then
+  echo "DESKTOP_ENOSYS_RESULT: PASS unique=0 (guest_desktop_smoke)"
+else
+  echo "DESKTOP_ENOSYS_RESULT: FAIL unique=${ENOSYS_UNIQUE} (guest_desktop_smoke)"
+  grep -aoE '\[ENOSYS\] nr=[0-9a-fA-Fx]+' "$SERIAL" 2>/dev/null \
+    | sed 's/.*nr=//' | sort | uniq -c | sort -rn | head -40 || true
+  if [[ "$status" -eq 0 ]]; then
+    status=1
+  fi
+fi
+
 trap - EXIT INT TERM
 exit "$status"

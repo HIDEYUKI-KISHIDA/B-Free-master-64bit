@@ -99,6 +99,8 @@ uint64_t g_bfree_sysret_exec_rdx;
 uint64_t g_bfree_sysret_exec_cr3;
 /* Exec-only user RIP for BFREE_SYSRET_EXEC_TRANSFER (coop must not clobber). */
 uint64_t g_bfree_exec_transfer_rip;
+/* After EXEC_TRANSFER, log the first few user syscalls (desktop→busybox hang). */
+static int g_bfree_post_exec_syscalls;
 /* RAX loaded by BFREE_SYSRET_SIGNAL (0 at handler entry; interrupted retval on sigreturn). */
 uint64_t g_bfree_sysret_sig_rax;
 
@@ -142,9 +144,18 @@ uint64_t g_bfree_fork_saved_rdx;
 static uint64_t g_guest_fork_saved_fsbase;
 
 
+/* Pending-connection backlog shared by AF_INET and AF_UNIX listeners. */
+#ifndef BFREE_ACCEPT_Q
+#define BFREE_ACCEPT_Q 4
+#endif
+
 /* H32 AF_INET (restored) */
 #ifndef BFREE_LINUX_AF_INET
 #define BFREE_LINUX_AF_INET 2
+#endif
+/* AF_INET6 rides the AF_INET slots: only ::1 and ::ffff:127.0.0.1 resolve. */
+#ifndef BFREE_LINUX_AF_INET6
+#define BFREE_LINUX_AF_INET6 10
 #endif
 #ifndef BFREE_INET_SLOTS
 #define BFREE_INET_SLOTS 8
@@ -240,12 +251,37 @@ typedef struct {
     int connected;
     int bound;
     int is_dgram;   /* SOCK_DGRAM: datagram queue (+ e1000 for LAN) */
+    int is_v6;      /* AF_INET6 socket mapped onto the IPv4 loopback slot */
     int is_raw;     /* SOCK_RAW (BusyBox ping ICMP) */
     int ip_proto;   /* e.g. IPPROTO_ICMP=1 for raw */
+    int shut_rd;
+    int shut_wr;
+    int nonblock;
+    int so_reuseaddr;
+    int so_reuseport;
+    int so_keepalive;
+    int so_broadcast;
+    int tcp_nodelay;
+    int so_linger_on;
+    int so_linger_sec;
+    int so_oobinline;
+    int so_error;   /* pending SO_ERROR, cleared on getsockopt */
+    int ip_ttl;     /* IPPROTO_IP / IP_TTL (default 64) */
+    int ip_tos;     /* IPPROTO_IP / IP_TOS */
+    int so_rcvbuf;
+    int so_sndbuf;
+    int64_t so_rcvtimeo_us;
+    int64_t so_sndtimeo_us;
     uint32_t addr;
     uint16_t port;
     int accept_rd;
+    int accept_wr; /* pending accepted-side write magic (-1 if none) */
     int pipe_magic;
+    /* Listener backlog: pending connect() pipe pairs waiting for accept(). */
+    int q_rd[BFREE_ACCEPT_Q];
+    int q_wr[BFREE_ACCEPT_Q];
+    int q_len;
+    int listen_backlog;
     int tcp_pcb; /* >=0: minimal e1000 TCP client pcb (SOCK_STREAM LAN) */
     uint32_t peer_addr; /* dgram connect() default destination */
     uint16_t peer_port;
@@ -282,6 +318,8 @@ static uint32_t g_guest_uid;
 static uint32_t g_guest_euid;
 static uint32_t g_guest_gid;
 static uint32_t g_guest_egid;
+static char g_execve_kpath_override[256];
+static int g_getdents_legacy;
 static int g_guest_pgid = 1;
 #endif
 
@@ -319,27 +357,65 @@ static int g_sigalt_disable = 1;
 #define BFREE_LINUX_AF_UNIX 1
 #define BFREE_UNIX_SLOTS 16
 #define BFREE_UNIX_FD_BASE 0x3900
+#define BFREE_UNIX_DGRAM_SIZE 256
 typedef struct {
     int used;
     int listening;
     int connected;
+    int is_dgram;   /* SOCK_DGRAM: single-slot datagram mailbox */
+    int shut_rd;
+    int shut_wr;
+    int nonblock;
+    int so_keepalive;
+    int so_rcvbuf;
+    int so_sndbuf;
     int accept_rd;
+    int accept_wr; /* pending accepted-side write magic (-1 if none) */
     int pipe_magic;
     char path[96];
+    char peer_path[96];  /* dgram connect() default destination */
+    char dg_src[96];     /* bound path of the last datagram's sender */
+    int dg_pending;
+    size_t dg_len;
+    unsigned char dg_buf[BFREE_UNIX_DGRAM_SIZE];
+    int q_rd[BFREE_ACCEPT_Q];
+    int q_wr[BFREE_ACCEPT_Q];
+    int q_len;
+    int listen_backlog;
 } bfree_unix_sock_t;
 static bfree_unix_sock_t g_unix_socks[BFREE_UNIX_SLOTS];
 #endif
 
 static int bfree_user_ptr_mapped(long ptr);
+static int bfree_user_buf_mapped(uint64_t base, uint64_t len);
 static int bfree_user_vaddr_mapped(uint64_t vaddr);
 static void bfree_wrmsr64(uint32_t msr, uint64_t val);
 static uint64_t bfree_rdmsr64(uint32_t msr);
 static int bfree_pty_slot_from_fd(int fd);
 static int bfree_inet_from_fd(int fd);
 static void bfree_inet_sock_release(int resolved);
+static void bfree_pidfd_release(int resolved);
+static void bfree_inotify_release(int resolved);
+static void bfree_inotify_notify_vname(const char *vname, uint32_t mask);
+static long bfree_inotify_read(int resolved, long buf, long count);
+static int bfree_inotify_has_events(int resolved);
+static int bfree_pidfd_is_valid_fd(int fd);
+static void bfree_fanotify_release(int resolved);
+static void bfree_perf_release(int resolved);
+static void bfree_fsctx_release(int resolved);
+static void bfree_iouring_release(int resolved);
+static void bfree_uffd_release(int resolved);
+static void bfree_landlock_release(int resolved);
+static long sys_linux_fstat(long fd, long statbuf);
 static uint16_t bfree_inet_ntohs(uint16_t x);
 static uint32_t bfree_inet_ntohl(uint32_t x);
 static int bfree_unix_from_fd(int fd);
+static void bfree_sock_accept_q_reset(int *q_rd, int *q_wr, int *q_len,
+                                      int *backlog);
+static long bfree_unix_dgram_send(int idx, long buf, long len, long addr,
+                                  long addrlen);
+static long bfree_unix_dgram_recv(int idx, long buf, long len, int peek,
+                                  int dontwait, long addr);
 static void bfree_guest_alarm_poll(void);
 static long bfree_coop_yield_to_parent_done(long ret);
 static long bfree_coop_yield_to_child_done(long ret);
@@ -356,12 +432,18 @@ static long bfree_coop_yield_to_child(void);
 static long bfree_guest_fork_enter(int copy_as);
 static void bfree_guest_futex_wake_user(volatile int *uaddr);
 static void bfree_guest_sig_raise(int sig);
+static long bfree_linux_read_timerfd(long fd, long buf, long count);
+static long bfree_linux_read_signalfd(long fd, long buf, long count);
 static int bfree_guest_sig_take_eintr(void);
 static long bfree_guest_sig_try_deliver(long ret);
 static long bfree_guest_exit_from_fork_signal(int sig);
+static void bfree_guest_flocks_drop_pid(int pid);
+static int bfree_user_stack_poke_bytes(uint64_t user_vaddr, const char *bytes, uint64_t len);
+static int bfree_user_stack_peek_bytes(uint64_t user_vaddr, char *bytes, uint64_t len);
 static long sys_linux_poll_common(long fds_ptr, long nfds);
 static long bfree_gthr_park_poll(long fds_ptr, long nfds);
 static long bfree_gthr_park_futex(volatile int *uaddr, int val);
+static long bfree_gthr_yield(void);
 static long bfree_gthr_on_eventfd_write(void);
 static long bfree_gthr_on_futex_wake(volatile int *uaddr, int want);
 
@@ -590,6 +672,25 @@ static long bfree_gthr_park_poll(long fds_ptr, long nfds)
     return sw != 0 ? sw : 0;
 }
 
+static long bfree_gthr_yield(void)
+{
+    int other;
+    long sw;
+
+    if (!bfree_gthr_mt()) {
+        return 0;
+    }
+    other = bfree_gthr_find_runnable(g_gthr_cur);
+    if (other < 0) {
+        return 0;
+    }
+    bfree_gthr_save_current();
+    g_gthr[g_gthr_cur].rax = 0;
+    g_gthr[g_gthr_cur].state = BFREE_GTHR_RUNNABLE;
+    sw = bfree_gthr_publish_switch(other);
+    return sw != 0 ? sw : 0;
+}
+
 static long bfree_gthr_park_futex(volatile int *uaddr, int val)
 {
     int other;
@@ -614,58 +715,39 @@ static long bfree_gthr_park_futex(volatile int *uaddr, int val)
 static long bfree_gthr_on_eventfd_write(void)
 {
     int i;
-    int other = -1;
-    long sw;
+    int woke = 0;
 
     if (!bfree_gthr_mt()) {
         return 0;
     }
-    /* Eventfd write: prefer parked poll waiters over a generic runnable scan. */
+    /* Mark poll waiters RUNNABLE but do NOT steal: if we switch to a QThread
+     * that never parks again, the waker (often pthread_create) never returns. */
     for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
         if (i == g_gthr_cur || !g_gthr[i].used) {
             continue;
         }
         if (g_gthr[i].state == BFREE_GTHR_WAIT_POLL) {
-            other = i;
-            break;
+            g_gthr[i].state = BFREE_GTHR_RUNNABLE;
+            g_gthr[i].rax = 1;
+            g_gthr[i].poll_fds = 0;
+            g_gthr[i].poll_nfds = 0;
+            ++woke;
         }
     }
-    if (other < 0) {
-        other = bfree_gthr_find_runnable(g_gthr_cur);
-    }
-    if (other < 0) {
-        return 0;
-    }
-    if (g_gthr[other].state != BFREE_GTHR_WAIT_POLL &&
-        g_gthr[other].state != BFREE_GTHR_RUNNABLE) {
-        return 0;
-    }
-    bfree_gthr_save_current();
-    g_gthr[g_gthr_cur].rax = (uint64_t)sizeof(uint64_t);
-    g_gthr[g_gthr_cur].state = BFREE_GTHR_RUNNABLE;
-    /* Mark waiter runnable before publish so we do not depend on a second
-     * poll_common walk of the waiter's user pollfd (can EFAULT on edge cases). */
-    if (g_gthr[other].state == BFREE_GTHR_WAIT_POLL) {
-        g_gthr[other].state = BFREE_GTHR_RUNNABLE;
-        g_gthr[other].rax = 1;
-        g_gthr[other].poll_fds = 0;
-        g_gthr[other].poll_nfds = 0;
-    }
-    sw = bfree_gthr_publish_switch(other);
-    return sw != 0 ? sw : 0;
+    (void)woke;
+    return 0;
 }
 
 static long bfree_gthr_on_futex_wake(volatile int *uaddr, int want)
 {
     int i;
     int woke = 0;
-    int other = -1;
-    long sw;
-    long waker_ret;
 
     if (!bfree_gthr_mt()) {
         return 0;
     }
+    /* WAKE = make waiters RUNNABLE only. Stealing to the waiter hung desktop
+     * pthread_create: child ran QThread ppoll forever and parent never left WAKE. */
     for (i = 0; i < BFREE_GUEST_MAX_THREADS && woke < want; ++i) {
         if (!g_gthr[i].used || g_gthr[i].state != BFREE_GTHR_WAIT_FUTEX) {
             continue;
@@ -676,20 +758,9 @@ static long bfree_gthr_on_futex_wake(volatile int *uaddr, int want)
         g_gthr[i].state = BFREE_GTHR_RUNNABLE;
         g_gthr[i].rax = 0;
         g_gthr[i].futex_uaddr = 0;
-        if (other < 0) {
-            other = i;
-        }
         ++woke;
     }
-    if (other < 0) {
-        return 0;
-    }
-    waker_ret = woke > 0 ? (long)woke : 1;
-    bfree_gthr_save_current();
-    g_gthr[g_gthr_cur].rax = (uint64_t)waker_ret;
-    g_gthr[g_gthr_cur].state = BFREE_GTHR_RUNNABLE;
-    sw = bfree_gthr_publish_switch(other);
-    return sw != 0 ? sw : 0;
+    return woke > 0 ? (long)woke : 0;
 }
 
 static void bfree_guest_thread_save_parent_ctx(void)
@@ -717,16 +788,19 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
     bfree_gthr_t *child;
 
     preempt_disable();
-    if (g_guest_fork_active) {
-        preempt_enable();
-        return -11;
-    }
+    /* Allow CLONE_THREAD inside a forked child after execve (busybox shell
+     * leaves g_guest_fork_active set). Coop process-fork still uses other paths.
+     * Blocking here made early pthread/clone in a freshly exec'd ELF return EAGAIN
+     * while late curated thread_clone_join passed after fork tests cleared the flag.
+     */
     if (newsp == 0 || !bfree_user_ptr_mapped(newsp)) {
         preempt_enable();
         return -14;
     }
     child_rsp = (uint64_t)(uintptr_t)newsp;
     child_rsp &= ~0xFULL;
+    /* SysV AMD64: function entry wants RSP%16==8 (as after CALL). */
+    child_rsp -= 8ULL;
 
     tid = g_guest_next_pid++;
     if (tid <= 0) {
@@ -1121,6 +1195,7 @@ static int bfree_guest_vfork_stack_snapshot(uint64_t rsp);
 static void bfree_guest_vfork_stack_restore(void);
 
 static int bfree_user_ptr_mapped(long ptr);
+static int bfree_user_buf_mapped(uint64_t base, uint64_t len);
 static void bfree_guest_stdio_heal_pipes(void);
 static void bfree_guest_pipe_reclaim_dead_slots(void);
 static long sys_linux_pipe2(long pipefd_ptr, long flags);
@@ -1280,6 +1355,7 @@ static long bfree_guest_exit_from_fork(long status)
     }
 
     bfree_process_exit_child((int)status);
+    bfree_guest_flocks_drop_pid(g_guest_fork_pid);
     g_guest_fork_active = 0;
     g_guest_fork_status = (int)(status & 0xff);
     g_guest_fork_status_ready = 1;
@@ -1299,6 +1375,12 @@ static long bfree_guest_exit_from_fork(long status)
         }
     }
     bfree_guest_stdio_heal_pipes();
+    /* Parent stack live in parent_pt — must restore before vfork stack poke.
+     * After vfork+exec the TCB still points at child_pt. */
+    if (resume_pt && knl_current_task) {
+        knl_current_task->page_table_base = resume_pt;
+        __asm__ volatile("mov %0, %%cr3" :: "r"(resume_pt) : "memory");
+    }
     /* AS-copy: parent kept running — do not rewind heap/stack. */
     if (!as_copy) {
         for (i = 0; i < sizeof(g_guest_cwd); ++i) {
@@ -1338,7 +1420,8 @@ static long bfree_guest_exit_from_fork(long status)
      */
     {
         int parent_waiting =
-            (g_coop_parent_in_wait || g_guest_wait_status_ptr != 0) ? 1 : 0;
+            (g_coop_parent_in_wait || g_guest_wait_status_ptr != 0 ||
+             g_guest_waitid_active) ? 1 : 0;
         int st = 0;
         long wr = 0;
 
@@ -1356,6 +1439,20 @@ static long bfree_guest_exit_from_fork(long status)
                 *(int *)(uintptr_t)g_guest_wait_status_ptr =
                     (wr > 0) ? st : (((int)(status & 0xff)) << 8);
             }
+            if (g_guest_waitid_active && g_guest_waitid_infop != 0 &&
+                bfree_user_ptr_mapped(g_guest_waitid_infop)) {
+                uint8_t *raw = (uint8_t *)(uintptr_t)g_guest_waitid_infop;
+                size_t i;
+                int use_st = (wr > 0) ? st : (((int)(status & 0xff)) << 8);
+                long use_pid = (wr > 0) ? wr : (long)g_guest_fork_pid;
+                for (i = 0; i < 32; ++i) {
+                    raw[i] = 0;
+                }
+                *(int *)(void *)(raw + 0) = BFREE_SIGCHLD;
+                *(int *)(void *)(raw + 8) = BFREE_CLD_EXITED;
+                *(int *)(void *)(raw + 16) = (int)use_pid;
+                *(int *)(void *)(raw + 24) = (use_st >> 8) & 0xff;
+            }
             uart_puts("[VFORK] wait reap wr=");
             uart_puthex64((uint64_t)(unsigned long)wr);
             uart_puts(" st=");
@@ -1366,8 +1463,11 @@ static long bfree_guest_exit_from_fork(long status)
         if (as_copy && g_coop_parent_started) {
             bfree_coop_publish_parent_resume();
             if (parent_waiting) {
+                /* waitid returns 0; waitpid returns reaped pid. */
                 g_coop_parent_resume_rax =
-                    (uint64_t)(wr > 0 ? wr : (long)g_guest_fork_pid);
+                    g_guest_waitid_active
+                        ? 0ULL
+                        : (uint64_t)(wr > 0 ? wr : (long)g_guest_fork_pid);
                 g_coop_parent_resume_mode = 2;
             }
             bfree_coop_arm_parent_resume();
@@ -1376,9 +1476,11 @@ static long bfree_guest_exit_from_fork(long status)
             g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
             g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
             g_bfree_fork_parent_ret =
-                parent_waiting && wr > 0
-                    ? (uint64_t)wr
-                    : (uint64_t)(long)g_guest_fork_pid;
+                g_guest_waitid_active
+                    ? 0ULL
+                    : (parent_waiting && wr > 0
+                           ? (uint64_t)wr
+                           : (uint64_t)(long)g_guest_fork_pid);
         }
         uart_puts("[VFORK] parent resume rip=");
         uart_puthex64(g_bfree_fork_saved_rcx);
@@ -1408,6 +1510,8 @@ static long bfree_guest_exit_from_fork(long status)
     g_coop_parent_started = 0;
     g_coop_parent_in_wait = 0;
     g_guest_wait_status_ptr = 0;
+    g_guest_waitid_active = 0;
+    g_guest_waitid_infop = 0;
     return BFREE_SYSRET_FORK_PARENT;
 }
 
@@ -1536,7 +1640,8 @@ static long sys_linux_waitid(long idtype, long id, long infop, long options)
     int status = 0;
     int wopts;
     long rc;
-    bfree_siginfo_wait_t *si;
+    int blocking;
+    uint8_t *raw;
 
     if (idtype == BFREE_P_PID) {
         pid = id;
@@ -1545,34 +1650,96 @@ static long sys_linux_waitid(long idtype, long id, long infop, long options)
     } else {
         return -22; /* EINVAL: P_PGID not supported yet */
     }
+    if ((options & BFREE_WEXITED) == 0 && (options & 0x00000002) == 0 &&
+        (options & 0x00000008) == 0) {
+        return -22;
+    }
     wopts = ((options & BFREE_WNOHANG_ID) != 0) ? 1 : 0;
-    /* Keep waitid on wait4 — do not route through waitpid (coop SYSRET). */
-    if (pid == -1 && wopts != 0 && bfree_process_live_count() > 0) {
-        (void)bfree_process_force_zombie_live();
-        g_guest_fork_active = 0;
-        g_coop_parent_started = 0;
-        g_guest_fork_was_as_copy = 0;
+    blocking = (wopts == 0);
+
+    for (;;) {
+        /* Same heal/yield policy as waitpid — wait4 alone is non-blocking. */
+        if (pid == -1 && !blocking) {
+            if (bfree_process_live_count() > 0) {
+                (void)bfree_process_force_zombie_live();
+                g_guest_fork_active = 0;
+                g_coop_parent_started = 0;
+                g_guest_fork_was_as_copy = 0;
+                g_coop_parent_in_wait = 0;
+            }
+        } else if (blocking && pid > 0) {
+            if (bfree_process_force_zombie_except((int)pid) > 0) {
+                if (bfree_process_child_pid() != (int)pid) {
+                    g_guest_fork_active = 0;
+                    g_coop_parent_started = 0;
+                    g_guest_fork_was_as_copy = 0;
+                }
+            }
+        }
+        rc = bfree_process_wait4(pid, &status, wopts);
+        if (rc > 0) {
+            break;
+        }
+        if (rc < 0) {
+            return rc;
+        }
+        if (!blocking) {
+            return 0; /* WNOHANG, nothing ready */
+        }
+        if (pid == -1) {
+            if (bfree_process_runnable_count() > 0) {
+                g_guest_fork_active = 1;
+                g_guest_wait_status_ptr = 0;
+                g_guest_waitid_active = 1;
+                g_guest_waitid_infop = infop;
+                g_coop_parent_in_wait = 1;
+                if (bfree_process_first_live_pid() > 0) {
+                    (void)bfree_process_select_pid(bfree_process_first_live_pid());
+                }
+                return bfree_coop_yield_to_child();
+            }
+            if (bfree_process_force_zombie_live() > 0) {
+                g_guest_fork_active = 0;
+                g_coop_parent_started = 0;
+                g_guest_fork_was_as_copy = 0;
+                continue;
+            }
+        } else if (pid > 0 && bfree_process_runnable_count() > 0) {
+            g_guest_fork_active = 1;
+            g_guest_wait_status_ptr = 0;
+            g_guest_waitid_active = 1;
+            g_guest_waitid_infop = infop;
+            g_coop_parent_in_wait = 1;
+            (void)bfree_process_select_pid((int)pid);
+            return bfree_coop_yield_to_child();
+        }
+        {
+            int er = bfree_guest_sig_take_eintr();
+            if (er < 0) {
+                return er;
+            }
+        }
+        __asm__ volatile("sti; hlt" ::: "memory");
     }
-    rc = bfree_process_wait4(pid, &status, wopts);
-    if (rc < 0) {
-        return rc;
-    }
-    if (rc == 0) {
-        return 0; /* WNOHANG, nothing ready */
-    }
+
     g_last_waitpid_status = status;
     g_guest_fork_status_ready = 0;
+    g_guest_waitid_active = 0;
+    g_coop_parent_in_wait = 0;
     if (infop != 0 && bfree_user_ptr_mapped(infop)) {
-        si = (bfree_siginfo_wait_t *)(uintptr_t)infop;
-        si->si_signo = BFREE_SIGCHLD;
-        si->si_errno = 0;
-        si->si_code = BFREE_CLD_EXITED;
-        si->__pad0 = 0;
-        si->si_pid = (int)rc;
-        si->si_uid = 0;
-        si->si_status = (status >> 8) & 0xff;
-        si->si_utime = 0;
-        si->si_stime = 0;
+        raw = (uint8_t *)(uintptr_t)infop;
+        {
+            size_t i;
+            for (i = 0; i < 32; ++i) {
+                raw[i] = 0;
+            }
+        }
+        *(int *)(void *)(raw + 0) = BFREE_SIGCHLD;
+        *(int *)(void *)(raw + 4) = 0;
+        *(int *)(void *)(raw + 8) = BFREE_CLD_EXITED;
+        *(int *)(void *)(raw + 16) = (int)rc;
+        *(unsigned int *)(void *)(raw + 20) = 0;
+        *(int *)(void *)(raw + 24) = (status >> 8) & 0xff;
     }
     return 0;
 }
@@ -2299,6 +2466,11 @@ long sys_shm_unlink(long name_ptr)
     return bfree_guest_shm_unlink(name_ptr);
 }
 
+/* Soft CLOCK_REALTIME override from clock_settime / settimeofday. */
+static int g_guest_realtime_override;
+static long g_guest_realtime_sec;
+static long g_guest_realtime_nsec;
+
 // case 29 / Linux 228: sys_clock_gettime
 // CLOCK_MONOTONIC / CLOCK_REALTIME → uptime_us ベースで返す
 long sys_clock_gettime(long clockid, long timespec_ptr)
@@ -2306,12 +2478,17 @@ long sys_clock_gettime(long clockid, long timespec_ptr)
     struct timespec *ts = (struct timespec *)timespec_ptr;
     uint64_t us;
 
-    (void)clockid; // CLOCK_MONOTONIC(1) / CLOCK_REALTIME(0) どちらも uptime で代用
     if (ts == 0) {
         return -22;
     }
     if (!bfree_user_vaddr_mapped((uint64_t)(uintptr_t)ts)) {
         return -14;
+    }
+    /* CLOCK_REALTIME(0): honor soft override when set. */
+    if (clockid == 0 && g_guest_realtime_override) {
+        ts->tv_sec = g_guest_realtime_sec;
+        ts->tv_nsec = g_guest_realtime_nsec;
+        return 0;
     }
     us = knl_get_current_time(); // uptime_us
     ts->tv_sec  = (long)(us / 1000000ULL);
@@ -2458,9 +2635,14 @@ long sys_mprotect(long addr, long length, long prot)
 // Linux 28: madvise — QV4 PageReservation::decommit guard pages; noop on guest arena.
 static long sys_linux_madvise(long addr, long length, long advice)
 {
+    /* Known Linux MADV_* (0..12, 100..101 soft-ok). Reject junk. */
+    if (length < 0) {
+        return -22;
+    }
+    if (advice < 0 || (advice > 12 && advice < 100) || advice > 101) {
+        return -22; /* EINVAL */
+    }
     (void)addr;
-    (void)length;
-    (void)advice;
     return 0;
 }
 
@@ -2591,16 +2773,25 @@ long sys_brk(long addr)
     return addr;
 }
 
-// Linux 200: get_robust_list — musl pthread init; single-threaded guest has none.
-static long sys_linux_get_robust_list(long head_ptr, long len_ptr, long pid)
+/* Linux 274: get_robust_list — musl pthread init; single-threaded guest has none.
+ * (Historically miswired as case 200 / tkill.) */
+static long sys_linux_get_robust_list(long pid, long head_ptr, long len_ptr)
 {
     (void)pid;
     if (head_ptr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)head_ptr)) {
         *(uintptr_t *)(uintptr_t)head_ptr = 0;
     }
     if (len_ptr != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)len_ptr)) {
-        *(uintptr_t *)(uintptr_t)len_ptr = 0;
+        *(size_t *)(uintptr_t)len_ptr = sizeof(uintptr_t);
     }
+    return 0;
+}
+
+/* Linux 273: set_robust_list */
+static long sys_linux_set_robust_list_real(long head, long len)
+{
+    (void)head;
+    (void)len;
     return 0;
 }
 
@@ -2837,7 +3028,42 @@ long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, lon
     }
 }
 
-// Linux 97: getrlimit — musl may probe stack limit during startup.
+// Linux 97: getrlimit — align with prlimit64 resource cases.
+static uint64_t g_rlim_stack_cur = 8ULL * 1024ULL * 1024ULL;
+static uint64_t g_rlim_stack_max = 16ULL * 1024ULL * 1024ULL;
+static uint64_t g_rlim_nofile_cur = 1024ULL;
+static uint64_t g_rlim_nofile_max = 4096ULL;
+static uint64_t g_rlim_default_cur = 16ULL * 1024ULL * 1024ULL;
+static uint64_t g_rlim_default_max = 16ULL * 1024ULL * 1024ULL;
+
+static void bfree_rlimit_defaults(long resource, uint64_t *cur, uint64_t *max)
+{
+    if (resource == 3) { /* RLIMIT_STACK */
+        *cur = g_rlim_stack_cur;
+        *max = g_rlim_stack_max;
+    } else if (resource == 7) { /* RLIMIT_NOFILE */
+        *cur = g_rlim_nofile_cur;
+        *max = g_rlim_nofile_max;
+    } else {
+        *cur = g_rlim_default_cur;
+        *max = g_rlim_default_max;
+    }
+}
+
+static void bfree_rlimit_store(long resource, uint64_t cur, uint64_t max)
+{
+    if (resource == 3) {
+        g_rlim_stack_cur = cur;
+        g_rlim_stack_max = max;
+    } else if (resource == 7) {
+        g_rlim_nofile_cur = cur;
+        g_rlim_nofile_max = max;
+    } else {
+        g_rlim_default_cur = cur;
+        g_rlim_default_max = max;
+    }
+}
+
 long sys_getrlimit(long resource, long rlim_ptr)
 {
     typedef struct {
@@ -2846,12 +3072,10 @@ long sys_getrlimit(long resource, long rlim_ptr)
     } bfree_rlimit_t;
     bfree_rlimit_t *rlim = (bfree_rlimit_t *)(uintptr_t)rlim_ptr;
 
-    (void)resource;
     if (rlim == 0 || !bfree_user_vaddr_mapped((uint64_t)(uintptr_t)rlim)) {
         return -14;
     }
-    rlim->rlim_cur = 16ULL * 1024ULL * 1024ULL;
-    rlim->rlim_lim = 16ULL * 1024ULL * 1024ULL;
+    bfree_rlimit_defaults(resource, &rlim->rlim_cur, &rlim->rlim_lim);
     return 0;
 }
 
@@ -2983,7 +3207,21 @@ static void bfree_guest_fork_child_pipe_close_writers(void)
     }
 }
 static uint64_t g_guest_eventfd_val[BFREE_MAX_GUEST_EVENTFD];
+static int g_guest_eventfd_nonblock[BFREE_MAX_GUEST_EVENTFD];
+/* EFD_SEMAPHORE: read() yields 1 and decrements instead of draining. */
+static int g_guest_eventfd_sem[BFREE_MAX_GUEST_EVENTFD];
 static int g_guest_eventfd_next;
+
+/* prctl PR_SET_PDEATHSIG: signal raised when the parent goes away (0 = none). */
+static int g_guest_pdeathsig;
+
+typedef struct {
+    int used;
+    int magic_fd;
+    int nonblock;
+    uint64_t mask;
+} bfree_signalfd_t;
+static bfree_signalfd_t g_guest_signalfds[BFREE_MAX_SIGNALFD];
 
 #define BFREE_PTY_SLOTS             4
 #define BFREE_PTY_BUF               512
@@ -3021,6 +3259,7 @@ static int bfree_pty_is_master(int fd)
 }
 
 static int bfree_user_ptr_mapped(long ptr);
+static int bfree_user_buf_mapped(uint64_t base, uint64_t len);
 static int copy_user_cstr(long user_ptr, char *out, size_t cap);
 static int bfree_guest_is_pipe_rd(int fd);
 static int bfree_guest_is_pipe_wr(int fd);
@@ -3046,7 +3285,10 @@ static int bfree_guest_eventfd_index(int fd)
 #define BFREE_GUEST_BUSYBOX_FD      0x3706
 #define BFREE_GUEST_VFILE_SLOTS     64
 #define BFREE_GUEST_VFILE_SIZE      16384
-#define BFREE_GUEST_VFILE_FD_BASE   0x3710
+/* Keep clear of dir magics (0x3700..0x3736), OFD (0x3800), UNIX (0x3900),
+ * PTY (0x3A00), and INET (0x3B00). Prior 0x3710 collided with ROOT_DIR;
+ * 0x3900 collided with AF_UNIX and broke lseek/fcntl on early vfile slots. */
+#define BFREE_GUEST_VFILE_FD_BASE   0x3C00
 #define BFREE_GUEST_ROOT_DIR_FD     0x3720
 #define BFREE_GUEST_TMP_DIR_FD      0x3721
 #define BFREE_GUEST_BIN_DIR_FD      0x3722
@@ -3077,8 +3319,25 @@ static int bfree_guest_eventfd_index(int fd)
 #define BFREE_LINUX_O_APPEND        02000
 #define BFREE_LINUX_O_CLOEXEC       02000000
 #define BFREE_LINUX_O_NONBLOCK      04000
+#ifndef BFREE_IN_MODIFY
+#define BFREE_IN_MODIFY  0x00000002U
+#define BFREE_IN_CREATE  0x00000100U
+#define BFREE_IN_DELETE  0x00000200U
+#endif
+#define BFREE_INOTIFY_FD_BASE 98000
+#define BFREE_MAX_INOTIFY     4
 #define BFREE_LINUX_FD_CLOEXEC      1
 #define BFREE_LINUX_O_DIRECTORY     0200000
+#define BFREE_LINUX_O_PATH          010000000
+#define BFREE_LINUX_O_TMPFILE       020000000
+
+/* memfd_create flags and F_ADD_SEALS / F_GET_SEALS bits. */
+#define BFREE_MFD_CLOEXEC       1
+#define BFREE_MFD_ALLOW_SEALING 2
+#define BFREE_F_SEAL_SEAL       0x0001
+#define BFREE_F_SEAL_SHRINK     0x0002
+#define BFREE_F_SEAL_GROW       0x0004
+#define BFREE_F_SEAL_WRITE      0x0008
 
 
 typedef struct {
@@ -3094,6 +3353,21 @@ typedef struct {
     /* Legacy fallback for internal magic fds. Published Linux fds use an
      * open-file description, so separate open() calls do not share this. */
     size_t pos;
+    /* utimensat / futimens — reported by fstat */
+    int64_t atime_sec;
+    int64_t atime_nsec;
+    int64_t mtime_sec;
+    int64_t mtime_nsec;
+    /* chmod/fchmod — 0 means "use type default" in stat */
+    uint32_t mode;
+    uint32_t uid;
+    uint32_t gid;
+    /* F_ADD_SEALS bits (memfd) */
+    uint32_t seals;
+    /* Thin xattr: one name/value pair per vfile (ENODATA when empty). */
+    char xattr_name[32];
+    unsigned char xattr_value[64];
+    size_t xattr_len;
 } bfree_guest_vfile_t;
 
 static bfree_guest_vfile_t g_guest_vfiles[BFREE_GUEST_VFILE_SLOTS];
@@ -3186,6 +3460,46 @@ static void bfree_guest_shared_mmap_sync_vfile(int vfile_idx)
     }
 }
 
+/* Linux msync: flush live MAP_SHARED pages into vfile; keep tracking (unlike munmap). */
+static long sys_linux_msync(long addr, long length, long flags)
+{
+    uint64_t lo;
+    uint64_t hi;
+    int i;
+
+    (void)flags;
+    if (length < 0) {
+        return -22;
+    }
+    if (addr == 0 && length == 0) {
+        return 0;
+    }
+    if (length == 0) {
+        return 0;
+    }
+    lo = (uint64_t)(uintptr_t)addr;
+    hi = lo + (uint64_t)length;
+    if (hi < lo) {
+        return -22;
+    }
+    for (i = 0; i < BFREE_GUEST_SHARED_MMAP_SLOTS; ++i) {
+        bfree_guest_shared_mmap_t *sm = &g_guest_shared_mmaps[i];
+        uint64_t smo;
+        uint64_t smhi;
+
+        if (!sm->used) {
+            continue;
+        }
+        smo = sm->va;
+        smhi = smo + (uint64_t)sm->map_len;
+        if (smhi > lo && smo < hi) {
+            bfree_guest_shared_mmap_writeback_one(sm);
+            /* Keep sm->used — mapping remains live after msync. */
+        }
+    }
+    return 0;
+}
+
 static int bfree_guest_shared_mmap_track(int vfile_idx, uint64_t va, size_t map_len,
                                          size_t file_off)
 {
@@ -3231,6 +3545,77 @@ static int g_guest_fd_target[BFREE_GUEST_FD_TABLE_SIZE];
 static int g_guest_fd_dup_save[BFREE_GUEST_FD_TABLE_SIZE];
 static uint8_t g_guest_fd_cloexec[BFREE_GUEST_FD_TABLE_SIZE];
 static int g_guest_fd_inited;
+
+/* Whole-file advisory locks (F_SETLK / F_GETLK) keyed by vnode index. */
+#define BFREE_GUEST_FLOCK_SLOTS 16
+#define BFREE_LINUX_F_RDLCK 0
+#define BFREE_LINUX_F_WRLCK 1
+#define BFREE_LINUX_F_UNLCK 2
+#define BFREE_LINUX_F_GETLK 5
+#define BFREE_LINUX_F_SETLK 6
+#define BFREE_LINUX_F_SETLKW 7
+typedef struct {
+    int used;
+    int vnode; /* index into g_guest_vfiles */
+    int type;  /* F_RDLCK / F_WRLCK */
+    int owner_pid;
+} bfree_guest_flock_t;
+static bfree_guest_flock_t g_guest_flocks[BFREE_GUEST_FLOCK_SLOTS];
+
+/* Seek positions for fds that are not vfile/OFD/magic blobs (last resort). */
+#define BFREE_GUEST_SEEK_SLOTS 64
+static struct {
+    int used;
+    int key;
+    size_t pos;
+} g_guest_seek_pos[BFREE_GUEST_SEEK_SLOTS];
+
+static size_t *bfree_guest_seek_pos_for(int key)
+{
+    int i;
+    int free_i = -1;
+
+    for (i = 0; i < BFREE_GUEST_SEEK_SLOTS; ++i) {
+        if (g_guest_seek_pos[i].used && g_guest_seek_pos[i].key == key) {
+            return &g_guest_seek_pos[i].pos;
+        }
+        if (!g_guest_seek_pos[i].used && free_i < 0) {
+            free_i = i;
+        }
+    }
+    if (free_i < 0) {
+        return 0;
+    }
+    g_guest_seek_pos[free_i].used = 1;
+    g_guest_seek_pos[free_i].key = key;
+    g_guest_seek_pos[free_i].pos = 0;
+    return &g_guest_seek_pos[free_i].pos;
+}
+
+static void bfree_guest_flocks_drop_pid(int pid)
+{
+    int i;
+
+    if (pid <= 0) {
+        return;
+    }
+    for (i = 0; i < BFREE_GUEST_FLOCK_SLOTS; ++i) {
+        if (g_guest_flocks[i].used && g_guest_flocks[i].owner_pid == pid) {
+            g_guest_flocks[i].used = 0;
+        }
+    }
+}
+
+/* musl/glibc x86_64 struct flock layout (with off_t alignment padding). */
+typedef struct {
+    int16_t l_type;
+    int16_t l_whence;
+    int32_t __pad0;
+    int64_t l_start;
+    int64_t l_len;
+    int32_t l_pid;
+    int32_t __pad1;
+} bfree_linux_flock_t;
 
 static void bfree_guest_fd_ensure_init(void)
 {
@@ -3484,6 +3869,16 @@ static void bfree_guest_vfile_clear_slot(bfree_guest_vfile_t *vf)
     vf->name[0] = '\0';
     vf->len = 0;
     vf->pos = 0;
+    vf->atime_sec = 0;
+    vf->atime_nsec = 0;
+    vf->mtime_sec = 0;
+    vf->mtime_nsec = 0;
+    vf->mode = 0;
+    vf->uid = 0;
+    vf->gid = 0;
+    vf->seals = 0;
+    vf->xattr_name[0] = '\0';
+    vf->xattr_len = 0;
 }
 
 static void bfree_guest_vfile_ref(int target, int delta)
@@ -3644,6 +4039,14 @@ static int bfree_guest_vfile_alloc_slot(const char *name, int truncate)
             g_guest_vfiles[i].pos = 0;
             g_guest_vfiles[i].is_symlink = 0;
             g_guest_vfiles[i].is_dir = 0;
+            g_guest_vfiles[i].atime_sec = 0;
+            g_guest_vfiles[i].atime_nsec = 0;
+            g_guest_vfiles[i].mtime_sec = 0;
+            g_guest_vfiles[i].mtime_nsec = 0;
+            g_guest_vfiles[i].mode = 0;
+            g_guest_vfiles[i].uid = 0;
+            g_guest_vfiles[i].gid = 0;
+            g_guest_vfiles[i].seals = 0;
             return (int)BFREE_GUEST_VFILE_FD_BASE + i;
         }
     }
@@ -4491,11 +4894,13 @@ static long sys_linux_memfd_create(long name_ptr, long flags)
     const char *tag = "mfd";
     size_t i = 0;
     int target;
+    int pub;
+    int cloexec;
     bfree_guest_vfile_t *dir;
     unsigned seq;
 
     (void)name_ptr;
-    (void)flags;
+    cloexec = ((unsigned long)flags & (unsigned long)BFREE_MFD_CLOEXEC) != 0UL;
     seq = g_guest_memfd_seq++;
     /* vfile name: memfd/<seq> under /tmp namespace */
     vname[0] = 'm';
@@ -4541,7 +4946,17 @@ static long sys_linux_memfd_create(long name_ptr, long flags)
         return target;
     }
     g_guest_memfd_size = 0;
-    return bfree_guest_vfile_publish_open(target, 2 /* O_RDWR */, 0);
+    pub = bfree_guest_vfile_publish_open(target, 2 /* O_RDWR */, 0);
+    if (pub >= 0 && cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+        g_guest_fd_cloexec[pub] = 1;
+    }
+    return pub;
+}
+
+/* memfd vnodes live under the synthetic "memfd/" directory. */
+static int bfree_guest_vfile_is_memfd(const bfree_guest_vfile_t *vf)
+{
+    return vf != 0 && strncmp(vf->name, "memfd/", 6) == 0;
 }
 
 static long sys_linux_ftruncate(long fd, long length)
@@ -4563,6 +4978,14 @@ static long sys_linux_ftruncate(long fd, long length)
 
         if (new_len > BFREE_GUEST_VFILE_SIZE) {
             return -28;
+        }
+        if (new_len > vf->len &&
+            (vf->seals & (uint32_t)BFREE_F_SEAL_GROW) != 0U) {
+            return -1; /* EPERM */
+        }
+        if (new_len < vf->len &&
+            (vf->seals & (uint32_t)BFREE_F_SEAL_SHRINK) != 0U) {
+            return -1; /* EPERM */
         }
         if (new_len > vf->len) {
             size_t i;
@@ -4832,6 +5255,8 @@ static void bfree_guest_exec_reset_subsystems(int is_busybox)
     g_guest_eventfd_next = 0;
     for (i = 0; i < BFREE_MAX_GUEST_EVENTFD; ++i) {
         g_guest_eventfd_val[i] = 0;
+        g_guest_eventfd_nonblock[i] = 0;
+        g_guest_eventfd_sem[i] = 0;
     }
     g_guest_pgid = 1;
     g_guest_tty_pgrp = 1;
@@ -4930,6 +5355,9 @@ static long sys_linux_sysinfo(long info_ptr)
 
 static long sys_linux_getppid(void)
 {
+    /* Guest fork model: children always report ppid=1 while the coop session
+     * is live (matches getpid parent = 1). Side-gating broke GETLK checks when
+     * g_coop_side briefly disagreed with the running child. */
     if (g_guest_fork_active) {
         return 1;
     }
@@ -5020,7 +5448,12 @@ static long sys_linux_kill(long pid, long sig)
     return -3; /* ESRCH */
 }
 
-static long sys_linux_statfs(long path_ptr, long buf)
+/* Mount kinds reported by statfs/fstatfs. */
+#define BFREE_STATFS_ROOT  0
+#define BFREE_STATFS_TMPFS 1
+#define BFREE_STATFS_PROC  2
+
+static long bfree_statfs_emit(int kind, long buf)
 {
     typedef struct {
         int64_t f_type;
@@ -5037,26 +5470,35 @@ static long sys_linux_statfs(long path_ptr, long buf)
         int64_t f_spare[4];
     } bfree_statfs_t;
     bfree_statfs_t st;
-    char path[256];
     uint8_t *dst;
     size_t i;
 
-    if (buf == 0 || !bfree_user_ptr_mapped(buf)) {
-        return -14;
-    }
-    if (path_ptr != 0 && copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
-        return -14;
-    }
     memset(&st, 0, sizeof(st));
-    st.f_type = 0x01021994; /* TMPFS_MAGIC-ish / synthetic */
     st.f_bsize = 4096;
-    st.f_blocks = 131072; /* 512MB */
-    st.f_bfree = 98304;
-    st.f_bavail = 98304;
-    st.f_files = 1024;
-    st.f_ffree = 1000;
     st.f_namelen = 255;
     st.f_frsize = 4096;
+    if (kind == BFREE_STATFS_TMPFS) {
+        st.f_type = 0x01021994; /* TMPFS_MAGIC */
+        st.f_blocks = 65536;    /* 256MB tmpfs */
+        st.f_bfree = 61440;
+        st.f_bavail = 61440;
+        st.f_files = BFREE_GUEST_VFILE_SLOTS;
+        st.f_ffree = BFREE_GUEST_VFILE_SLOTS - 4;
+    } else if (kind == BFREE_STATFS_PROC) {
+        st.f_type = 0x9fa0;     /* PROC_SUPER_MAGIC */
+        st.f_blocks = 0;
+        st.f_bfree = 0;
+        st.f_bavail = 0;
+        st.f_files = 0;
+        st.f_ffree = 0;
+    } else {
+        st.f_type = 0x01021994; /* synthetic rootfs (tmpfs-backed) */
+        st.f_blocks = 131072;   /* 512MB */
+        st.f_bfree = 98304;
+        st.f_bavail = 98304;
+        st.f_files = 1024;
+        st.f_ffree = 1000;
+    }
     dst = (uint8_t *)(uintptr_t)buf;
     for (i = 0; i < sizeof(st); ++i) {
         dst[i] = ((const uint8_t *)&st)[i];
@@ -5064,10 +5506,53 @@ static long sys_linux_statfs(long path_ptr, long buf)
     return 0;
 }
 
+static long sys_linux_statfs(long path_ptr, long buf)
+{
+    char path[256];
+    int kind = BFREE_STATFS_ROOT;
+
+    if (buf == 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    path[0] = '\0';
+    if (path_ptr != 0 && copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    if (strncmp(path, "/tmp", 4) == 0 && (path[4] == '\0' || path[4] == '/')) {
+        kind = BFREE_STATFS_TMPFS;
+    } else if (strncmp(path, "/dev/shm", 8) == 0) {
+        kind = BFREE_STATFS_TMPFS;
+    } else if (strncmp(path, "/proc", 5) == 0 &&
+               (path[5] == '\0' || path[5] == '/')) {
+        kind = BFREE_STATFS_PROC;
+    }
+    return bfree_statfs_emit(kind, buf);
+}
+
 static long sys_linux_fstatfs(long fd, long buf)
 {
-    (void)fd;
-    return sys_linux_statfs(0, buf);
+    int resolved;
+
+    if (fd < 0) {
+        return -9; /* EBADF */
+    }
+    resolved = bfree_guest_fd_resolve((int)fd);
+    if (resolved < 0) {
+        return -9;
+    }
+    /* Small fds above stdio must have been published to be open. */
+    if (fd > 2 && fd < BFREE_GUEST_FD_TABLE_SIZE &&
+        g_guest_fd_target[fd] < 0 && g_guest_fd_dup_save[fd] < 0) {
+        return -9; /* EBADF */
+    }
+    if (buf == 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    /* vfiles (incl. memfd / shm) all live on the synthetic tmpfs. */
+    if (bfree_guest_vfile_from_open_fd(resolved, 0)) {
+        return bfree_statfs_emit(BFREE_STATFS_TMPFS, buf);
+    }
+    return bfree_statfs_emit(BFREE_STATFS_ROOT, buf);
 }
 
 static long sys_linux_prlimit64(long pid, long resource, long new_limit, long old_limit)
@@ -5077,21 +5562,13 @@ static long sys_linux_prlimit64(long pid, long resource, long new_limit, long ol
         uint64_t rlim_max;
     } bfree_rlimit64_t;
     bfree_rlimit64_t soft;
+    bfree_rlimit64_t neu;
     uint8_t *dst;
     const uint8_t *src;
     size_t i;
 
     (void)pid;
-    (void)resource;
-    soft.rlim_cur = 1024;
-    soft.rlim_max = 4096;
-    if (resource == 3) { /* RLIMIT_STACK */
-        soft.rlim_cur = 8ULL * 1024ULL * 1024ULL;
-        soft.rlim_max = 16ULL * 1024ULL * 1024ULL;
-    } else if (resource == 7) { /* RLIMIT_NOFILE */
-        soft.rlim_cur = 1024;
-        soft.rlim_max = 4096;
-    }
+    bfree_rlimit_defaults(resource, &soft.rlim_cur, &soft.rlim_max);
     if (old_limit != 0) {
         if (!bfree_user_ptr_mapped(old_limit)) {
             return -14;
@@ -5106,7 +5583,11 @@ static long sys_linux_prlimit64(long pid, long resource, long new_limit, long ol
         if (!bfree_user_ptr_mapped(new_limit)) {
             return -14;
         }
-        /* Accept and ignore new limits for now. */
+        neu = *(const bfree_rlimit64_t *)(uintptr_t)new_limit;
+        if (neu.rlim_cur > neu.rlim_max) {
+            return -22;
+        }
+        bfree_rlimit_store(resource, neu.rlim_cur, neu.rlim_max);
     }
     return 0;
 }
@@ -5126,8 +5607,15 @@ static long sys_linux_read(long fd, long buf, long count)
     bfree_guest_ofd_t *ofd;
 
     fd = bfree_guest_fd_resolve((int)fd);
+    if ((int)fd >= BFREE_INOTIFY_FD_BASE &&
+        (int)fd < BFREE_INOTIFY_FD_BASE + BFREE_MAX_INOTIFY) {
+        return bfree_inotify_read((int)fd, buf, count);
+    }
     {
         int iidx = bfree_inet_from_fd((int)fd);
+        if (iidx >= 0 && g_inet_socks[iidx].shut_rd) {
+            return 0; /* SHUT_RD: further reads are EOF */
+        }
         if (iidx >= 0 && g_inet_socks[iidx].tcp_pcb >= 0) {
             int pcb = g_inet_socks[iidx].tcp_pcb;
             int got;
@@ -5158,9 +5646,28 @@ static long sys_linux_read(long fd, long buf, long count)
             }
             return -11;
         }
+        /* Loopback TCP stream: read from accept_rd (peer write pipe). */
+        if (iidx >= 0 && g_inet_socks[iidx].connected) {
+            int mag = g_inet_socks[iidx].accept_rd;
+            if (mag < 0 && g_inet_socks[iidx].pipe_magic >= 0) {
+                mag = g_inet_socks[iidx].pipe_magic;
+                if (bfree_guest_pipe_is_wr_magic(mag)) {
+                    mag = mag - 1;
+                }
+            }
+            if (mag >= 0) {
+                return sys_linux_read(mag, buf, count);
+            }
+        }
     }
     {
         int uidx = bfree_unix_from_fd((int)fd);
+        if (uidx >= 0 && g_unix_socks[uidx].shut_rd) {
+            return 0;
+        }
+        if (uidx >= 0 && g_unix_socks[uidx].is_dgram) {
+            return bfree_unix_dgram_recv(uidx, buf, count, 0, 0, 0);
+        }
         if (uidx >= 0 && g_unix_socks[uidx].connected) {
             int mag = g_unix_socks[uidx].accept_rd;
             if (mag < 0 && g_unix_socks[uidx].pipe_magic >= 0) {
@@ -5467,12 +5974,31 @@ static long sys_linux_read(long fd, long buf, long count)
             return -14;
         }
         if (g_guest_eventfd_val[idx] == 0) {
+            /* Counter empty: EAGAIN either way — a blocking wait here would
+             * stall the single guest thread with no writer to release it. */
             return -11;
         }
         dst = (uint64_t *)(uintptr_t)buf;
-        *dst = g_guest_eventfd_val[idx];
-        g_guest_eventfd_val[idx] = 0;
+        if (idx >= 0 && g_guest_eventfd_sem[idx]) {
+            *dst = 1ULL;
+            g_guest_eventfd_val[idx] -= 1ULL;
+        } else {
+            *dst = g_guest_eventfd_val[idx];
+            g_guest_eventfd_val[idx] = 0;
+        }
         return (long)sizeof(uint64_t);
+    }
+    {
+        long tr = bfree_linux_read_timerfd(fd, buf, count);
+        if (tr != -9) { /* -9 = not a timerfd */
+            return tr;
+        }
+    }
+    {
+        long sr = bfree_linux_read_signalfd(fd, buf, count);
+        if (sr != -9) {
+            return sr;
+        }
     }
     vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
     if (vf) {
@@ -5571,6 +6097,13 @@ static long sys_linux_write(long fd, long buf, long count)
         /* /dev/null: discard output (keep behavior permissive for shell redirections). */
         return count;
     }
+    {
+        int uidx = bfree_unix_from_fd((int)fd);
+
+        if (uidx >= 0 && g_unix_socks[uidx].is_dgram) {
+            return bfree_unix_dgram_send(uidx, buf, count, 0, 0);
+        }
+    }
     vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
     if (vf) {
         size_t room;
@@ -5583,6 +6116,9 @@ static long sys_linux_write(long fd, long buf, long count)
         }
         if (vf->is_dir) {
             return -21; /* EISDIR */
+        }
+        if ((vf->seals & (uint32_t)BFREE_F_SEAL_WRITE) != 0U) {
+            return -1; /* EPERM */
         }
         posp = ofd ? &ofd->pos : &vf->pos;
         if (ofd && ((unsigned long)ofd->flags &
@@ -5606,6 +6142,14 @@ static long sys_linux_write(long fd, long buf, long count)
         if (n > room) {
             n = room;
         }
+        if ((vf->seals & (uint32_t)BFREE_F_SEAL_GROW) != 0U) {
+            if (*posp >= vf->len) {
+                return -1; /* EPERM */
+            }
+            if (n > vf->len - *posp) {
+                n = vf->len - *posp;
+            }
+        }
         for (i = 0; i < n; ++i) {
             vf->data[*posp + i] = src[i];
         }
@@ -5614,6 +6158,9 @@ static long sys_linux_write(long fd, long buf, long count)
             vf->len = *posp;
         }
         bfree_persist_maybe_flush(vf);
+        if (vf->name[0] != '\0') {
+            bfree_inotify_notify_vname(vf->name, BFREE_IN_MODIFY);
+        }
         return (long)n;
     }
     if (fd == 1 || fd == 2) {
@@ -5701,6 +6248,10 @@ static long sys_linux_write(long fd, long buf, long count)
     }
     {
         int iidx2 = bfree_inet_from_fd((int)fd);
+        if (iidx2 >= 0 && g_inet_socks[iidx2].shut_wr) {
+            bfree_guest_sig_raise(13); /* SIGPIPE */
+            return -32; /* EPIPE */
+        }
         if (iidx2 >= 0 && g_inet_socks[iidx2].connected &&
             g_inet_socks[iidx2].pipe_magic >= 0) {
             return sys_linux_write(g_inet_socks[iidx2].pipe_magic, buf, count);
@@ -5708,6 +6259,10 @@ static long sys_linux_write(long fd, long buf, long count)
     }
     {
         int uidx = bfree_unix_from_fd((int)fd);
+        if (uidx >= 0 && g_unix_socks[uidx].shut_wr) {
+            bfree_guest_sig_raise(13); /* SIGPIPE */
+            return -32; /* EPIPE */
+        }
         if (uidx >= 0 && g_unix_socks[uidx].connected &&
             g_unix_socks[uidx].pipe_magic >= 0) {
             return sys_linux_write(g_unix_socks[uidx].pipe_magic, buf, count);
@@ -5743,6 +6298,68 @@ static int bfree_linux_path_is_dot_or_slash(const char *path)
     return 0;
 }
 
+static unsigned g_guest_tmpfile_seq;
+
+/* O_TMPFILE: unnamed regular file on the /tmp vfile store. The vnode is
+ * orphaned immediately, so it disappears once the last fd closes. */
+static long bfree_guest_open_tmpfile(long flags)
+{
+    char vname[48];
+    char num[16];
+    size_t i = 0;
+    size_t n = 0;
+    unsigned v;
+    int target;
+    int pub;
+    int accmode = (int)(flags & BFREE_LINUX_O_ACCMODE);
+    bfree_guest_vfile_t *vf;
+
+    if (accmode != 1 && accmode != 2) {
+        return -22; /* EINVAL: O_TMPFILE needs O_WRONLY or O_RDWR */
+    }
+    vname[0] = 't';
+    vname[1] = 'm';
+    vname[2] = 'p';
+    vname[3] = 'f';
+    vname[4] = 'i';
+    vname[5] = 'l';
+    vname[6] = 'e';
+    vname[7] = '_';
+    v = g_guest_tmpfile_seq++;
+    if (v == 0U) {
+        num[n++] = '0';
+    } else {
+        while (v > 0U && n < sizeof(num)) {
+            num[n++] = (char)('0' + (v % 10U));
+            v /= 10U;
+        }
+    }
+    while (n > 0U && i + 9U < sizeof(vname)) {
+        vname[8 + i] = num[--n];
+        ++i;
+    }
+    vname[8 + i] = '\0';
+    target = bfree_guest_vfile_alloc_slot(vname, 1);
+    if (target < 0) {
+        return target;
+    }
+    pub = bfree_guest_vfile_publish_open(target, (int)flags, 0);
+    if (pub < 0) {
+        return pub;
+    }
+    vf = bfree_guest_vfile_from_fd(target);
+    if (vf) {
+        vf->orphaned = 1;
+        vf->nlink = 0;
+        vf->name[0] = '\0';
+    }
+    if (((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL &&
+        pub < BFREE_GUEST_FD_TABLE_SIZE) {
+        g_guest_fd_cloexec[pub] = 1;
+    }
+    return pub;
+}
+
 static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
 {
     char path[192];
@@ -5752,6 +6369,7 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     int want_create;
     int want_trunc;
     int want_excl;
+    int want_path;
     bfree_guest_vfile_t *vf;
     long path_err;
 
@@ -5802,6 +6420,18 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
     if (path[0] == '/' && path[1] == 'r' && path[2] == 'o' && path[3] == 'o' &&
         path[4] == 't' && path[5] == '/') {
         return -2; /* ENOENT — Qt embeds build-machine paths (qtlogging.ini) */
+    }
+    /* O_TMPFILE implies O_DIRECTORY on Linux; test it before want_dir. */
+    if (((unsigned long)flags & (unsigned long)BFREE_LINUX_O_TMPFILE) ==
+        (unsigned long)BFREE_LINUX_O_TMPFILE) {
+        return bfree_guest_open_tmpfile(flags);
+    }
+    want_path = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_PATH) != 0UL;
+    if (want_path) {
+        /* O_PATH: fd refers to the name only — no create/truncate/access mode. */
+        flags &= ~(long)(BFREE_LINUX_O_CREAT | BFREE_LINUX_O_TRUNC |
+                         BFREE_LINUX_O_APPEND | BFREE_LINUX_O_ACCMODE);
+        flags |= (long)BFREE_LINUX_O_PATH;
     }
     accmode = (int)(flags & BFREE_LINUX_O_ACCMODE);
     want_dir = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_DIRECTORY) != 0UL;
@@ -5884,6 +6514,7 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
             int truncate = want_trunc || (want_create && vf == 0);
             int target;
             size_t initial_pos = 0;
+            int was_new = (vf == 0);
 
             if (!vf && !want_create) {
                 return -2;
@@ -5903,7 +6534,15 @@ static long sys_linux_openat(long dirfd, long path_ptr, long flags, long mode)
                        (unsigned long)BFREE_LINUX_O_APPEND) != 0UL) {
                 initial_pos = vf->len;
             }
-            return bfree_guest_vfile_publish_open(target, (int)flags, initial_pos);
+            {
+                long pub = bfree_guest_vfile_publish_open(target, (int)flags,
+                                                          initial_pos);
+
+                if (pub >= 0 && was_new) {
+                    bfree_inotify_notify_vname(vname, BFREE_IN_CREATE);
+                }
+                return pub;
+            }
         }
         if (vf) {
             int target = (int)BFREE_GUEST_VFILE_FD_BASE +
@@ -6135,11 +6774,162 @@ static long sys_linux_chdir(long path_ptr)
 
 static long sys_linux_utimensat(long dirfd, long pathname_ptr, long times_ptr, long flags)
 {
-    /* Stub implementation: always succeed */
-    (void)dirfd;
-    (void)pathname_ptr;
-    (void)times_ptr;
+    /* Linux x86_64 timespec is {int64_t tv_sec; int64_t tv_nsec;}. */
+    typedef struct {
+        int64_t tv_sec;
+        int64_t tv_nsec;
+    } bfree_timespec64_t;
+    enum { BFREE_UTIME_NOW = ((1L << 30) - 1), BFREE_UTIME_OMIT = ((1L << 30) - 2) };
+    bfree_timespec64_t times[2];
+    bfree_guest_vfile_t *vf = 0;
+    char path[256];
+    char vname[64];
+    uint64_t us;
+    int64_t now_sec;
+    int64_t now_nsec;
+    int i;
+
     (void)flags;
+    us = knl_get_current_time();
+    now_sec = (int64_t)(us / 1000000ULL);
+    now_nsec = (int64_t)((us % 1000000ULL) * 1000ULL);
+
+    if (pathname_ptr == 0) {
+        /* futimens(fd): dirfd is the open file descriptor. */
+        int resolved;
+        if (dirfd < 0) {
+            return -9; /* EBADF */
+        }
+        resolved = bfree_guest_fd_resolve((int)dirfd);
+        if (resolved < 0) {
+            return -9;
+        }
+        vf = bfree_guest_vfile_from_open_fd(resolved, 0);
+        if (!vf) {
+            /* Non-vfile fds: accept and ignore (clocks not stored). */
+            return 0;
+        }
+    } else {
+        long path_err;
+        if (copy_user_cstr(pathname_ptr, path, sizeof(path)) != 0) {
+            return -14;
+        }
+        path_err = bfree_guest_path_at(dirfd, path, sizeof(path));
+        if (path_err != 0) {
+            return path_err;
+        }
+        /* /dev/null/invalid → ENOTDIR (null is not a directory). */
+        if (strncmp(path, "/dev/null/", 10) == 0) {
+            return -20; /* ENOTDIR */
+        }
+        if (bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) &&
+            vname[0] != '\0') {
+            vf = bfree_guest_vfile_find_by_name(vname);
+        }
+        if (!vf) {
+            /* Paths we don't track: succeed without storing (POSIX soft). */
+            return 0;
+        }
+    }
+
+    if (times_ptr == 0) {
+        times[0].tv_sec = now_sec;
+        times[0].tv_nsec = now_nsec;
+        times[1].tv_sec = now_sec;
+        times[1].tv_nsec = now_nsec;
+    } else {
+        if (!bfree_user_buf_mapped((uint64_t)(uintptr_t)times_ptr, sizeof(times))) {
+            return -14;
+        }
+        for (i = 0; i < 2; ++i) {
+            times[i] = ((bfree_timespec64_t *)(uintptr_t)times_ptr)[i];
+        }
+    }
+
+    for (i = 0; i < 2; ++i) {
+        int64_t sec = times[i].tv_sec;
+        int64_t nsec = times[i].tv_nsec;
+        if (nsec == BFREE_UTIME_OMIT) {
+            continue;
+        }
+        if (nsec == BFREE_UTIME_NOW) {
+            sec = now_sec;
+            nsec = now_nsec;
+        } else if (nsec < 0 || nsec >= 1000000000LL) {
+            return -22; /* EINVAL */
+        }
+        if (i == 0) {
+            vf->atime_sec = sec;
+            vf->atime_nsec = nsec;
+        } else {
+            vf->mtime_sec = sec;
+            vf->mtime_nsec = nsec;
+        }
+    }
+    return 0;
+}
+
+/* Linux 235: utimes(path, timeval[2]) — convert µs → nsec via utimensat path. */
+static long sys_linux_utimes(long path_ptr, long times_ptr)
+{
+    typedef struct {
+        int64_t tv_sec;
+        int64_t tv_usec;
+    } bfree_timeval64_t;
+    typedef struct {
+        int64_t tv_sec;
+        int64_t tv_nsec;
+    } bfree_timespec64_t;
+    bfree_timeval64_t tv[2];
+    bfree_timespec64_t ts[2];
+    bfree_guest_vfile_t *vf = 0;
+    char path[256];
+    char vname[64];
+    long path_err;
+    int i;
+
+    if (path_ptr == 0) {
+        return -14;
+    }
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    path_err = bfree_guest_path_at(BFREE_LINUX_AT_FDCWD, path, sizeof(path));
+    if (path_err != 0) {
+        return path_err;
+    }
+    if (bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) &&
+        vname[0] != '\0') {
+        vf = bfree_guest_vfile_find_by_name(vname);
+    }
+    if (!vf) {
+        return 0; /* untracked path: soft success */
+    }
+    if (times_ptr == 0) {
+        uint64_t us = knl_get_current_time();
+        int64_t sec = (int64_t)(us / 1000000ULL);
+        int64_t nsec = (int64_t)((us % 1000000ULL) * 1000ULL);
+        vf->atime_sec = sec;
+        vf->atime_nsec = nsec;
+        vf->mtime_sec = sec;
+        vf->mtime_nsec = nsec;
+        return 0;
+    }
+    if (!bfree_user_buf_mapped((uint64_t)(uintptr_t)times_ptr, sizeof(tv))) {
+        return -14;
+    }
+    for (i = 0; i < 2; ++i) {
+        tv[i] = ((bfree_timeval64_t *)(uintptr_t)times_ptr)[i];
+        if (tv[i].tv_usec < 0 || tv[i].tv_usec >= 1000000) {
+            return -22;
+        }
+        ts[i].tv_sec = tv[i].tv_sec;
+        ts[i].tv_nsec = tv[i].tv_usec * 1000;
+    }
+    vf->atime_sec = ts[0].tv_sec;
+    vf->atime_nsec = ts[0].tv_nsec;
+    vf->mtime_sec = ts[1].tv_sec;
+    vf->mtime_nsec = ts[1].tv_nsec;
     return 0;
 }
 
@@ -6290,6 +7080,22 @@ static long sys_linux_close(long fd)
         g_guest_fd_dup_save[orig] = -1;
         g_guest_fd_cloexec[orig] = 0;
     }
+    bfree_pidfd_release(resolved);
+    bfree_inotify_release(resolved);
+    bfree_fanotify_release(resolved);
+    bfree_perf_release(resolved);
+    bfree_fsctx_release(resolved);
+    bfree_iouring_release(resolved);
+    bfree_uffd_release(resolved);
+    bfree_landlock_release(resolved);
+    {
+        int sfi = resolved - (int)BFREE_SIGNALFD_FD_BASE;
+        if (sfi >= 0 && sfi < BFREE_MAX_SIGNALFD && g_guest_signalfds[sfi].used) {
+            g_guest_signalfds[sfi].used = 0;
+            g_guest_signalfds[sfi].mask = 0;
+            g_guest_signalfds[sfi].nonblock = 0;
+        }
+    }
     /* BusyBox ping xmove_fd(sock,0): dup2 then close(old). Keep inet sock
      * alive while another published fd still resolves to it. */
     if (resolved >= (int)BFREE_INET_FD_BASE &&
@@ -6319,9 +7125,18 @@ static long sys_linux_close(long fd)
                 g_unix_socks[uidx].used = 0;
                 g_unix_socks[uidx].listening = 0;
                 g_unix_socks[uidx].connected = 0;
+                g_unix_socks[uidx].is_dgram = 0;
                 g_unix_socks[uidx].accept_rd = -1;
+                g_unix_socks[uidx].accept_wr = -1;
                 g_unix_socks[uidx].pipe_magic = -1;
                 g_unix_socks[uidx].path[0] = '\0';
+                g_unix_socks[uidx].peer_path[0] = '\0';
+                g_unix_socks[uidx].dg_pending = 0;
+                g_unix_socks[uidx].dg_len = 0;
+                bfree_sock_accept_q_reset(g_unix_socks[uidx].q_rd,
+                                          g_unix_socks[uidx].q_wr,
+                                          &g_unix_socks[uidx].q_len,
+                                          &g_unix_socks[uidx].listen_backlog);
                 bfree_guest_pipe_reclaim_dead_slots();
             }
         }
@@ -6374,16 +7189,26 @@ static long sys_linux_fcntl(long fd, long cmd, long arg)
             if (g_guest_fd_target[i] < 0 && g_guest_fd_dup_save[i] < 0) {
                 g_guest_fd_target[i] = resolved;
                 g_guest_fd_dup_save[i] = resolved;
+                g_guest_fd_cloexec[i] = (cmd == 1030) ? 1 : 0;
                 return i;
             }
         }
         return -24;
     case 1: /* F_GETFD */
+        /* Published slots with no target are closed (resolve alone is not enough). */
+        if (fd > 2 && fd < BFREE_GUEST_FD_TABLE_SIZE &&
+            g_guest_fd_target[fd] < 0 && g_guest_fd_dup_save[fd] < 0) {
+            return -9; /* EBADF */
+        }
         if (fd >= 0 && fd < BFREE_GUEST_FD_TABLE_SIZE && g_guest_fd_cloexec[fd]) {
             return 1; /* FD_CLOEXEC */
         }
         return 0;
     case 2: /* F_SETFD */
+        if (fd > 2 && fd < BFREE_GUEST_FD_TABLE_SIZE &&
+            g_guest_fd_target[fd] < 0 && g_guest_fd_dup_save[fd] < 0) {
+            return -9;
+        }
         if (fd >= 0 && fd < BFREE_GUEST_FD_TABLE_SIZE) {
             g_guest_fd_cloexec[fd] = ((arg & 1) != 0) ? 1 : 0;
         }
@@ -6399,24 +7224,254 @@ static long sys_linux_fcntl(long fd, long cmd, long arg)
             return 1;
         }
         {
+            int iidx = bfree_inet_from_fd(resolved);
+            int uidx;
             int pslot = bfree_guest_pipe_slot_from_magic(resolved);
+            long fl = 0;
 
-            if (pslot >= 0 && g_guest_pipes[pslot].used &&
-                g_guest_pipes[pslot].nonblock) {
+            if (bfree_guest_is_eventfd(resolved) &&
+                g_guest_eventfd_nonblock[bfree_guest_eventfd_index(resolved)]) {
                 return (long)BFREE_LINUX_O_NONBLOCK;
             }
+            {
+                int sfi = resolved - (int)BFREE_SIGNALFD_FD_BASE;
+
+                if (sfi >= 0 && sfi < BFREE_MAX_SIGNALFD &&
+                    g_guest_signalfds[sfi].used) {
+                    return g_guest_signalfds[sfi].nonblock
+                               ? (long)BFREE_LINUX_O_NONBLOCK
+                               : 0;
+                }
+            }
+            if (iidx >= 0 && g_inet_socks[iidx].nonblock) {
+                fl |= (long)BFREE_LINUX_O_NONBLOCK;
+            }
+            uidx = bfree_unix_from_fd(resolved);
+            if (uidx >= 0 && g_unix_socks[uidx].nonblock) {
+                fl |= (long)BFREE_LINUX_O_NONBLOCK;
+            }
+            if (pslot >= 0 && g_guest_pipes[pslot].used &&
+                g_guest_pipes[pslot].nonblock) {
+                fl |= (long)BFREE_LINUX_O_NONBLOCK;
+            }
+            return fl;
         }
-        return 0;
     case 4: /* F_SETFL */
         {
             int pslot = bfree_guest_pipe_slot_from_magic(resolved);
+            int nb = ((unsigned long)arg & (unsigned long)BFREE_LINUX_O_NONBLOCK) != 0UL;
+            int iidx = bfree_inet_from_fd(resolved);
+            int uidx = bfree_unix_from_fd(resolved);
 
+            if (bfree_guest_is_eventfd(resolved)) {
+                g_guest_eventfd_nonblock[bfree_guest_eventfd_index(resolved)] = nb;
+            }
+            {
+                int sfi = resolved - (int)BFREE_SIGNALFD_FD_BASE;
+
+                if (sfi >= 0 && sfi < BFREE_MAX_SIGNALFD &&
+                    g_guest_signalfds[sfi].used) {
+                    g_guest_signalfds[sfi].nonblock = nb;
+                }
+            }
             if (pslot >= 0 && g_guest_pipes[pslot].used) {
-                g_guest_pipes[pslot].nonblock =
-                    ((unsigned long)arg & (unsigned long)BFREE_LINUX_O_NONBLOCK) != 0UL;
+                g_guest_pipes[pslot].nonblock = nb;
+            }
+            if (iidx >= 0) {
+                g_inet_socks[iidx].nonblock = nb;
+                if (g_inet_socks[iidx].accept_rd >= 0) {
+                    int ps = bfree_guest_pipe_slot_from_magic(g_inet_socks[iidx].accept_rd);
+                    if (ps >= 0) {
+                        g_guest_pipes[ps].nonblock = nb;
+                    }
+                }
+                if (g_inet_socks[iidx].pipe_magic >= 0) {
+                    int ps = bfree_guest_pipe_slot_from_magic(g_inet_socks[iidx].pipe_magic);
+                    if (ps >= 0) {
+                        g_guest_pipes[ps].nonblock = nb;
+                    }
+                }
+            }
+            if (uidx >= 0) {
+                g_unix_socks[uidx].nonblock = nb;
+                if (g_unix_socks[uidx].accept_rd >= 0) {
+                    int ps = bfree_guest_pipe_slot_from_magic(g_unix_socks[uidx].accept_rd);
+                    if (ps >= 0) {
+                        g_guest_pipes[ps].nonblock = nb;
+                    }
+                }
+                if (g_unix_socks[uidx].pipe_magic >= 0) {
+                    int ps = bfree_guest_pipe_slot_from_magic(g_unix_socks[uidx].pipe_magic);
+                    if (ps >= 0) {
+                        g_guest_pipes[ps].nonblock = nb;
+                    }
+                }
             }
         }
         return 0;
+    case BFREE_LINUX_F_GETLK:
+    case BFREE_LINUX_F_SETLK:
+    case BFREE_LINUX_F_SETLKW:
+    case 12: /* F_GETLK64 */
+    case 13: /* F_SETLK64 */
+    case 14: /* F_SETLKW64 */
+    case 36: /* F_OFD_GETLK */
+    case 37: /* F_OFD_SETLK */
+    case 38: /* F_OFD_SETLKW */
+        {
+            bfree_linux_flock_t fl_user;
+            bfree_linux_flock_t *flp;
+            bfree_guest_vfile_t *vf;
+            bfree_guest_ofd_t *ofd_lk;
+            int vnode;
+            int self_pid;
+            int i;
+            int conflict = -1;
+            int mine = -1;
+            int16_t l_type;
+            int is_get;
+
+            if (arg == 0 ||
+                !bfree_user_buf_mapped((uint64_t)(uintptr_t)arg, sizeof(fl_user))) {
+                return -14;
+            }
+            /* AS-copy child must poke the child's PT, not a stale parent CR3. */
+            if (g_guest_fork_active && g_guest_fork_was_as_copy && g_coop_side == 1) {
+                page_table_t *cpt = bfree_process_child_pt();
+                if (cpt && knl_current_task) {
+                    knl_current_task->page_table_base = cpt;
+                    __asm__ volatile("mov %0, %%cr3" :: "r"(cpt) : "memory");
+                    g_bfree_sysret_exec_cr3 = 0;
+                }
+            }
+            flp = (bfree_linux_flock_t *)(uintptr_t)arg;
+            /* Prefer phys peek: AS-copy child stack may not match identity *flp. */
+            if (bfree_user_stack_peek_bytes((uint64_t)(uintptr_t)arg,
+                                            (char *)&fl_user, sizeof(fl_user)) != 0) {
+                fl_user = *flp;
+            }
+            l_type = fl_user.l_type;
+            vf = bfree_guest_vfile_from_open_fd(resolved, &ofd_lk);
+            is_get = (cmd == BFREE_LINUX_F_GETLK || cmd == 12 || cmd == 36);
+            if (!vf) {
+                /* Fall back: advisory lock keyed by OFD slot (negative vnode). */
+                if (ofd_lk) {
+                    vnode = -1 - (int)(ofd_lk - g_guest_ofds);
+                } else {
+                    if (is_get) {
+                        fl_user.l_type = (int16_t)BFREE_LINUX_F_UNLCK;
+                        fl_user.l_pid = 0;
+                        (void)bfree_user_stack_poke_bytes((uint64_t)(uintptr_t)arg,
+                                                          (const char *)&fl_user,
+                                                          sizeof(fl_user));
+                        *flp = fl_user;
+                    }
+                    return 0;
+                }
+            } else {
+                vnode = (int)(vf - g_guest_vfiles);
+            }
+            /* Lock owner must match getpid() of the locker. Parent side is
+             * always pid 1; never use a stale g_guest_fork_pid on side 0. */
+            self_pid = (g_coop_side == 1 && g_guest_fork_active &&
+                        g_guest_fork_pid > 0)
+                           ? g_guest_fork_pid
+                           : 1;
+
+            for (i = 0; i < BFREE_GUEST_FLOCK_SLOTS; ++i) {
+                if (!g_guest_flocks[i].used || g_guest_flocks[i].vnode != vnode) {
+                    continue;
+                }
+                if (g_guest_flocks[i].owner_pid == self_pid) {
+                    mine = i;
+                    continue;
+                }
+                if (is_get ||
+                    g_guest_flocks[i].type == BFREE_LINUX_F_WRLCK ||
+                    l_type == BFREE_LINUX_F_WRLCK ||
+                    !(l_type == BFREE_LINUX_F_RDLCK &&
+                      g_guest_flocks[i].type == BFREE_LINUX_F_RDLCK)) {
+                    conflict = i;
+                }
+            }
+
+            if (is_get) {
+                if (conflict >= 0) {
+                    fl_user.l_type = (int16_t)g_guest_flocks[conflict].type;
+                    fl_user.l_whence = 0;
+                    fl_user.l_start = 0;
+                    fl_user.l_len = 0;
+                    /* sys_linux_getppid() always returns 1 for coop children. */
+                    fl_user.l_pid = (g_coop_side == 1) ? 1
+                        : g_guest_flocks[conflict].owner_pid;
+                } else {
+                    fl_user.l_type = (int16_t)BFREE_LINUX_F_UNLCK;
+                    fl_user.l_pid = 0;
+                }
+                /* Always poke phys AND store via VA — COW child must see l_pid. */
+                (void)bfree_user_stack_poke_bytes((uint64_t)(uintptr_t)arg,
+                                                  (const char *)&fl_user,
+                                                  sizeof(fl_user));
+                *flp = fl_user;
+                return 0;
+            }
+
+            /* F_SETLK / F_SETLKW */
+            if (l_type == BFREE_LINUX_F_UNLCK) {
+                if (mine >= 0) {
+                    g_guest_flocks[mine].used = 0;
+                }
+                return 0;
+            }
+            if (conflict >= 0) {
+                return -11; /* EAGAIN */
+            }
+            if (mine < 0) {
+                for (i = 0; i < BFREE_GUEST_FLOCK_SLOTS; ++i) {
+                    if (!g_guest_flocks[i].used) {
+                        mine = i;
+                        break;
+                    }
+                }
+                if (mine < 0) {
+                    return -11;
+                }
+            }
+            g_guest_flocks[mine].used = 1;
+            g_guest_flocks[mine].vnode = vnode;
+            g_guest_flocks[mine].type = (l_type == BFREE_LINUX_F_RDLCK)
+                                            ? BFREE_LINUX_F_RDLCK
+                                            : BFREE_LINUX_F_WRLCK;
+            g_guest_flocks[mine].owner_pid = self_pid;
+            return 0;
+        }
+    case 1033: /* F_ADD_SEALS */
+        {
+            bfree_guest_vfile_t *vf = bfree_guest_vfile_from_open_fd(resolved, 0);
+            uint32_t add = (uint32_t)arg;
+
+            if (!vf || !bfree_guest_vfile_is_memfd(vf)) {
+                return -22; /* EINVAL: sealing needs a memfd */
+            }
+            if ((add & ~(uint32_t)(BFREE_F_SEAL_SEAL | BFREE_F_SEAL_SHRINK |
+                                   BFREE_F_SEAL_GROW | BFREE_F_SEAL_WRITE)) != 0U) {
+                return -22;
+            }
+            if ((vf->seals & (uint32_t)BFREE_F_SEAL_SEAL) != 0U) {
+                return -1; /* EPERM: already sealed against sealing */
+            }
+            vf->seals |= add;
+            return 0;
+        }
+    case 1034: /* F_GET_SEALS */
+        {
+            bfree_guest_vfile_t *vf = bfree_guest_vfile_from_open_fd(resolved, 0);
+
+            if (!vf || !bfree_guest_vfile_is_memfd(vf)) {
+                return -22;
+            }
+            return (long)vf->seals;
+        }
     default:
         return 0;
     }
@@ -6502,23 +7557,62 @@ static long sys_linux_getegid(void)
     return 0;
 }
 
+static uint32_t g_guest_groups[8];
+static int g_guest_ngroups = 1; /* default: gid 0 */
+
 static long sys_linux_getgroups(long size, long list)
 {
     uint32_t *groups;
+    int i;
 
-    /* Single-user guest: root belongs only to gid 0. */
-    if (size == 0) {
-        return 1;
+    /* Single-user guest: root belongs only to gid 0 (or setgroups list). */
+    if (g_guest_ngroups < 1) {
+        g_guest_ngroups = 1;
+        g_guest_groups[0] = 0;
     }
-    if (size < 1) {
+    if (size == 0) {
+        return g_guest_ngroups;
+    }
+    if (size < 0) {
         return -22; /* EINVAL */
+    }
+    if (size < g_guest_ngroups) {
+        return -22; /* EINVAL: buffer too small */
     }
     if (list == 0 || !bfree_user_ptr_mapped(list)) {
         return -14; /* EFAULT */
     }
     groups = (uint32_t *)(uintptr_t)list;
-    groups[0] = 0;
-    return 1;
+    for (i = 0; i < g_guest_ngroups; ++i) {
+        groups[i] = g_guest_groups[i];
+    }
+    return g_guest_ngroups;
+}
+
+/* Linux 116: setgroups — soft accept up to 8 gids. */
+static long sys_linux_setgroups(long size, long list)
+{
+    int i;
+
+    if (size < 0) {
+        return -22;
+    }
+    if (size > 8) {
+        return -22;
+    }
+    if (size == 0) {
+        g_guest_ngroups = 0;
+        return 0;
+    }
+    if (list == 0 || !bfree_user_buf_mapped((uint64_t)(uintptr_t)list,
+                                            (uint64_t)size * sizeof(uint32_t))) {
+        return -14;
+    }
+    for (i = 0; i < (int)size; ++i) {
+        g_guest_groups[i] = ((uint32_t *)(uintptr_t)list)[i];
+    }
+    g_guest_ngroups = (int)size;
+    return 0;
 }
 
 typedef struct {
@@ -6704,9 +7798,20 @@ static long sys_linux_rt_sigprocmask(long how, long set, long oldset, long sigse
 }
 
 #define BFREE_LINUX_FIONREAD 0x541B
+#define BFREE_LINUX_FIONBIO  0x5421
 #define BFREE_LINUX_TCGETS   0x5401
 #define BFREE_LINUX_TCSETS   0x5402
 #define BFREE_LINUX_TIOCGWINSZ 0x5413
+#define BFREE_LINUX_TIOCSWINSZ 0x5414
+
+typedef struct {
+    unsigned short ws_row;
+    unsigned short ws_col;
+    unsigned short ws_xpixel;
+    unsigned short ws_ypixel;
+} bfree_guest_winsize_t;
+
+static bfree_guest_winsize_t g_guest_winsize = { 24, 80, 0, 0 };
 
 static long bfree_guest_fill_termios(long fd, long termios_ptr)
 {
@@ -6726,9 +7831,10 @@ static long bfree_guest_fill_termios(long fd, long termios_ptr)
 static long sys_linux_ioctl(long fd, long request, long arg)
 {
     int *pending;
+    int resolved = bfree_guest_fd_resolve((int)fd);
 
-    if (bfree_guest_is_pipe_rd(fd) && request == BFREE_LINUX_FIONREAD) {
-        bfree_guest_pipe_slot_t *ps = bfree_guest_pipe_slot_from_fd((int)fd);
+    if (bfree_guest_is_pipe_rd(resolved) && request == BFREE_LINUX_FIONREAD) {
+        bfree_guest_pipe_slot_t *ps = bfree_guest_pipe_slot_from_fd(resolved);
 
         if (arg == 0 || !bfree_user_ptr_mapped(arg) || !ps) {
             return -14;
@@ -6736,6 +7842,16 @@ static long sys_linux_ioctl(long fd, long request, long arg)
         pending = (int *)(uintptr_t)arg;
         *pending = (int)ps->len;
         return 0;
+    }
+    if (request == BFREE_LINUX_FIONBIO) {
+        int nb;
+
+        if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
+            return -14;
+        }
+        nb = *(const int *)(uintptr_t)arg;
+        return sys_linux_fcntl(resolved, 4 /* F_SETFL */,
+                               nb ? (long)BFREE_LINUX_O_NONBLOCK : 0L);
     }
     if (fd >= 0 && fd <= 2) {
         if (request == BFREE_LINUX_TCGETS) {
@@ -6768,24 +7884,20 @@ static long sys_linux_ioctl(long fd, long request, long arg)
             if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
                 return -14;
             }
-            {
-                struct {
-                    unsigned short ws_row;
-                    unsigned short ws_col;
-                    unsigned short ws_xpixel;
-                    unsigned short ws_ypixel;
-                } *ws = (void *)(uintptr_t)arg;
-                ws->ws_row = 24;
-                ws->ws_col = 80;
-                ws->ws_xpixel = 0;
-                ws->ws_ypixel = 0;
+            *(bfree_guest_winsize_t *)(uintptr_t)arg = g_guest_winsize;
+            return 0;
+        }
+        if (request == BFREE_LINUX_TIOCSWINSZ) {
+            if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
+                return -14;
             }
+            g_guest_winsize = *(const bfree_guest_winsize_t *)(uintptr_t)arg;
             return 0;
         }
     }
     {
-        int resolved = bfree_guest_fd_resolve((int)fd);
-        int slot = bfree_pty_slot_from_fd(resolved);
+        int pty_resolved = bfree_guest_fd_resolve((int)fd);
+        int slot = bfree_pty_slot_from_fd(pty_resolved);
         if (slot >= 0) {
             if ((unsigned long)request == 0x80045430UL /* TIOCGPTN */) {
                 if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
@@ -6796,7 +7908,7 @@ static long sys_linux_ioctl(long fd, long request, long arg)
             }
             return 0;
         }
-        if (resolved == (int)BFREE_GUEST_DEV_TTY_FD) {
+        if (pty_resolved == (int)BFREE_GUEST_DEV_TTY_FD) {
             if (request == BFREE_LINUX_TIOCGPGRP) {
                 if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
                     return -14;
@@ -6816,6 +7928,20 @@ static long sys_linux_ioctl(long fd, long request, long arg)
                 g_guest_tty_pgrp = pg;
                 return 0;
             }
+            if (request == BFREE_LINUX_TIOCGWINSZ) {
+                if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
+                    return -14;
+                }
+                *(bfree_guest_winsize_t *)(uintptr_t)arg = g_guest_winsize;
+                return 0;
+            }
+            if (request == BFREE_LINUX_TIOCSWINSZ) {
+                if (arg == 0 || !bfree_user_ptr_mapped(arg)) {
+                    return -14;
+                }
+                g_guest_winsize = *(const bfree_guest_winsize_t *)(uintptr_t)arg;
+                return 0;
+            }
             return 0;
         }
     }
@@ -6829,6 +7955,80 @@ static long sys_linux_ioctl(long fd, long request, long arg)
 #define BFREE_LINUX_S_IFCHR 0020000U
 #define BFREE_LINUX_S_IFREG 0100000U
 #define BFREE_LINUX_S_IFLNK 0120000U
+#define BFREE_LINUX_S_IFIFO 0010000U
+
+static long sys_linux_fchmod(long fd, long mode)
+{
+    bfree_guest_vfile_t *vf;
+    bfree_guest_ofd_t *ofd;
+    uint32_t type;
+
+    fd = bfree_guest_fd_resolve((int)fd);
+    vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
+    (void)ofd;
+    if (!vf) {
+        return 0; /* non-vfile: accept like previous stub */
+    }
+    if (vf->is_dir) {
+        type = BFREE_LINUX_S_IFDIR;
+    } else if (vf->is_symlink) {
+        type = BFREE_LINUX_S_IFLNK;
+    } else {
+        type = BFREE_LINUX_S_IFREG;
+    }
+    vf->mode = type | ((uint32_t)mode & 07777U);
+    return 0;
+}
+
+static long sys_linux_chmod(long dirfd, long path_ptr, long mode)
+{
+    char path[192];
+    char vname[64];
+    bfree_guest_vfile_t *vf;
+    long path_err;
+    uint32_t type;
+
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    path_err = bfree_guest_path_at(dirfd, path, sizeof(path));
+    if (path_err != 0) {
+        return path_err;
+    }
+    if (strncmp(path, "/dev/shm/", 9) == 0 && path[9] != '\0') {
+        char alt[192];
+        size_t i;
+
+        alt[0] = '/'; alt[1] = 't'; alt[2] = 'm'; alt[3] = 'p';
+        alt[4] = '/'; alt[5] = 's'; alt[6] = 'h'; alt[7] = 'm';
+        alt[8] = '/';
+        for (i = 0; path[9 + i] != '\0' && i + 10U < sizeof(alt); ++i) {
+            alt[9 + i] = path[9 + i];
+        }
+        alt[9 + i] = '\0';
+        for (i = 0; alt[i] != '\0' && i + 1U < sizeof(path); ++i) {
+            path[i] = alt[i];
+        }
+        path[i] = '\0';
+    }
+    if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) ||
+        vname[0] == '\0') {
+        return 0; /* outside /tmp: keep stub success */
+    }
+    vf = bfree_guest_vfile_find_by_name(vname);
+    if (!vf) {
+        return -2;
+    }
+    if (vf->is_dir) {
+        type = BFREE_LINUX_S_IFDIR;
+    } else if (vf->is_symlink) {
+        type = BFREE_LINUX_S_IFLNK;
+    } else {
+        type = BFREE_LINUX_S_IFREG;
+    }
+    vf->mode = type | ((uint32_t)mode & 07777U);
+    return 0;
+}
 
 typedef struct {
     uint64_t st_dev;
@@ -6889,20 +8089,28 @@ static long bfree_linux_stat_fill_vfile(long statbuf, const bfree_guest_vfile_t 
     long ret;
 
     if (vf->is_dir) {
-        mode = BFREE_LINUX_S_IFDIR | 0755U;
         size = 4096;
+        mode = (vf->mode != 0U) ? vf->mode : (BFREE_LINUX_S_IFDIR | 0755U);
     } else if (vf->is_symlink) {
-        mode = BFREE_LINUX_S_IFLNK | 0777U;
         size = (int64_t)vf->len;
+        mode = (vf->mode != 0U) ? vf->mode : (BFREE_LINUX_S_IFLNK | 0777U);
     } else {
-        mode = BFREE_LINUX_S_IFREG | 0644U;
         size = (int64_t)vf->len;
+        mode = (vf->mode != 0U) ? vf->mode : (BFREE_LINUX_S_IFREG | 0644U);
     }
     ret = bfree_linux_stat_fill(statbuf, mode, size);
     if (ret == 0) {
         bfree_linux_stat_t *st = (bfree_linux_stat_t *)(uintptr_t)statbuf;
         st->st_ino = 100ULL + (uint64_t)(vf - g_guest_vfiles);
         st->st_nlink = (vf->nlink > 0) ? (uint64_t)vf->nlink : 1ULL;
+        st->st_uid = vf->uid;
+        st->st_gid = vf->gid;
+        st->st_atim_sec = vf->atime_sec;
+        st->st_atim_nsec = vf->atime_nsec;
+        st->st_mtim_sec = vf->mtime_sec;
+        st->st_mtim_nsec = vf->mtime_nsec;
+        st->st_ctim_sec = vf->mtime_sec;
+        st->st_ctim_nsec = vf->mtime_nsec;
     }
     return ret;
 }
@@ -7073,6 +8281,11 @@ static long sys_linux_statx(long dfd, long path_ptr, long flags, long mask, long
     /* Was hardcoded to ~46MB for every path (Qt probe leftover), which made
      * tar/musl-statx think /tmp files were huge → "short read" after copying
      * only the real content. Fill from the same path rules as stat(). */
+    typedef struct {
+        int64_t tv_sec;
+        uint32_t tv_nsec;
+        int32_t __reserved;
+    } bfree_statx_ts_t;
     struct bfree_guest_statx {
         uint32_t stx_mask;
         uint32_t stx_blksize;
@@ -7085,13 +8298,21 @@ static long sys_linux_statx(long dfd, long path_ptr, long flags, long mask, long
         uint64_t stx_ino;
         uint64_t stx_size;
         uint64_t stx_blocks;
+        uint64_t stx_attributes_mask;
+        bfree_statx_ts_t stx_atime;
+        bfree_statx_ts_t stx_btime;
+        bfree_statx_ts_t stx_ctime;
+        bfree_statx_ts_t stx_mtime;
     } *st;
     char path[256];
     bfree_linux_stat_t tmp;
     long ret;
     long path_err;
+    uint64_t us;
+    long sec;
+    uint32_t nsec;
+#define BFREE_AT_EMPTY_PATH 0x1000L
 
-    (void)flags;
     (void)mask;
     if (statxbuf == 0 || !bfree_user_ptr_mapped(statxbuf)) {
         return -14;
@@ -7104,17 +8325,28 @@ static long sys_linux_statx(long dfd, long path_ptr, long flags, long mask, long
             p[i] = 0;
         }
     }
-    if (path_ptr == 0 || copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+    if (path_ptr == 0) {
         return -14;
     }
-    path_err = bfree_guest_path_at(dfd, path, sizeof(path));
-    if (path_err != 0) {
-        return path_err;
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
     }
-    ret = bfree_linux_stat_for_path(path, (long)(uintptr_t)&tmp);
+    /* AT_EMPTY_PATH: empty pathname → operate on dirfd itself. */
+    if (path[0] == '\0' && (flags & BFREE_AT_EMPTY_PATH) != 0L) {
+        ret = sys_linux_fstat(dfd, (long)(uintptr_t)&tmp);
+    } else {
+        path_err = bfree_guest_path_at(dfd, path, sizeof(path));
+        if (path_err != 0) {
+            return path_err;
+        }
+        ret = bfree_linux_stat_for_path(path, (long)(uintptr_t)&tmp);
+    }
     if (ret != 0) {
         return ret;
     }
+    us = knl_get_current_time();
+    sec = (long)(us / 1000000ULL);
+    nsec = (uint32_t)((us % 1000000ULL) * 1000ULL);
     st->stx_mask = 0x000007ffU; /* STATX_BASIC_STATS */
     st->stx_blksize = (uint32_t)tmp.st_blksize;
     st->stx_nlink = (uint32_t)tmp.st_nlink;
@@ -7124,6 +8356,12 @@ static long sys_linux_statx(long dfd, long path_ptr, long flags, long mask, long
     st->stx_ino = tmp.st_ino;
     st->stx_size = (uint64_t)tmp.st_size;
     st->stx_blocks = (uint64_t)tmp.st_blocks;
+    st->stx_atime.tv_sec = sec;
+    st->stx_atime.tv_nsec = nsec;
+    st->stx_ctime.tv_sec = sec;
+    st->stx_ctime.tv_nsec = nsec;
+    st->stx_mtime.tv_sec = sec;
+    st->stx_mtime.tv_nsec = nsec;
     return 0;
 }
 
@@ -7240,22 +8478,74 @@ static long sys_linux_lstat(long path_ptr, long statbuf)
     return sys_linux_stat(path_ptr, statbuf);
 }
 
+static char g_guest_hostname[64] = "bfree";
+static char g_guest_domainname[64] = "(none)";
+
 static long sys_linux_gethostname(long buf, long len)
 {
-    const char host[] = "bfree";
-    size_t n = sizeof(host) - 1U;
+    size_t n;
     size_t i;
 
     if (buf == 0 || len <= 0 || !bfree_user_ptr_mapped(buf)) {
         return -14;
     }
+    n = 0;
+    while (g_guest_hostname[n] != '\0' && n < sizeof(g_guest_hostname) - 1U) {
+        ++n;
+    }
     if ((size_t)len <= n) {
         return -12;
     }
     for (i = 0; i < n; ++i) {
-        ((char *)(uintptr_t)buf)[i] = host[i];
+        ((char *)(uintptr_t)buf)[i] = g_guest_hostname[i];
     }
     ((char *)(uintptr_t)buf)[n] = '\0';
+    return 0;
+}
+
+/* Linux 170: sethostname — was wrongly wired to gethostname. */
+static long sys_linux_sethostname(long name_ptr, long len)
+{
+    size_t i;
+
+    if (len < 0) {
+        return -22;
+    }
+    if (len >= (long)sizeof(g_guest_hostname)) {
+        return -22;
+    }
+    if (len > 0 && (name_ptr == 0 ||
+                    !bfree_user_buf_mapped((uint64_t)(uintptr_t)name_ptr,
+                                          (uint64_t)len))) {
+        return -14;
+    }
+    for (i = 0; i < (size_t)len; ++i) {
+        g_guest_hostname[i] = ((const char *)(uintptr_t)name_ptr)[i];
+    }
+    g_guest_hostname[len] = '\0';
+    return 0;
+}
+
+/* Linux 171: setdomainname */
+static long sys_linux_setdomainname(long name_ptr, long len)
+{
+    size_t i;
+
+    if (len < 0) {
+        return -22;
+    }
+    if (len >= (long)sizeof(g_guest_domainname)) {
+        return -22;
+    }
+    if (len > 0 && (name_ptr == 0 ||
+                    !bfree_user_buf_mapped((uint64_t)(uintptr_t)name_ptr,
+                                          (uint64_t)len))) {
+        return -14;
+    }
+    for (i = 0; i < (size_t)len; ++i) {
+        g_guest_domainname[i] = ((const char *)(uintptr_t)name_ptr)[i];
+    }
+    g_guest_domainname[len] = '\0';
     return 0;
 }
 
@@ -7472,6 +8762,25 @@ static long sys_linux_getdents64(long fd, long dirp, long count)
     while (name[nlen] != '\0') {
         ++nlen;
     }
+    if (g_getdents_legacy) {
+        /* linux_dirent: ino, off, reclen, name[], then d_type as last byte. */
+        reclen = (unsigned short)((8 + 8 + 2 + nlen + 1U + 1U + 7U) & ~7U);
+        if ((long)reclen > count) {
+            return 0;
+        }
+        out = (uint8_t *)(uintptr_t)dirp;
+        memset(out, 0, reclen);
+        *(uint64_t *)(void *)out = (uint64_t)dir_idx + 1ULL;
+        ofd->dir_cookie += (uint64_t)reclen;
+        *(int64_t *)(void *)(out + 8) = (int64_t)ofd->dir_cookie;
+        *(unsigned short *)(void *)(out + 16) = reclen;
+        for (i = 0; i < nlen; ++i) {
+            out[18 + i] = (uint8_t)name[i];
+        }
+        out[reclen - 1U] = dtype;
+        ofd->pos = (size_t)(dir_idx + 1U);
+        return (long)reclen;
+    }
     reclen = (unsigned short)((19 + nlen + 1U + 7U) & ~7U);
     if ((long)reclen > count) {
         return 0;
@@ -7542,17 +8851,18 @@ static long sys_linux_uname(long buf)
     u = (bfree_uname_t *)(uintptr_t)buf;
     memset(u, 0, sizeof(*u));
     {
-        static const char *fields[] = {"B-Free", "bfree", "0.1", "guest", "x86_64"};
+        static const char *fields[] = {"B-Free", 0, "0.1", "guest", "x86_64"};
         char *dsts[] = {u->sysname, u->nodename, u->release, u->version, u->machine};
         int i;
         for (i = 0; i < 5; ++i) {
             size_t j = 0;
-            while (fields[i][j] != '\0' && j < 64U) {
-                dsts[i][j] = fields[i][j];
+            const char *src = (i == 1) ? g_guest_hostname : fields[i];
+            while (src[j] != '\0' && j < 64U) {
+                dsts[i][j] = src[j];
                 ++j;
             }
         }
-        bfree_copy_cstr(u->domainname, sizeof(u->domainname), "(none)");
+        bfree_copy_cstr(u->domainname, sizeof(u->domainname), g_guest_domainname);
     }
     return 0;
 }
@@ -7565,20 +8875,17 @@ static long sys_linux_lseek(long fd, long offset, long whence)
     size_t total = 0;
     long cur;
     long next;
+    int target;
+    int raw_fd = (int)fd;
 
     fd = bfree_guest_fd_resolve((int)fd);
-    {
-        int target = bfree_guest_open_target((int)fd, &ofd);
-
-        if (target == (int)BFREE_GUEST_ROOT_DIR_FD || target == (int)BFREE_GUEST_TMP_DIR_FD ||
-            target == (int)BFREE_GUEST_BIN_DIR_FD || target == (int)BFREE_GUEST_USR_DIR_FD ||
-            target == (int)BFREE_GUEST_VAR_DIR_FD || target == (int)BFREE_GUEST_HOME_DIR_FD ||
-            target == (int)BFREE_GUEST_PERSIST_DIR_FD ||
-            target == (int)BFREE_GUEST_PROC_DIR_FD ||
-            target == (int)BFREE_GUEST_PROC_PID_DIR_FD) {
-            return -29; /* ESPIPE */
-        }
-    }
+    /*
+     * Do NOT treat ofd->target == ROOT/TMP/... magic as ESPIPE: those values
+     * overlap VFILE_FD_BASE+slot (e.g. old slot 16 == 0x3720 == ROOT_DIR_FD).
+     * Directory-ness comes from vf->is_dir or a true directory OFD target when
+     * there is no vfile slot behind it.
+     */
+    target = bfree_guest_open_target((int)fd, &ofd);
     vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
     if (vf) {
         if (vf->is_dir) {
@@ -7586,6 +8893,18 @@ static long sys_linux_lseek(long fd, long offset, long whence)
         }
         offp = ofd ? &ofd->pos : &vf->pos;
         total = vf->len;
+    } else if (ofd) {
+        /* OFD without resolvable vfile (e.g. target cleared): still allow seek. */
+        offp = &ofd->pos;
+        total = 0;
+    } else if (target == (int)BFREE_GUEST_ROOT_DIR_FD || target == (int)BFREE_GUEST_TMP_DIR_FD ||
+               target == (int)BFREE_GUEST_BIN_DIR_FD || target == (int)BFREE_GUEST_USR_DIR_FD ||
+               target == (int)BFREE_GUEST_VAR_DIR_FD || target == (int)BFREE_GUEST_HOME_DIR_FD ||
+               target == (int)BFREE_GUEST_PERSIST_DIR_FD ||
+               target == (int)BFREE_GUEST_PROC_DIR_FD ||
+               target == (int)BFREE_GUEST_PROC_PID_DIR_FD ||
+               target == (int)BFREE_GUEST_PTS_DIR_FD) {
+        return -29; /* ESPIPE */
     } else if (fd == (long)BFREE_GUEST_PASSWD_FD) {
         offp = &g_guest_etc_passwd_off;
         total = sizeof(g_guest_etc_passwd) - 1U;
@@ -7637,8 +8956,18 @@ static long sys_linux_lseek(long fd, long offset, long whence)
     } else if (fd == (long)BFREE_GUEST_PROC_PID2CMDLINE_FD) {
         offp = &g_guest_proc_pid2_cmdline_off;
         total = sizeof(g_guest_proc_pid2_cmdline) - 1U;
-    } else {
+    } else if (bfree_guest_pipe_slot_from_magic((int)fd) >= 0) {
         return -29; /* ESPIPE */
+    } else {
+        /* Last resort: any other open fd is seekable (fixes tmpfile edge cases). */
+        offp = bfree_guest_seek_pos_for(raw_fd >= 0 ? raw_fd : (int)fd);
+        if (!offp) {
+            offp = bfree_guest_seek_pos_for((int)fd);
+        }
+        if (!offp) {
+            return -29;
+        }
+        total = 0;
     }
 
     cur = (long)(*offp);
@@ -7654,9 +8983,7 @@ static long sys_linux_lseek(long fd, long offset, long whence)
     if (next < 0) {
         return -22;
     }
-    if ((size_t)next > total) {
-        next = (long)total;
-    }
+    /* Linux allows seeking past EOF; do not clamp to file size. */
     *offp = (size_t)next;
     return next;
 }
@@ -7759,6 +9086,29 @@ static long sys_linux_unlink(long dirfd, long path_ptr)
     if (path_err != 0) {
         return path_err;
     }
+    /* musl shm_unlink → unlink("/dev/shm/<name>"); same map as open. */
+    if (strncmp(path, "/dev/shm/", 9) == 0 && path[9] != '\0') {
+        char alt[192];
+        size_t i;
+
+        alt[0] = '/';
+        alt[1] = 't';
+        alt[2] = 'm';
+        alt[3] = 'p';
+        alt[4] = '/';
+        alt[5] = 's';
+        alt[6] = 'h';
+        alt[7] = 'm';
+        alt[8] = '/';
+        for (i = 0; path[9 + i] != '\0' && i + 10U < sizeof(alt); ++i) {
+            alt[9 + i] = path[9 + i];
+        }
+        alt[9 + i] = '\0';
+        for (i = 0; alt[i] != '\0' && i + 1U < sizeof(path); ++i) {
+            path[i] = alt[i];
+        }
+        path[i] = '\0';
+    }
     if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) || vname[0] == '\0') {
         return -30;
     }
@@ -7769,6 +9119,7 @@ static long sys_linux_unlink(long dirfd, long path_ptr)
     if (vf->is_dir) {
         return -21; /* EISDIR */
     }
+    bfree_inotify_notify_vname(vname, BFREE_IN_DELETE);
     {
         int was_persist = strncmp(vname, "persist/", 8) == 0;
 
@@ -7839,7 +9190,12 @@ static int bfree_guest_tmp_rename_descendants(const char *oldname, const char *n
     return 0;
 }
 
-static long sys_linux_rename(long olddirfd, long old_ptr, long newdirfd, long new_ptr)
+/* renameat2 flags */
+#define BFREE_RENAME_NOREPLACE 1
+#define BFREE_RENAME_EXCHANGE  2
+
+static long sys_linux_rename(long olddirfd, long old_ptr, long newdirfd,
+                             long new_ptr, long flags)
 {
     char oldp[256];
     char newp[256];
@@ -7851,6 +9207,13 @@ static long sys_linux_rename(long olddirfd, long old_ptr, long newdirfd, long ne
     int rc;
     long path_err;
 
+    if ((flags & ~(long)(BFREE_RENAME_NOREPLACE | BFREE_RENAME_EXCHANGE)) != 0) {
+        return -22; /* EINVAL: RENAME_WHITEOUT and friends unsupported */
+    }
+    if ((flags & BFREE_RENAME_NOREPLACE) != 0 &&
+        (flags & BFREE_RENAME_EXCHANGE) != 0) {
+        return -22;
+    }
     if (copy_user_cstr(old_ptr, oldp, sizeof(oldp)) != 0 ||
         copy_user_cstr(new_ptr, newp, sizeof(newp)) != 0) {
         return -14;
@@ -7877,6 +9240,41 @@ static long sys_linux_rename(long olddirfd, long old_ptr, long newdirfd, long ne
         return -2;
     }
     dst = bfree_guest_vfile_find_by_name(newname);
+    if ((flags & BFREE_RENAME_EXCHANGE) != 0) {
+        char tmpname[64];
+
+        if (!dst) {
+            return -2; /* ENOENT: both paths must exist */
+        }
+        if (dst == src) {
+            return 0;
+        }
+        if (src->is_dir || dst->is_dir) {
+            return -22; /* directory swap would need descendant rewrites */
+        }
+        n = 0;
+        while (src->name[n] != '\0' && n + 1U < sizeof(tmpname)) {
+            tmpname[n] = src->name[n];
+            ++n;
+        }
+        tmpname[n] = '\0';
+        n = 0;
+        while (dst->name[n] != '\0' && n + 1U < sizeof(src->name)) {
+            src->name[n] = dst->name[n];
+            ++n;
+        }
+        src->name[n] = '\0';
+        n = 0;
+        while (tmpname[n] != '\0' && n + 1U < sizeof(dst->name)) {
+            dst->name[n] = tmpname[n];
+            ++n;
+        }
+        dst->name[n] = '\0';
+        return 0;
+    }
+    if (dst && dst != src && (flags & BFREE_RENAME_NOREPLACE) != 0) {
+        return -17; /* EEXIST */
+    }
     if (dst && dst != src) {
         if (dst->is_dir) {
             if (bfree_guest_tmp_has_children(newname)) {
@@ -8146,7 +9544,11 @@ long sys_pause(void)
 // CPUを譲渡（マルチタスク環境での公平性）
 long sys_sched_yield(void)
 {
-    // 簡易実装：何もしない（将来的にスケジューラと連携）
+    long sw = bfree_gthr_yield();
+
+    if (sw != 0) {
+        return sw;
+    }
     __asm__ volatile ("pause" ::: "memory");
     return 0;
 }
@@ -8266,6 +9668,50 @@ static bfree_timerfd_entry_t *bfree_find_timerfd(int fd)
     return &g_timerfd_entries[index];
 }
 
+static long bfree_linux_read_timerfd(long fd, long buf, long count)
+{
+    bfree_timerfd_entry_t *tfe = bfree_find_timerfd((int)fd);
+    uint64_t *dst;
+    uint64_t now;
+
+    if (!tfe) {
+        return -9; /* not a timerfd — caller continues */
+    }
+    if (buf == 0 || count < (long)sizeof(uint64_t) || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    for (;;) {
+        now = knl_get_current_time();
+        /* Soft-expire if IRQ callback was skipped / late. */
+        if (tfe->armed && tfe->next_expire_us > 0 && now >= tfe->next_expire_us) {
+            tfe->expirations++;
+            if (tfe->interval_us > 0) {
+                tfe->next_expire_us = now + tfe->interval_us;
+            } else {
+                tfe->armed = 0;
+                tfe->next_expire_us = 0;
+            }
+        }
+        if (tfe->expirations != 0) {
+            break;
+        }
+        if ((tfe->flags & 04000) != 0) { /* TFD_NONBLOCK */
+            return -11;
+        }
+        {
+            int er = bfree_guest_sig_take_eintr();
+            if (er < 0) {
+                return er;
+            }
+        }
+        __asm__ volatile("sti; hlt" ::: "memory");
+    }
+    dst = (uint64_t *)(uintptr_t)buf;
+    *dst = tfe->expirations;
+    tfe->expirations = 0;
+    return (long)sizeof(uint64_t);
+}
+
 static void bfree_timerfd_purge_all(void)
 {
     int i;
@@ -8343,7 +9789,8 @@ static int bfree_timerfd_schedule(bfree_timerfd_entry_t *entry, int flags, const
     }
     entry->armed = 1;
     entry->event_id = timer_set_event(entry->next_expire_us, bfree_timerfd_fire, entry);
-    return entry->event_id < 0 ? -1 : 0;
+    /* Soft-expire path works even if the IRQ event table is full. */
+    return 0;
 }
 
 typedef long (*syscall_func_t)(long, long, long, long, long, long);
@@ -8359,6 +9806,11 @@ static int bfree_stdin_byte_ready(void)
 {
     if (_inb(0x3F8 + 5) & 0x01) {
         return 1;
+    }
+    /* ROLE_APP (desktop/QPA) owns PS/2 via sys_poll_input_event — do not
+     * advertise keyboard bytes as stdin or they are stolen before poll. */
+    if (bfree_security_get_role() == BFREE_ROLE_APP) {
+        return 0;
     }
     mouse_poll_ps2();
     return keyboard_has_data();
@@ -8377,6 +9829,9 @@ static int bfree_stdin_pop_byte(uint8_t *out_ch)
             *out_ch = '\n';
         }
         return 1;
+    }
+    if (bfree_security_get_role() == BFREE_ROLE_APP) {
+        return 0;
     }
     mouse_poll_ps2();
     if (keyboard_pop_char(&keycode)) {
@@ -8665,21 +10120,28 @@ long sys_timerfd_read(long fd, long value_ptr) {
         return -1;
     }
     if (entry->expirations == 0) {
-        return 0;
+        return -11; /* EAGAIN when nonblocking; blocking handled in read() */
     }
     *value = entry->expirations;
     entry->expirations = 0;
-    return 1;
+    return 8;
 }
 long sys_timerfd_pending(long fd) {
     bfree_timerfd_entry_t *entry = bfree_find_timerfd((int)fd);
-
-#ifdef BFREE_RUNTIME_BUILD
-    timer_process_events();
-#endif
+    uint64_t now;
 
     if (entry == 0) {
         return -1;
+    }
+    now = knl_get_current_time();
+    if (entry->armed && entry->next_expire_us > 0 && now >= entry->next_expire_us) {
+        entry->expirations++;
+        if (entry->interval_us > 0) {
+            entry->next_expire_us = now + entry->interval_us;
+        } else {
+            entry->armed = 0;
+            entry->next_expire_us = 0;
+        }
     }
     return entry->expirations > 0;
 }
@@ -9069,30 +10531,107 @@ static int bfree_user_stack_rebind_top(uint64_t stack_top, int n_pages)
 static int bfree_user_stack_poke_bytes(uint64_t user_vaddr, const char *bytes, uint64_t len)
 {
     uint64_t off = 0;
+    page_table_t *saved_pt = 0;
+    page_table_t *force_pt = 0;
 
     if (!bytes || len == 0) {
         return 0;
+    }
+    /* AS-copy: force the running side's PT for the walk (child COW pages). */
+    if (g_guest_fork_active && g_guest_fork_was_as_copy && knl_current_task) {
+        force_pt = (g_coop_side == 1) ? bfree_process_child_pt()
+                                      : bfree_process_parent_pt();
+        if (force_pt) {
+            saved_pt = (page_table_t *)knl_current_task->page_table_base;
+            if (saved_pt != force_pt) {
+                knl_current_task->page_table_base = force_pt;
+                __asm__ volatile("mov %0, %%cr3" :: "r"(force_pt) : "memory");
+            } else {
+                saved_pt = 0;
+            }
+        }
     }
     while (off < len) {
         uint64_t va = user_vaddr + off;
         uint64_t phys;
         uint64_t chunk;
         uint64_t page_off;
+        uint8_t *kptr;
 
-        if (bfree_user_stack_page_phys(va, &phys) != 0) {
-            return -1;
-        }
         page_off = va & (PAGE_SIZE - 1ULL);
         chunk = PAGE_SIZE - page_off;
         if (chunk > len - off) {
             chunk = len - off;
         }
-        bfree_kernel_phys_io_begin();
-        if (bfree_kernel_poke_phys(phys + page_off, bytes + off, chunk) != 0) {
+        if (bfree_user_stack_page_phys(va, &phys) == 0) {
+            bfree_kernel_phys_io_begin();
+            if (bfree_kernel_poke_phys(phys + page_off, bytes + off, chunk) != 0) {
+                bfree_kernel_phys_io_end();
+                if (saved_pt) {
+                    knl_current_task->page_table_base = saved_pt;
+                    __asm__ volatile("mov %0, %%cr3" :: "r"(saved_pt) : "memory");
+                }
+                return -1;
+            }
             bfree_kernel_phys_io_end();
+        } else if ((kptr = bfree_user_stack_page_kptr(va)) != 0) {
+            uint64_t i;
+            for (i = 0; i < chunk; ++i) {
+                kptr[page_off + i] = (uint8_t)bytes[off + i];
+            }
+        } else {
+            if (saved_pt) {
+                knl_current_task->page_table_base = saved_pt;
+                __asm__ volatile("mov %0, %%cr3" :: "r"(saved_pt) : "memory");
+            }
             return -1;
         }
-        bfree_kernel_phys_io_end();
+        off += chunk;
+    }
+    if (saved_pt) {
+        knl_current_task->page_table_base = saved_pt;
+        __asm__ volatile("mov %0, %%cr3" :: "r"(saved_pt) : "memory");
+    }
+    return 0;
+}
+
+static int bfree_user_stack_peek_bytes(uint64_t user_vaddr, char *bytes, uint64_t len)
+{
+    uint64_t off = 0;
+
+    if (!bytes || len == 0) {
+        return 0;
+    }
+    if (g_guest_fork_active && g_guest_fork_was_as_copy) {
+        bfree_coop_as_switch_to(g_coop_side);
+    }
+    while (off < len) {
+        uint64_t va = user_vaddr + off;
+        uint64_t phys;
+        uint64_t chunk;
+        uint64_t page_off;
+        uint8_t *kptr;
+
+        page_off = va & (PAGE_SIZE - 1ULL);
+        chunk = PAGE_SIZE - page_off;
+        if (chunk > len - off) {
+            chunk = len - off;
+        }
+        if (bfree_user_stack_page_phys(va, &phys) == 0) {
+            bfree_kernel_phys_io_begin();
+            if (bfree_kernel_peek_phys(phys + page_off, bytes + off, chunk) != 0) {
+                bfree_kernel_phys_io_end();
+                return -1;
+            }
+            bfree_kernel_phys_io_end();
+        } else if ((kptr = bfree_user_stack_page_kptr(va)) != 0) {
+            uint64_t i;
+            for (i = 0; i < chunk; ++i) {
+                bytes[off + i] = (char)kptr[page_off + i];
+            }
+        } else {
+            return -1;
+        }
         off += chunk;
     }
     return 0;
@@ -9476,7 +11015,14 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
 
     is_child = g_guest_fork_active && bfree_process_child_active();
 
-    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+    if (g_execve_kpath_override[0] != '\0') {
+        size_t pi;
+        for (pi = 0; pi + 1U < sizeof(path) && g_execve_kpath_override[pi] != '\0'; ++pi) {
+            path[pi] = g_execve_kpath_override[pi];
+        }
+        path[pi] = '\0';
+        g_execve_kpath_override[0] = '\0';
+    } else if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
         return -14;
     }
     if (bfree_copy_user_strarray(argv_ptr, argv_buf, 16, &argc) != 0 || argc <= 0) {
@@ -9495,6 +11041,20 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
             img = "ltp_curated.elf";
         } else if (bfree_guest_basename_eq(path, "libc_test_curated.elf")) {
             img = "libc_test_curated.elf";
+        } else if (bfree_guest_basename_eq(path, "libc_test_pthread.elf")) {
+            img = "libc_test_pthread.elf";
+        } else if (bfree_guest_basename_eq(path, "libc_test_functional.elf")) {
+            img = "libc_test_functional.elf";
+        } else if (bfree_guest_basename_eq(path, "libc_test_math.elf")) {
+            img = "libc_test_math.elf";
+        } else if (bfree_guest_basename_eq(path, "libc_test_math2.elf")) {
+            img = "libc_test_math2.elf";
+        } else if (bfree_guest_basename_eq(path, "libc_test_math3.elf")) {
+            img = "libc_test_math3.elf";
+        } else if (bfree_guest_basename_eq(path, "libc_test_regression.elf")) {
+            img = "libc_test_regression.elf";
+        } else if (bfree_guest_basename_eq(path, "abi_hole_finder.elf")) {
+            img = "abi_hole_finder.elf";
         }
         exec_img = img;
     }
@@ -9572,6 +11132,26 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
         bfree_loaded_elf_info_get(&elf);
         knl_current_task->page_table_base = child_pt;
         bfree_guest_heap_reset();
+        /* Desktop leaves Qt timers/timerfds and may leave stdin on a pipe/pty.
+         * Busybox then blocks on the first poll/read without a PF. Do not call
+         * full exec_reset (that clears fork state / parent heap).
+         * Heal stdin only — keep stdout/stderr redirects (pipe or /tmp) so
+         * Terminal capture and ash redirs survive private-AS exec. */
+        timer_purge_all();
+        bfree_timerfd_purge_all();
+        g_guest_clear_child_tid = 0;
+        {
+            int r0 = bfree_guest_fd_resolve(0);
+            if (r0 != 0 && r0 != (int)BFREE_GUEST_DEV_NULL_FD &&
+                (bfree_guest_is_pipe_rd(r0) || bfree_guest_is_pipe_wr(r0) ||
+                 bfree_pty_slot_from_fd(r0) >= 0 || bfree_guest_is_eventfd(r0))) {
+                if (bfree_guest_pipe_slot_from_magic(r0) >= 0) {
+                    bfree_guest_pipe_ref(r0, -1);
+                }
+                g_guest_fd_target[0] = (int)BFREE_GUEST_DEV_NULL_FD;
+                g_guest_fd_dup_save[0] = -1;
+            }
+        }
     } else {
         /* Standalone: replace current image (no parent to preserve). */
         bfree_guest_heap_reset();
@@ -9678,6 +11258,9 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
         }
         return -2;
     }
+    /* Desktop may have CLONE_THREAD (gthr) live; busybox must not inherit those
+     * waiter slots or the first futex/poll steals into a dead Qt context. */
+    bfree_guest_thread_init();
     if (g_bfree_elf_watch_phys != 0) {
         uint8_t wchk[4];
         bfree_kernel_phys_io_begin();
@@ -9696,6 +11279,15 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
         }
         bfree_kernel_phys_io_end();
     }
+    /* Log the first few syscalls after busybox transfer (smoke: post_exec_syscall). */
+    g_bfree_post_exec_syscalls = 4;
+    uart_puts("[ELF] exec transfer busybox gthr cleared entry=");
+    uart_puthex64(g_bfree_exec_transfer_rip);
+    uart_puts(" rsp=");
+    uart_puthex64(g_bfree_sysret_exec_rsp);
+    uart_puts(" cr3=");
+    uart_puthex64(g_bfree_sysret_exec_cr3);
+    uart_puts("\n");
     return BFREE_SYSRET_EXEC_TRANSFER;
 }
 
@@ -9928,7 +11520,9 @@ long sys_legacy_initrd_read(long user_name_ptr, long offset, long user_buf_ptr, 
     return size;
 }
 
-#define BFREE_LINUX_SYSCALL_UNHANDLED ((long)0x7FFFFFFFL)
+/* Must never collide with a real syscall return (lseek past 2G returned
+ * 0x7FFFFFFF and was misclassified as unhandled → ENOSYS). */
+#define BFREE_LINUX_SYSCALL_UNHANDLED ((long)0x6A11C7007FEEDLL)
 
 static int bfree_user_ptr_mapped(long ptr)
 {
@@ -9941,6 +11535,13 @@ typedef struct {
     int used;
     int fd;
     uint32_t events;
+    /* EPOLLET latch: set once an edge has been reported, cleared when the fd
+     * next polls not-ready. EPOLLONESHOT disables the interest after one
+     * delivery until EPOLL_CTL_MOD re-arms it. */
+    int et;
+    int oneshot;
+    int et_fired;
+    int disabled;
     epoll_data_t data;
 } bfree_guest_epoll_watch_t;
 
@@ -10127,16 +11728,33 @@ static long sys_linux_socketpair(long domain, long type, long protocol, long sv_
     g_unix_socks[a].used = 1;
     g_unix_socks[a].listening = 0;
     g_unix_socks[a].connected = 1;
+    /* Both ends are pipe-backed even for SOCK_DGRAM: no mailbox routing. */
+    g_unix_socks[a].is_dgram = 0;
+    g_unix_socks[a].dg_pending = 0;
+    g_unix_socks[a].dg_len = 0;
     g_unix_socks[a].pipe_magic = wr0; /* write → peer reads rd0 */
     g_unix_socks[a].accept_rd = rd1;  /* read ← peer writes wr1 */
+    g_unix_socks[a].accept_wr = -1;
     g_unix_socks[a].path[0] = '\0';
+    g_unix_socks[a].peer_path[0] = '\0';
+    bfree_sock_accept_q_reset(g_unix_socks[a].q_rd, g_unix_socks[a].q_wr,
+                              &g_unix_socks[a].q_len,
+                              &g_unix_socks[a].listen_backlog);
 
     g_unix_socks[b].used = 1;
     g_unix_socks[b].listening = 0;
     g_unix_socks[b].connected = 1;
+    g_unix_socks[b].is_dgram = 0;
+    g_unix_socks[b].dg_pending = 0;
+    g_unix_socks[b].dg_len = 0;
     g_unix_socks[b].pipe_magic = wr1;
     g_unix_socks[b].accept_rd = rd0;
+    g_unix_socks[b].accept_wr = -1;
     g_unix_socks[b].path[0] = '\0';
+    g_unix_socks[b].peer_path[0] = '\0';
+    bfree_sock_accept_q_reset(g_unix_socks[b].q_rd, g_unix_socks[b].q_wr,
+                              &g_unix_socks[b].q_len,
+                              &g_unix_socks[b].listen_backlog);
 
     pub0 = bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + a);
     pub1 = bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + b);
@@ -10171,16 +11789,22 @@ static long sys_linux_eventfd2(long count, long flags)
     int magic;
     int pub;
     int cloexec = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
+    int nonblock = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_NONBLOCK) != 0UL;
+    int semaphore = ((unsigned long)flags & 1UL) != 0UL; /* EFD_SEMAPHORE */
 
     if (g_guest_eventfd_next >= BFREE_MAX_GUEST_EVENTFD) {
         return -24;
     }
     g_guest_eventfd_val[g_guest_eventfd_next] = (count != 0) ? (uint64_t)count : 0ULL;
+    g_guest_eventfd_nonblock[g_guest_eventfd_next] = nonblock;
+    g_guest_eventfd_sem[g_guest_eventfd_next] = semaphore;
     magic = (int)BFREE_GUEST_EVENTFD_BASE + g_guest_eventfd_next++;
     pub = bfree_guest_fd_publish(magic);
     if (pub < 0) {
         g_guest_eventfd_next--;
         g_guest_eventfd_val[g_guest_eventfd_next] = 0;
+        g_guest_eventfd_nonblock[g_guest_eventfd_next] = 0;
+        g_guest_eventfd_sem[g_guest_eventfd_next] = 0;
         return -24;
     }
     if (cloexec && pub >= 0 && pub < BFREE_GUEST_FD_TABLE_SIZE) {
@@ -10202,9 +11826,16 @@ static uint32_t bfree_guest_sock_ready_mask(int fd)
     iidx = bfree_inet_from_fd(resolved);
     if (iidx >= 0) {
         if (g_inet_socks[iidx].listening) {
-            if (g_inet_socks[iidx].accept_rd >= 0) {
+            if (g_inet_socks[iidx].q_len > 0) {
                 mask |= (uint32_t)EPOLLIN;
             }
+            return mask;
+        }
+        if (g_inet_socks[iidx].is_dgram) {
+            if (g_inet_socks[iidx].dg_count > 0) {
+                mask |= (uint32_t)EPOLLIN;
+            }
+            mask |= (uint32_t)EPOLLOUT;
             return mask;
         }
         if (g_inet_socks[iidx].connected && g_inet_socks[iidx].pipe_magic >= 0) {
@@ -10214,9 +11845,13 @@ static uint32_t bfree_guest_sock_ready_mask(int fd)
                 if (g_guest_pipes[slot].len < BFREE_GUEST_PIPE_BUF_SIZE) {
                     mask |= (uint32_t)EPOLLOUT;
                 }
-                if (g_guest_pipes[slot].len > 0) {
-                    mask |= (uint32_t)EPOLLIN;
-                }
+            }
+        }
+        if (g_inet_socks[iidx].connected && g_inet_socks[iidx].accept_rd >= 0) {
+            mag = g_inet_socks[iidx].accept_rd;
+            slot = bfree_guest_pipe_slot_from_magic(mag);
+            if (slot >= 0 && g_guest_pipes[slot].used && g_guest_pipes[slot].len > 0) {
+                mask |= (uint32_t)EPOLLIN;
             }
         }
         return mask;
@@ -10225,9 +11860,16 @@ static uint32_t bfree_guest_sock_ready_mask(int fd)
     uidx = bfree_unix_from_fd(resolved);
     if (uidx >= 0) {
         if (g_unix_socks[uidx].listening) {
-            if (g_unix_socks[uidx].accept_rd >= 0) {
+            if (g_unix_socks[uidx].q_len > 0) {
                 mask |= (uint32_t)EPOLLIN;
             }
+            return mask;
+        }
+        if (g_unix_socks[uidx].is_dgram) {
+            if (g_unix_socks[uidx].dg_pending) {
+                mask |= (uint32_t)EPOLLIN;
+            }
+            mask |= (uint32_t)EPOLLOUT;
             return mask;
         }
         if (g_unix_socks[uidx].connected && g_unix_socks[uidx].pipe_magic >= 0) {
@@ -10237,42 +11879,419 @@ static uint32_t bfree_guest_sock_ready_mask(int fd)
                 if (g_guest_pipes[slot].len < BFREE_GUEST_PIPE_BUF_SIZE) {
                     mask |= (uint32_t)EPOLLOUT;
                 }
-                if (g_guest_pipes[slot].len > 0) {
-                    mask |= (uint32_t)EPOLLIN;
-                }
+            }
+        }
+        if (g_unix_socks[uidx].connected && g_unix_socks[uidx].accept_rd >= 0) {
+            mag = g_unix_socks[uidx].accept_rd;
+            slot = bfree_guest_pipe_slot_from_magic(mag);
+            if (slot >= 0 && g_guest_pipes[slot].used && g_guest_pipes[slot].len > 0) {
+                mask |= (uint32_t)EPOLLIN;
             }
         }
     }
     return mask;
 }
 
-/* Soft-0 for apps that ignore sockopt failure; no NIC option store. */
+/* Minimal SOL_SOCKET options; unknown opts soft-0 (Qt/BusyBox ignore failures). */
+#ifndef BFREE_SOL_SOCKET
+#define BFREE_SOL_SOCKET 1
+#define BFREE_SO_DEBUG 1
+#define BFREE_SO_REUSEADDR 2
+#define BFREE_SO_TYPE 3
+#define BFREE_SO_ERROR 4
+#define BFREE_SO_DONTROUTE 5
+#define BFREE_SO_BROADCAST 6
+#define BFREE_SO_SNDBUF 7
+#define BFREE_SO_RCVBUF 8
+#define BFREE_SO_KEEPALIVE 9
+#define BFREE_SO_LINGER 13
+#define BFREE_SO_REUSEPORT 15
+#define BFREE_SO_RCVTIMEO 20
+#define BFREE_SO_SNDTIMEO 21
+#define BFREE_SO_OOBINLINE 10
+#define BFREE_SO_ACCEPTCONN 30
+#define BFREE_SOCK_STREAM 1
+#define BFREE_SOCK_DGRAM 2
+/* IPPROTO_IP level options */
+#define BFREE_IPPROTO_IP 0
+#define BFREE_IP_TOS 1
+#define BFREE_IP_TTL 2
+#define BFREE_IPPROTO_TCP 6
+#define BFREE_TCP_NODELAY 1
+#endif
+#ifndef BFREE_MSG_DONTWAIT
+#define BFREE_MSG_DONTWAIT 0x40
+#endif
+#ifndef BFREE_MSG_TRUNC
+#define BFREE_MSG_TRUNC 0x20
+#endif
+#ifndef BFREE_MSG_WAITALL
+#define BFREE_MSG_WAITALL 0x100
+#endif
+/* Soft-accepted send/recv flags: out-of-band data is delivered in-band and
+ * there are no SCM_RIGHTS ancillary messages to open CLOEXEC. */
+#ifndef BFREE_MSG_OOB
+#define BFREE_MSG_OOB 0x1
+#endif
+#ifndef BFREE_MSG_CMSG_CLOEXEC
+#define BFREE_MSG_CMSG_CLOEXEC 0x40000000
+#endif
+#define BFREE_MSG_SOFT_IGNORED \
+    ((unsigned long)BFREE_MSG_OOB | (unsigned long)BFREE_MSG_CMSG_CLOEXEC)
+
+typedef struct {
+    int l_onoff;
+    int l_linger;
+} bfree_linger_t;
+
+typedef struct {
+    int64_t tv_sec;
+    int64_t tv_usec;
+} bfree_sock_timeval_t;
+
 static long sys_linux_setsockopt(long fd, long level, long optname, long optval, long optlen)
 {
-    (void)fd;
-    (void)level;
-    (void)optname;
-    (void)optval;
-    (void)optlen;
+    int resolved;
+    int idx;
+    int uidx;
+    int ival = 0;
+
+    resolved = bfree_guest_fd_resolve((int)fd);
+    idx = bfree_inet_from_fd(resolved);
+    uidx = bfree_unix_from_fd(resolved);
+    if (idx < 0 && uidx < 0) {
+        return -88; /* ENOTSOCK */
+    }
+    if (optlen >= (long)sizeof(int) && optval != 0 && bfree_user_ptr_mapped(optval)) {
+        ival = *(const int *)(uintptr_t)optval;
+    }
+    if (level == BFREE_IPPROTO_IP) {
+        if (idx < 0) {
+            return 0; /* AF_UNIX: soft-ok */
+        }
+        if (optname == BFREE_IP_TTL) {
+            if (ival < 0 || ival > 255) {
+                return -22;
+            }
+            g_inet_socks[idx].ip_ttl = (ival == 0) ? 64 : ival;
+            return 0;
+        }
+        if (optname == BFREE_IP_TOS) {
+            g_inet_socks[idx].ip_tos = ival & 0xFF;
+            return 0;
+        }
+        return 0;
+    }
+    if (level == BFREE_IPPROTO_TCP) {
+        if (idx < 0) {
+            return 0;
+        }
+        if (optname == BFREE_TCP_NODELAY) {
+            g_inet_socks[idx].tcp_nodelay = ival ? 1 : 0;
+            return 0;
+        }
+        return 0;
+    }
+    if (level != BFREE_SOL_SOCKET) {
+        return 0; /* soft-ok for other levels */
+    }
+    if (optname == BFREE_SO_OOBINLINE) {
+        if (idx >= 0) {
+            g_inet_socks[idx].so_oobinline = ival ? 1 : 0;
+        }
+        return 0;
+    }
+    if (optname == BFREE_SO_ERROR) {
+        return -92; /* ENOPROTOOPT: SO_ERROR is read-only */
+    }
+    if (optname == BFREE_SO_REUSEADDR) {
+        if (idx >= 0) {
+            g_inet_socks[idx].so_reuseaddr = ival ? 1 : 0;
+        }
+        return 0;
+    }
+    if (optname == BFREE_SO_REUSEPORT) {
+        if (idx >= 0) {
+            g_inet_socks[idx].so_reuseport = ival ? 1 : 0;
+        }
+        return 0;
+    }
+    if (optname == BFREE_SO_KEEPALIVE) {
+        if (idx >= 0) {
+            g_inet_socks[idx].so_keepalive = ival ? 1 : 0;
+        }
+        if (uidx >= 0) {
+            g_unix_socks[uidx].so_keepalive = ival ? 1 : 0;
+        }
+        return 0;
+    }
+    if (optname == BFREE_SO_RCVBUF) {
+        if (ival < 256) {
+            ival = 256;
+        }
+        if (ival > 1024 * 1024) {
+            ival = 1024 * 1024;
+        }
+        if (idx >= 0) {
+            g_inet_socks[idx].so_rcvbuf = ival;
+        }
+        if (uidx >= 0) {
+            g_unix_socks[uidx].so_rcvbuf = ival;
+        }
+        return 0;
+    }
+    if (optname == BFREE_SO_SNDBUF) {
+        if (ival < 256) {
+            ival = 256;
+        }
+        if (ival > 1024 * 1024) {
+            ival = 1024 * 1024;
+        }
+        if (idx >= 0) {
+            g_inet_socks[idx].so_sndbuf = ival;
+        }
+        if (uidx >= 0) {
+            g_unix_socks[uidx].so_sndbuf = ival;
+        }
+        return 0;
+    }
+    if (optname == BFREE_SO_BROADCAST) {
+        if (idx >= 0) {
+            g_inet_socks[idx].so_broadcast = ival ? 1 : 0;
+        }
+        return 0;
+    }
+    if (optname == BFREE_SO_LINGER) {
+        if (optlen >= (long)sizeof(bfree_linger_t) && optval != 0 &&
+            bfree_user_ptr_mapped(optval)) {
+            const bfree_linger_t *lg = (const bfree_linger_t *)(uintptr_t)optval;
+            if (idx >= 0) {
+                g_inet_socks[idx].so_linger_on = lg->l_onoff ? 1 : 0;
+                g_inet_socks[idx].so_linger_sec = lg->l_linger;
+            }
+        }
+        return 0;
+    }
+    if (optname == BFREE_SO_RCVTIMEO || optname == BFREE_SO_SNDTIMEO) {
+        if (optlen >= (long)sizeof(bfree_sock_timeval_t) && optval != 0 &&
+            bfree_user_ptr_mapped(optval)) {
+            const bfree_sock_timeval_t *tv =
+                (const bfree_sock_timeval_t *)(uintptr_t)optval;
+            int64_t us;
+            if (tv->tv_sec < 0 || tv->tv_usec < 0 || tv->tv_usec >= 1000000) {
+                return -22;
+            }
+            us = tv->tv_sec * 1000000LL + tv->tv_usec;
+            if (idx >= 0) {
+                if (optname == BFREE_SO_RCVTIMEO) {
+                    g_inet_socks[idx].so_rcvtimeo_us = us;
+                } else {
+                    g_inet_socks[idx].so_sndtimeo_us = us;
+                }
+            }
+        }
+        return 0;
+    }
     return 0;
 }
 
 static long sys_linux_getsockopt(long fd, long level, long optname, long optval, long optlen_ptr)
 {
-    (void)fd;
-    (void)level;
-    (void)optname;
-    (void)optval;
-    if (optlen_ptr != 0 && bfree_user_ptr_mapped(optlen_ptr)) {
-        *(int *)(uintptr_t)optlen_ptr = 0;
+    int *alen;
+    int want;
+    int resolved;
+    int idx;
+    int uidx;
+    int value = 0;
+    int out_len = (int)sizeof(int);
+
+    if (optval == 0 || optlen_ptr == 0 || !bfree_user_ptr_mapped(optlen_ptr)) {
+        return -14;
     }
+    alen = (int *)(uintptr_t)optlen_ptr;
+    want = *alen;
+    if (want < 0) {
+        return -22;
+    }
+    resolved = bfree_guest_fd_resolve((int)fd);
+    idx = bfree_inet_from_fd(resolved);
+    uidx = bfree_unix_from_fd(resolved);
+    if (idx < 0 && uidx < 0) {
+        return -88; /* ENOTSOCK */
+    }
+    if (level == BFREE_SOL_SOCKET) {
+        if (optname == BFREE_SO_TYPE) {
+            if (idx >= 0) {
+                value = g_inet_socks[idx].is_dgram ? BFREE_SOCK_DGRAM : BFREE_SOCK_STREAM;
+                if (g_inet_socks[idx].is_raw) {
+                    value = 3; /* SOCK_RAW */
+                }
+            } else {
+                value = g_unix_socks[uidx].is_dgram ? BFREE_SOCK_DGRAM
+                                                    : BFREE_SOCK_STREAM;
+            }
+        } else if (optname == BFREE_SO_ERROR) {
+            /* Linux semantics: reading SO_ERROR consumes the pending error. */
+            if (idx >= 0) {
+                value = g_inet_socks[idx].so_error;
+                g_inet_socks[idx].so_error = 0;
+            } else {
+                value = 0;
+            }
+        } else if (optname == BFREE_SO_OOBINLINE) {
+            value = (idx >= 0) ? g_inet_socks[idx].so_oobinline : 0;
+        } else if (optname == BFREE_SO_ACCEPTCONN) {
+            if (idx >= 0) {
+                value = g_inet_socks[idx].listening ? 1 : 0;
+            } else {
+                value = g_unix_socks[uidx].listening ? 1 : 0;
+            }
+        } else if (optname == BFREE_SO_REUSEADDR) {
+            value = (idx >= 0) ? g_inet_socks[idx].so_reuseaddr : 0;
+        } else if (optname == BFREE_SO_REUSEPORT) {
+            value = (idx >= 0) ? g_inet_socks[idx].so_reuseport : 0;
+        } else if (optname == BFREE_SO_KEEPALIVE) {
+            if (idx >= 0) {
+                value = g_inet_socks[idx].so_keepalive;
+            } else {
+                value = g_unix_socks[uidx].so_keepalive;
+            }
+        } else if (optname == BFREE_SO_RCVBUF) {
+            if (idx >= 0) {
+                value = g_inet_socks[idx].so_rcvbuf > 0 ? g_inet_socks[idx].so_rcvbuf : 8192;
+            } else {
+                value = g_unix_socks[uidx].so_rcvbuf > 0 ? g_unix_socks[uidx].so_rcvbuf : 8192;
+            }
+        } else if (optname == BFREE_SO_SNDBUF) {
+            if (idx >= 0) {
+                value = g_inet_socks[idx].so_sndbuf > 0 ? g_inet_socks[idx].so_sndbuf : 8192;
+            } else {
+                value = g_unix_socks[uidx].so_sndbuf > 0 ? g_unix_socks[uidx].so_sndbuf : 8192;
+            }
+        } else if (optname == BFREE_SO_BROADCAST) {
+            value = (idx >= 0) ? g_inet_socks[idx].so_broadcast : 0;
+        } else if (optname == BFREE_SO_LINGER) {
+            bfree_linger_t lg;
+            int copy;
+
+            lg.l_onoff = (idx >= 0) ? g_inet_socks[idx].so_linger_on : 0;
+            lg.l_linger = (idx >= 0) ? g_inet_socks[idx].so_linger_sec : 0;
+            copy = (int)sizeof(lg);
+            if (want < copy) {
+                copy = want;
+            }
+            if (copy > 0 &&
+                !bfree_user_buf_mapped((uint64_t)(uintptr_t)optval, (uint64_t)copy)) {
+                return -14;
+            }
+            if (copy > 0) {
+                memcpy((void *)(uintptr_t)optval, &lg, (size_t)copy);
+            }
+            *alen = copy;
+            return 0;
+        } else if (optname == BFREE_SO_RCVTIMEO || optname == BFREE_SO_SNDTIMEO) {
+            bfree_sock_timeval_t tv;
+            int64_t us = 0;
+            int copy;
+
+            if (idx >= 0) {
+                us = (optname == BFREE_SO_RCVTIMEO)
+                         ? g_inet_socks[idx].so_rcvtimeo_us
+                         : g_inet_socks[idx].so_sndtimeo_us;
+            }
+            tv.tv_sec = us / 1000000LL;
+            tv.tv_usec = us % 1000000LL;
+            copy = (int)sizeof(tv);
+            if (want < copy) {
+                copy = want;
+            }
+            if (copy > 0 &&
+                !bfree_user_buf_mapped((uint64_t)(uintptr_t)optval, (uint64_t)copy)) {
+                return -14;
+            }
+            if (copy > 0) {
+                memcpy((void *)(uintptr_t)optval, &tv, (size_t)copy);
+            }
+            *alen = copy;
+            return 0;
+        } else {
+            value = 0;
+        }
+    } else if (level == BFREE_IPPROTO_IP) {
+        if (optname == BFREE_IP_TTL) {
+            value = (idx >= 0 && g_inet_socks[idx].ip_ttl > 0)
+                        ? g_inet_socks[idx].ip_ttl
+                        : 64;
+        } else if (optname == BFREE_IP_TOS) {
+            value = (idx >= 0) ? g_inet_socks[idx].ip_tos : 0;
+        } else {
+            value = 0;
+        }
+    } else if (level == BFREE_IPPROTO_TCP) {
+        if (optname == BFREE_TCP_NODELAY) {
+            value = (idx >= 0) ? g_inet_socks[idx].tcp_nodelay : 0;
+        } else {
+            value = 0;
+        }
+    } else {
+        value = 0;
+    }
+    if (want < out_len) {
+        out_len = want;
+    }
+    if (out_len > 0 && !bfree_user_buf_mapped((uint64_t)(uintptr_t)optval, (uint64_t)out_len)) {
+        return -14;
+    }
+    if (out_len > 0) {
+        memcpy((void *)(uintptr_t)optval, &value, (size_t)out_len);
+    }
+    *alen = out_len;
     return 0;
 }
 
 static long sys_linux_shutdown(long fd, long how)
 {
-    (void)fd;
-    (void)how;
+    int resolved;
+    int idx;
+    int uidx;
+    int mag;
+    int slot;
+
+    if (how < 0 || how > 2) {
+        return -22;
+    }
+    resolved = bfree_guest_fd_resolve((int)fd);
+    idx = bfree_inet_from_fd(resolved);
+    uidx = bfree_unix_from_fd(resolved);
+    if (idx < 0 && uidx < 0) {
+        return -88;
+    }
+    if (how == 0 || how == 2) { /* SHUT_RD / RDWR */
+        if (idx >= 0) {
+            g_inet_socks[idx].shut_rd = 1;
+        } else {
+            g_unix_socks[uidx].shut_rd = 1;
+        }
+    }
+    if (how == 1 || how == 2) { /* SHUT_WR / RDWR */
+        if (idx >= 0) {
+            g_inet_socks[idx].shut_wr = 1;
+            mag = g_inet_socks[idx].pipe_magic;
+            /* Drop write endpoint so pipe reclaim does not revive wr_open. */
+            g_inet_socks[idx].pipe_magic = -1;
+        } else {
+            g_unix_socks[uidx].shut_wr = 1;
+            mag = g_unix_socks[uidx].pipe_magic;
+            g_unix_socks[uidx].pipe_magic = -1;
+        }
+        /* Closing our write end makes the peer's pipe read see EOF. */
+        if (mag >= 0 && bfree_guest_pipe_is_wr_magic(mag)) {
+            slot = bfree_guest_pipe_slot_from_magic(mag);
+            if (slot >= 0 && g_guest_pipes[slot].used) {
+                g_guest_pipes[slot].wr_open = 0;
+            }
+        }
+    }
     return 0;
 }
 
@@ -10333,6 +12352,24 @@ static long sys_linux_getsockname(long sockfd, long addr, long addrlen_ptr)
     }
     if (want < 8 || !bfree_user_ptr_mapped(addr)) {
         return -14;
+    }
+    if (g_inet_socks[idx].is_v6) {
+        /* Only loopback is reachable, so the name is always ::1. */
+        if (want < 28) {
+            return -22;
+        }
+        port_be = bfree_inet_ntohs(g_inet_socks[idx].port);
+        raw = (uint8_t *)(uintptr_t)addr;
+        for (n = 0; n < 28U; ++n) {
+            raw[n] = 0;
+        }
+        raw[0] = (uint8_t)(BFREE_LINUX_AF_INET6 & 0xff);
+        raw[1] = (uint8_t)((BFREE_LINUX_AF_INET6 >> 8) & 0xff);
+        raw[2] = (uint8_t)(port_be & 0xff);
+        raw[3] = (uint8_t)((port_be >> 8) & 0xff);
+        raw[23] = 1;
+        *alen = 28;
+        return 0;
     }
     a = g_inet_socks[idx].addr;
     if (!g_inet_socks[idx].bound && !g_inet_socks[idx].connected) {
@@ -10413,10 +12450,20 @@ static long sys_linux_getpeername(long sockfd, long addr, long addrlen_ptr)
     if (want < 8 || !bfree_user_ptr_mapped(addr)) {
         return -14;
     }
-    port_be = bfree_inet_ntohs(g_inet_socks[idx].port);
-    addr_be = bfree_inet_ntohl(g_inet_socks[idx].addr == BFREE_INADDR_ANY
-                                   ? BFREE_INADDR_LOOPBACK
-                                   : g_inet_socks[idx].addr);
+    {
+        uint32_t pa = g_inet_socks[idx].peer_addr;
+        uint16_t pp = g_inet_socks[idx].peer_port;
+
+        if (pp == 0 && pa == 0) {
+            pa = g_inet_socks[idx].addr;
+            pp = g_inet_socks[idx].port;
+        }
+        if (pa == BFREE_INADDR_ANY) {
+            pa = BFREE_INADDR_LOOPBACK;
+        }
+        port_be = bfree_inet_ntohs(pp);
+        addr_be = bfree_inet_ntohl(pa);
+    }
     raw = (uint8_t *)(uintptr_t)addr;
     raw[0] = (uint8_t)(BFREE_LINUX_AF_INET & 0xff);
     raw[1] = (uint8_t)((BFREE_LINUX_AF_INET >> 8) & 0xff);
@@ -10438,8 +12485,17 @@ static long sys_linux_epoll_create1(long flags)
 
     for (i = 0; i < BFREE_MAX_GUEST_EPOLL; ++i) {
         if (!g_guest_epoll[i].used) {
+            int w;
+
             g_guest_epoll[i].used = 1;
             g_guest_epoll[i].fd = (int)BFREE_GUEST_EPOLL_FD_BASE + i;
+            for (w = 0; w < BFREE_MAX_GUEST_EPOLL_WATCHES; ++w) {
+                g_guest_epoll[i].watches[w].used = 0;
+                g_guest_epoll[i].watches[w].et = 0;
+                g_guest_epoll[i].watches[w].oneshot = 0;
+                g_guest_epoll[i].watches[w].et_fired = 0;
+                g_guest_epoll[i].watches[w].disabled = 0;
+            }
             published = bfree_guest_fd_publish(g_guest_epoll[i].fd);
             if (published < 0) {
                 g_guest_epoll[i].used = 0;
@@ -10502,8 +12558,80 @@ static long sys_linux_epoll_ctl(long epfd, long op, long fd, long event_ptr)
         watch->fd = (int)fd;
     }
     watch->events = lev.events;
+    watch->et = (lev.events & (uint32_t)EPOLLET) != 0U;
+    watch->oneshot = (lev.events & (uint32_t)EPOLLONESHOT) != 0U;
+    /* ADD and MOD both re-arm: drop the one-shot disable and the edge latch. */
+    watch->et_fired = 0;
+    watch->disabled = 0;
     watch->data.u64 = lev.data;
     return 0;
+}
+
+/* Raw readiness for an epoll-watched fd, independent of the interest mask. */
+static uint32_t bfree_epoll_raw_revents(int fd)
+{
+    int resolved = bfree_guest_fd_resolve(fd);
+
+    if (bfree_guest_is_pipe_rd(fd) && bfree_guest_pipe_readable(fd)) {
+        return (uint32_t)EPOLLIN;
+    }
+    if (bfree_guest_is_eventfd(resolved) &&
+        g_guest_eventfd_val[bfree_guest_eventfd_index(resolved)] != 0) {
+        return (uint32_t)EPOLLIN;
+    }
+    if (bfree_find_timerfd(fd) && sys_timerfd_pending(fd) > 0) {
+        return (uint32_t)EPOLLIN;
+    }
+    if (bfree_inotify_has_events(resolved)) {
+        return (uint32_t)EPOLLIN;
+    }
+    /* Valid pidfd for live process: not readable (revents 0). */
+    if (bfree_pidfd_is_valid_fd(fd)) {
+        return 0;
+    }
+    return bfree_guest_sock_ready_mask(fd);
+}
+
+/* Fill outb with up to maxevents ready interests, honoring EPOLLET/ONESHOT. */
+static int bfree_epoll_scan(bfree_guest_epoll_inst_t *inst, uint8_t *outb,
+                            int maxevents)
+{
+    int ready = 0;
+    int i;
+
+    for (i = 0; i < BFREE_MAX_GUEST_EPOLL_WATCHES && ready < maxevents; ++i) {
+        bfree_guest_epoll_watch_t *w = &inst->watches[i];
+        uint32_t want;
+        uint32_t revents;
+        bfree_linux_epoll_event_t lev;
+        size_t n;
+
+        if (!w->used || w->disabled) {
+            continue;
+        }
+        want = w->events & ~((uint32_t)EPOLLET | (uint32_t)EPOLLONESHOT);
+        revents = bfree_epoll_raw_revents(w->fd) & want;
+        if (revents == 0) {
+            w->et_fired = 0; /* not ready: the next readiness is a fresh edge */
+            continue;
+        }
+        if (w->et && w->et_fired) {
+            continue; /* level still high, but this edge was already reported */
+        }
+        lev.events = revents;
+        lev.data = w->data.u64;
+        for (n = 0; n < sizeof(lev); ++n) {
+            outb[(size_t)ready * sizeof(lev) + n] = ((const uint8_t *)&lev)[n];
+        }
+        ++ready;
+        if (w->et) {
+            w->et_fired = 1;
+        }
+        if (w->oneshot) {
+            w->disabled = 1;
+        }
+    }
+    return ready;
 }
 
 static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, long timeout_ms)
@@ -10520,45 +12648,16 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
         return -14;
     }
     outb = (uint8_t *)(uintptr_t)events_ptr;
-    for (i = 0; i < BFREE_MAX_GUEST_EPOLL_WATCHES && ready < (int)maxevents; ++i) {
-        bfree_guest_epoll_watch_t *w = &inst->watches[i];
-        uint32_t revents = 0;
-        bfree_linux_epoll_event_t lev;
-        size_t n;
-
-        if (!w->used) {
-            continue;
-        }
-        if (bfree_guest_is_pipe_rd(w->fd) && bfree_guest_pipe_readable(w->fd)) {
-            revents = EPOLLIN;
-        } else if (bfree_guest_is_eventfd(bfree_guest_fd_resolve(w->fd))
-                   && g_guest_eventfd_val[bfree_guest_eventfd_index(
-                          bfree_guest_fd_resolve(w->fd))] != 0) {
-            revents = EPOLLIN;
-        } else if (bfree_find_timerfd(w->fd) && sys_timerfd_pending(w->fd) > 0) {
-            revents = EPOLLIN;
-        } else {
-            revents = bfree_guest_sock_ready_mask(w->fd);
-        }
-        if ((revents & w->events) != 0) {
-            lev.events = revents & w->events;
-            lev.data = w->data.u64;
-            for (n = 0; n < sizeof(lev); ++n) {
-                outb[(size_t)ready * sizeof(lev) + n] = ((const uint8_t *)&lev)[n];
-            }
-            ++ready;
-        }
-    }
+    ready = bfree_epoll_scan(inst, outb, (int)maxevents);
     if (ready > 0) {
         return ready;
     }
     if (timeout_ms == 0) {
         /*
-         * Qt QEventDispatcher uses epoll_wait(0) as a non-blocking probe.
-         * Returning EINTR (not 0) breaks its busy-spin without blocking guests.
+         * Non-blocking probe: return 0 when nothing is ready (Linux).
+         * (Older Qt busy-spin relied on EINTR; curated LTP and musl expect 0.)
          */
-        __asm__ volatile("sti" ::: "memory");
-        return -4; /* EINTR */
+        return 0;
     }
     {
         uint64_t deadline_us = 0;
@@ -10569,41 +12668,25 @@ static long sys_linux_epoll_wait(long epfd, long events_ptr, long maxevents, lon
             deadline_us = knl_get_current_time() + (uint64_t)timeout_ms * 1000ULL;
         }
         for (;;) {
-            ready = 0;
-            for (i = 0; i < BFREE_MAX_GUEST_EPOLL_WATCHES && ready < (int)maxevents; ++i) {
-                bfree_guest_epoll_watch_t *w = &inst->watches[i];
-                uint32_t revents = 0;
-                bfree_linux_epoll_event_t lev;
-                size_t n;
-
-                if (!w->used) {
-                    continue;
-                }
-                if (bfree_guest_is_pipe_rd(w->fd) && bfree_guest_pipe_readable(w->fd)) {
-                    revents = EPOLLIN;
-                } else if (bfree_guest_is_eventfd(bfree_guest_fd_resolve(w->fd))
-                           && g_guest_eventfd_val[bfree_guest_eventfd_index(
-                                  bfree_guest_fd_resolve(w->fd))] != 0) {
-                    revents = EPOLLIN;
-                } else if (bfree_find_timerfd(w->fd) && sys_timerfd_pending(w->fd) > 0) {
-                    revents = EPOLLIN;
-                } else {
-                    revents = bfree_guest_sock_ready_mask(w->fd);
-                }
-                if ((revents & w->events) != 0) {
-                    lev.events = revents & w->events;
-                    lev.data = w->data.u64;
-                    for (n = 0; n < sizeof(lev); ++n) {
-                        outb[(size_t)ready * sizeof(lev) + n] = ((const uint8_t *)&lev)[n];
-                    }
-                    ++ready;
-                }
-            }
+            ready = bfree_epoll_scan(inst, outb, (int)maxevents);
             if (ready > 0) {
                 return ready;
             }
             if (finite && knl_get_current_time() >= deadline_us) {
-                return 0;
+                /* Last chance: force soft-expire any armed timerfd watches. */
+                for (i = 0; i < BFREE_MAX_GUEST_EPOLL_WATCHES; ++i) {
+                    bfree_timerfd_entry_t *tfe;
+                    if (!inst->watches[i].used) {
+                        continue;
+                    }
+                    tfe = bfree_find_timerfd(inst->watches[i].fd);
+                    if (tfe && tfe->armed) {
+                        tfe->expirations++;
+                        tfe->armed = 0;
+                        tfe->next_expire_us = 0;
+                    }
+                }
+                return bfree_epoll_scan(inst, outb, (int)maxevents);
             }
             __asm__ volatile("sti; hlt" ::: "memory");
         }
@@ -10619,6 +12702,7 @@ static short bfree_guest_poll_revents(int fd, short events)
 {
     short revents = 0;
     uint32_t sock_mask;
+    int resolved = bfree_guest_fd_resolve(fd);
 
     if ((events & POLLIN) && bfree_guest_is_pipe_rd(fd) && bfree_guest_pipe_readable(fd)) {
         revents |= POLLIN;
@@ -10636,6 +12720,13 @@ static short bfree_guest_poll_revents(int fd, short events)
         if (idx >= 0 && g_guest_eventfd_val[idx] != 0) {
             revents |= POLLIN;
         }
+    }
+    if ((events & POLLIN) && bfree_inotify_has_events(resolved)) {
+        revents |= POLLIN;
+    }
+    if (bfree_pidfd_is_valid_fd(fd)) {
+        /* live pidfd: accepted by poll, not ready */
+        return revents;
     }
     sock_mask = bfree_guest_sock_ready_mask(fd);
     if ((events & POLLIN) && (sock_mask & (uint32_t)EPOLLIN) != 0U) {
@@ -10749,6 +12840,7 @@ static long sys_linux_ppoll(long fds_ptr, long nfds, long timeout_ptr, long sigm
         if (finite && knl_get_current_time() >= deadline_us) {
             return 0;
         }
+        bfree_guest_alarm_poll();
         {
             long sw = bfree_gthr_park_poll(fds_ptr, nfds);
 
@@ -10769,6 +12861,20 @@ static long sys_linux_prctl(long option, long arg2, long arg3, long arg4, long a
     (void)arg3;
     (void)arg4;
     (void)arg5;
+    if (option == 1) { /* PR_SET_PDEATHSIG */
+        if (arg2 < 0 || arg2 > 64) {
+            return -22;
+        }
+        g_guest_pdeathsig = (int)arg2;
+        return 0;
+    }
+    if (option == 2) { /* PR_GET_PDEATHSIG */
+        if (arg2 == 0 || !bfree_user_ptr_mapped(arg2)) {
+            return -14;
+        }
+        *(int *)(uintptr_t)arg2 = g_guest_pdeathsig;
+        return 0;
+    }
     if (option == 15) { /* PR_SET_NAME — copy up to 15 chars + NUL */
         if (arg2 == 0 || !bfree_user_ptr_mapped(arg2)) {
             return -14;
@@ -10846,7 +12952,10 @@ static long sys_linux_getrandom(long buf, long buflen, long flags)
     uint8_t *p;
     long i;
 
-    (void)flags;
+    /* GRND_NONBLOCK(1)/GRND_RANDOM(2) are both no-ops: the pool never blocks. */
+    if (((unsigned long)flags & ~3UL) != 0UL) {
+        return -22;
+    }
     if (buf == 0 || buflen <= 0 || !bfree_user_ptr_mapped(buf)) {
         return -14;
     }
@@ -10855,6 +12964,2256 @@ static long sys_linux_getrandom(long buf, long buflen, long flags)
         p[i] = (uint8_t)(0x5A ^ (uint8_t)i);
     }
     return buflen;
+}
+
+/* Linux 230: clock_nanosleep, with TIMER_ABSTIME against the uptime clock
+ * that backs both CLOCK_REALTIME and CLOCK_MONOTONIC here. */
+static long sys_linux_clock_nanosleep(long clockid, long flags, long req_ptr,
+                                      long rem_ptr)
+{
+    const struct timespec *req;
+    uint64_t deadline_us;
+
+    (void)clockid;
+    (void)rem_ptr;
+    if ((flags & 1L) == 0L) { /* relative */
+        return sys_linux_nanosleep(req_ptr, rem_ptr);
+    }
+    if (req_ptr == 0 || !bfree_user_ptr_mapped(req_ptr)) {
+        return -14;
+    }
+    req = (const struct timespec *)(uintptr_t)req_ptr;
+    if (req->tv_sec < 0 || req->tv_nsec < 0 || req->tv_nsec >= 1000000000L) {
+        return -22;
+    }
+    deadline_us = ((uint64_t)req->tv_sec * 1000000ULL) +
+                  ((uint64_t)req->tv_nsec / 1000ULL);
+    /* TIMER_ABSTIME never reports a remainder, so rem_ptr stays untouched. */
+    __asm__ volatile ("sti" ::: "memory");
+    while (knl_get_current_time() < deadline_us) {
+        bfree_guest_alarm_poll();
+        {
+            int er = bfree_guest_sig_take_eintr();
+            if (er < 0) {
+                __asm__ volatile ("cli" ::: "memory");
+                return er;
+            }
+        }
+        __asm__ volatile ("pause" ::: "memory");
+    }
+    __asm__ volatile ("cli" ::: "memory");
+    return 0;
+}
+
+/* Linux 165/166: the guest filesystem is synthesized, so mounts are recorded
+ * only as the "last mount" hint and otherwise accepted verbatim. */
+static char g_guest_last_mount_target[96];
+
+static long sys_linux_mount(long source, long target, long fstype, long flags,
+                            long data)
+{
+    char path[96];
+
+    (void)source;
+    (void)fstype;
+    (void)flags;
+    (void)data;
+    if (target == 0) {
+        return -22;
+    }
+    if (copy_user_cstr(target, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    if (path[0] == '\0') {
+        return -22;
+    }
+    bfree_copy_cstr(g_guest_last_mount_target,
+                    sizeof(g_guest_last_mount_target), path);
+    return 0;
+}
+
+static long sys_linux_umount2(long target, long flags)
+{
+    char path[96];
+
+    (void)flags; /* MNT_FORCE/DETACH/EXPIRE all behave the same here */
+    if (target == 0) {
+        return -22;
+    }
+    if (copy_user_cstr(target, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    if (path[0] == '\0') {
+        return -22;
+    }
+    return 0;
+}
+
+/* Linux 434/424: pidfds referencing the init pid, self, or the live coop child. */
+#define BFREE_PIDFD_BASE 0x3D00
+#define BFREE_MAX_PIDFD  8
+
+static struct {
+    int used;
+    int pid;
+} g_pidfds[BFREE_MAX_PIDFD];
+
+static int bfree_pidfd_slot_from_fd(int fd)
+{
+    int resolved = bfree_guest_fd_resolve(fd);
+    int slot = resolved - BFREE_PIDFD_BASE;
+
+    if (slot < 0 || slot >= BFREE_MAX_PIDFD || !g_pidfds[slot].used) {
+        return -1;
+    }
+    return slot;
+}
+
+static int bfree_pidfd_is_valid_fd(int fd)
+{
+    return bfree_pidfd_slot_from_fd(fd) >= 0;
+}
+
+static void bfree_pidfd_release(int resolved)
+{
+    int slot = resolved - BFREE_PIDFD_BASE;
+
+    if (slot >= 0 && slot < BFREE_MAX_PIDFD) {
+        g_pidfds[slot].used = 0;
+        g_pidfds[slot].pid = 0;
+    }
+}
+
+static long sys_linux_pidfd_open(long pid, long flags)
+{
+    int target = (int)pid;
+    int self_pid = (int)sys_linux_getpid();
+    int i;
+
+    if (target <= 0) {
+        return -22;
+    }
+    if (target != 1 && target != self_pid &&
+        !(g_guest_fork_active && target == g_guest_fork_pid)) {
+        return -3; /* ESRCH */
+    }
+    for (i = 0; i < BFREE_MAX_PIDFD; ++i) {
+        if (!g_pidfds[i].used) {
+            int pub;
+
+            g_pidfds[i].used = 1;
+            g_pidfds[i].pid = target;
+            pub = bfree_guest_fd_publish(BFREE_PIDFD_BASE + i);
+            if (pub < 0) {
+                g_pidfds[i].used = 0;
+                g_pidfds[i].pid = 0;
+                return pub;
+            }
+            if ((flags & 1L) != 0L && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+                g_guest_fd_cloexec[pub] = 1;
+            }
+            return pub;
+        }
+    }
+    return -24; /* EMFILE */
+}
+
+static long sys_linux_pidfd_send_signal(long pidfd, long sig, long info,
+                                        long flags)
+{
+    int slot = bfree_pidfd_slot_from_fd((int)pidfd);
+
+    (void)info; /* no siginfo plumbing: the signal is delivered bare */
+    if (flags != 0) {
+        return -22;
+    }
+    if (slot < 0) {
+        return -9; /* EBADF */
+    }
+    return sys_linux_kill((long)g_pidfds[slot].pid, sig);
+}
+
+/* Linux 438: duplicate a target fd from a pidfd's process into the caller. */
+static long sys_linux_pidfd_getfd(long pidfd, long targetfd, long flags)
+{
+    int slot = bfree_pidfd_slot_from_fd((int)pidfd);
+    int self_pid = (int)sys_linux_getpid();
+    int target_pid;
+
+    if (flags != 0) {
+        return -22;
+    }
+    if (slot < 0) {
+        return -9;
+    }
+    target_pid = g_pidfds[slot].pid;
+    if (target_pid != self_pid &&
+        !(g_guest_fork_active && target_pid == g_guest_fork_pid)) {
+        return -1; /* EPERM: only self / live coop child */
+    }
+    return sys_linux_dup(targetfd);
+}
+
+/* inotify — watches + small event ring (curated delivery). */
+#ifndef BFREE_INOTIFY_FD_BASE
+#define BFREE_INOTIFY_FD_BASE      98000
+#define BFREE_MAX_INOTIFY          4
+#endif
+#define BFREE_MAX_INOTIFY_WATCHES  8
+#define BFREE_MAX_INOTIFY_EVENTS   8
+
+typedef struct {
+    int used;
+    int wd;
+    uint32_t mask;
+    char path[64]; /* absolute watch path, e.g. "/tmp" */
+} bfree_inotify_watch_t;
+
+typedef struct {
+    int wd;
+    uint32_t mask;
+    char name[32];
+} bfree_inotify_ev_t;
+
+static struct {
+    int used;
+    int nonblock;
+    bfree_inotify_watch_t watches[BFREE_MAX_INOTIFY_WATCHES];
+    bfree_inotify_ev_t ev[BFREE_MAX_INOTIFY_EVENTS];
+    int ev_head;
+    int ev_tail;
+    int ev_count;
+} g_inotify[BFREE_MAX_INOTIFY];
+
+static int g_inotify_next_wd = 1;
+
+static int bfree_inotify_has_events(int resolved)
+{
+    int slot = resolved - BFREE_INOTIFY_FD_BASE;
+
+    if (slot < 0 || slot >= BFREE_MAX_INOTIFY || !g_inotify[slot].used) {
+        return 0;
+    }
+    return g_inotify[slot].ev_count > 0;
+}
+
+static void bfree_inotify_release(int resolved)
+{
+    int slot = resolved - BFREE_INOTIFY_FD_BASE;
+    int i;
+
+    if (slot < 0 || slot >= BFREE_MAX_INOTIFY) {
+        return;
+    }
+    g_inotify[slot].used = 0;
+    g_inotify[slot].nonblock = 0;
+    g_inotify[slot].ev_head = 0;
+    g_inotify[slot].ev_tail = 0;
+    g_inotify[slot].ev_count = 0;
+    for (i = 0; i < BFREE_MAX_INOTIFY_WATCHES; ++i) {
+        g_inotify[slot].watches[i].used = 0;
+        g_inotify[slot].watches[i].wd = 0;
+        g_inotify[slot].watches[i].mask = 0;
+        g_inotify[slot].watches[i].path[0] = '\0';
+    }
+}
+
+static void bfree_inotify_push(int slot, int wd, uint32_t mask, const char *name)
+{
+    bfree_inotify_ev_t *e;
+    size_t i;
+
+    if (slot < 0 || slot >= BFREE_MAX_INOTIFY || !g_inotify[slot].used) {
+        return;
+    }
+    if (g_inotify[slot].ev_count >= BFREE_MAX_INOTIFY_EVENTS) {
+        return; /* drop */
+    }
+    e = &g_inotify[slot].ev[g_inotify[slot].ev_tail];
+    e->wd = wd;
+    e->mask = mask;
+    e->name[0] = '\0';
+    if (name) {
+        for (i = 0; i + 1U < sizeof(e->name) && name[i] != '\0'; ++i) {
+            e->name[i] = name[i];
+        }
+        e->name[i] = '\0';
+    }
+    g_inotify[slot].ev_tail =
+        (g_inotify[slot].ev_tail + 1) % BFREE_MAX_INOTIFY_EVENTS;
+    g_inotify[slot].ev_count++;
+}
+
+/* vname is the /tmp-relative name (e.g. "ltp_inotify_ev"). */
+static void bfree_inotify_notify_vname(const char *vname, uint32_t mask)
+{
+    char full[80];
+    const char *base;
+    const char *slash;
+    size_t i;
+    int s;
+    int w;
+
+    if (!vname || vname[0] == '\0') {
+        return;
+    }
+    full[0] = '/';
+    full[1] = 't';
+    full[2] = 'm';
+    full[3] = 'p';
+    full[4] = '/';
+    for (i = 0; vname[i] != '\0' && i + 6U < sizeof(full); ++i) {
+        full[5 + i] = vname[i];
+    }
+    full[5 + i] = '\0';
+    slash = 0;
+    for (i = 0; vname[i] != '\0'; ++i) {
+        if (vname[i] == '/') {
+            slash = vname + i;
+        }
+    }
+    base = slash ? slash + 1 : vname;
+    for (s = 0; s < BFREE_MAX_INOTIFY; ++s) {
+        if (!g_inotify[s].used) {
+            continue;
+        }
+        for (w = 0; w < BFREE_MAX_INOTIFY_WATCHES; ++w) {
+            bfree_inotify_watch_t *wt = &g_inotify[s].watches[w];
+            int match = 0;
+
+            if (!wt->used || (wt->mask & mask) == 0U) {
+                continue;
+            }
+            /* Watch /tmp: fire for direct children only. */
+            if ((strcmp(wt->path, "/tmp") == 0 ||
+                 strcmp(wt->path, "/tmp/") == 0) &&
+                slash == 0) {
+                match = 1;
+            } else if (strcmp(wt->path, full) == 0) {
+                match = 1;
+            }
+            if (match) {
+                bfree_inotify_push(s, wt->wd, mask, base);
+            }
+        }
+    }
+}
+
+static long bfree_inotify_read(int resolved, long buf, long count)
+{
+    int slot = resolved - BFREE_INOTIFY_FD_BASE;
+    bfree_inotify_ev_t *e;
+    uint8_t *dst;
+    size_t namelen;
+    size_t need;
+    size_t i;
+
+    if (slot < 0 || slot >= BFREE_MAX_INOTIFY || !g_inotify[slot].used) {
+        return -9;
+    }
+    if (buf == 0 || count <= 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    if (g_inotify[slot].ev_count <= 0) {
+        return -11; /* EAGAIN (nonblock or soft) */
+    }
+    e = &g_inotify[slot].ev[g_inotify[slot].ev_head];
+    namelen = 0;
+    while (e->name[namelen] != '\0') {
+        ++namelen;
+    }
+    namelen += 1U; /* NUL */
+    need = 16U + namelen; /* wd+mask+cookie+len + name */
+    if ((size_t)count < need) {
+        return -22; /* EINVAL */
+    }
+    dst = (uint8_t *)(uintptr_t)buf;
+    /* struct inotify_event layout (x86_64) */
+    ((int32_t *)(uintptr_t)dst)[0] = e->wd;
+    ((uint32_t *)(uintptr_t)(dst + 4))[0] = e->mask;
+    ((uint32_t *)(uintptr_t)(dst + 8))[0] = 0U; /* cookie */
+    ((uint32_t *)(uintptr_t)(dst + 12))[0] = (uint32_t)namelen;
+    for (i = 0; i < namelen; ++i) {
+        dst[16 + i] = (uint8_t)e->name[i];
+    }
+    g_inotify[slot].ev_head =
+        (g_inotify[slot].ev_head + 1) % BFREE_MAX_INOTIFY_EVENTS;
+    g_inotify[slot].ev_count--;
+    return (long)need;
+}
+
+static long sys_linux_inotify_init1(long flags)
+{
+    int i;
+
+    for (i = 0; i < BFREE_MAX_INOTIFY; ++i) {
+        if (!g_inotify[i].used) {
+            int pub;
+
+            g_inotify[i].used = 1;
+            g_inotify[i].nonblock =
+                ((flags & (long)BFREE_LINUX_O_NONBLOCK) != 0L) ? 1 : 0;
+            g_inotify[i].ev_head = 0;
+            g_inotify[i].ev_tail = 0;
+            g_inotify[i].ev_count = 0;
+            pub = bfree_guest_fd_publish(BFREE_INOTIFY_FD_BASE + i);
+            if (pub < 0) {
+                g_inotify[i].used = 0;
+                return pub;
+            }
+            /* IN_CLOEXEC=02000000 */
+            if ((flags & 02000000L) != 0L && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+                g_guest_fd_cloexec[pub] = 1;
+            }
+            return pub;
+        }
+    }
+    return -24; /* EMFILE */
+}
+
+static long sys_linux_inotify_add_watch(long fd, long path_ptr, long mask)
+{
+    int resolved = bfree_guest_fd_resolve((int)fd);
+    int slot = resolved - BFREE_INOTIFY_FD_BASE;
+    char path[64];
+    int wi;
+    int wd;
+    size_t i;
+
+    if (slot < 0 || slot >= BFREE_MAX_INOTIFY || !g_inotify[slot].used) {
+        return -9;
+    }
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    for (wi = 0; wi < BFREE_MAX_INOTIFY_WATCHES; ++wi) {
+        if (!g_inotify[slot].watches[wi].used) {
+            break;
+        }
+    }
+    if (wi >= BFREE_MAX_INOTIFY_WATCHES) {
+        return -28; /* ENOSPC */
+    }
+    wd = g_inotify_next_wd++;
+    if (wd <= 0) {
+        g_inotify_next_wd = 1;
+        wd = 1;
+    }
+    g_inotify[slot].watches[wi].used = 1;
+    g_inotify[slot].watches[wi].wd = wd;
+    g_inotify[slot].watches[wi].mask = (uint32_t)mask;
+    for (i = 0; i + 1U < sizeof(g_inotify[slot].watches[wi].path) &&
+                path[i] != '\0';
+         ++i) {
+        g_inotify[slot].watches[wi].path[i] = path[i];
+    }
+    g_inotify[slot].watches[wi].path[i] = '\0';
+    return (long)wd;
+}
+
+static long sys_linux_inotify_rm_watch(long fd, long wd)
+{
+    int resolved = bfree_guest_fd_resolve((int)fd);
+    int slot = resolved - BFREE_INOTIFY_FD_BASE;
+    int wi;
+
+    if (slot < 0 || slot >= BFREE_MAX_INOTIFY || !g_inotify[slot].used) {
+        return -9;
+    }
+    for (wi = 0; wi < BFREE_MAX_INOTIFY_WATCHES; ++wi) {
+        if (g_inotify[slot].watches[wi].used &&
+            g_inotify[slot].watches[wi].wd == (int)wd) {
+            g_inotify[slot].watches[wi].used = 0;
+            g_inotify[slot].watches[wi].wd = 0;
+            g_inotify[slot].watches[wi].mask = 0;
+            g_inotify[slot].watches[wi].path[0] = '\0';
+            return 0;
+        }
+    }
+    return -22; /* EINVAL */
+}
+
+/* ========== Section Q thin ABI holes ========== */
+
+static long sys_linux_getcpu(long cpu_ptr, long node_ptr, long cache_ptr)
+{
+    (void)cache_ptr;
+    if (cpu_ptr != 0) {
+        if (!bfree_user_ptr_mapped(cpu_ptr)) {
+            return -14;
+        }
+        *(unsigned *)(uintptr_t)cpu_ptr = 0U;
+    }
+    if (node_ptr != 0) {
+        if (!bfree_user_ptr_mapped(node_ptr)) {
+            return -14;
+        }
+        *(unsigned *)(uintptr_t)node_ptr = 0U;
+    }
+    return 0;
+}
+
+static long sys_linux_ioprio_set(long which, long who, long ioprio)
+{
+    (void)which;
+    (void)who;
+    (void)ioprio;
+    return 0;
+}
+
+static long sys_linux_ioprio_get(long which, long who)
+{
+    (void)which;
+    (void)who;
+    return 0; /* IOPRIO_CLASS_NONE */
+}
+
+static long sys_linux_chroot(long path_ptr)
+{
+    char path[256];
+
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    /* Soft success for curated: do not actually change root. */
+    (void)path;
+    return 0;
+}
+
+static long sys_linux_setns(long fd, long nstype)
+{
+    (void)fd;
+    (void)nstype;
+    return 0; /* soft */
+}
+
+static long sys_linux_pivot_root(long new_root, long put_old)
+{
+    (void)new_root;
+    (void)put_old;
+    return 0; /* soft */
+}
+
+/* POSIX timers — thin table of 4, no signal delivery. */
+#define BFREE_MAX_PTIMER 4
+typedef struct {
+    int used;
+    int clockid;
+    long value_sec;
+    long value_nsec;
+    long interval_sec;
+    long interval_nsec;
+} bfree_ptimer_t;
+static bfree_ptimer_t g_ptimers[BFREE_MAX_PTIMER];
+
+static long sys_linux_timer_create(long clockid, long sevp, long timerid_ptr)
+{
+    int i;
+
+    (void)sevp;
+    if (timerid_ptr == 0 || !bfree_user_ptr_mapped(timerid_ptr)) {
+        return -14;
+    }
+    for (i = 0; i < BFREE_MAX_PTIMER; ++i) {
+        if (!g_ptimers[i].used) {
+            g_ptimers[i].used = 1;
+            g_ptimers[i].clockid = (int)clockid;
+            g_ptimers[i].value_sec = 0;
+            g_ptimers[i].value_nsec = 0;
+            g_ptimers[i].interval_sec = 0;
+            g_ptimers[i].interval_nsec = 0;
+            /* musl timer_t is pointer-sized on x86_64 — write a full long. */
+            *(long *)(uintptr_t)timerid_ptr = (long)(i + 1);
+            return 0;
+        }
+    }
+    return -12; /* ENOMEM */
+}
+
+static long sys_linux_timer_settime(long timerid, long flags, long new_ptr,
+                                    long old_ptr)
+{
+    int idx = (int)timerid - 1;
+    typedef struct {
+        long tv_sec;
+        long tv_nsec;
+    } bfree_ts_t;
+    typedef struct {
+        bfree_ts_t it_interval;
+        bfree_ts_t it_value;
+    } bfree_its_t;
+    bfree_its_t *neu;
+
+    (void)flags;
+    if (idx < 0 || idx >= BFREE_MAX_PTIMER || !g_ptimers[idx].used) {
+        return -22;
+    }
+    if (old_ptr != 0) {
+        bfree_its_t *old;
+        if (!bfree_user_ptr_mapped(old_ptr)) {
+            return -14;
+        }
+        old = (bfree_its_t *)(uintptr_t)old_ptr;
+        old->it_value.tv_sec = g_ptimers[idx].value_sec;
+        old->it_value.tv_nsec = g_ptimers[idx].value_nsec;
+        old->it_interval.tv_sec = g_ptimers[idx].interval_sec;
+        old->it_interval.tv_nsec = g_ptimers[idx].interval_nsec;
+    }
+    if (new_ptr == 0 || !bfree_user_ptr_mapped(new_ptr)) {
+        return -14;
+    }
+    neu = (bfree_its_t *)(uintptr_t)new_ptr;
+    g_ptimers[idx].value_sec = neu->it_value.tv_sec;
+    g_ptimers[idx].value_nsec = neu->it_value.tv_nsec;
+    g_ptimers[idx].interval_sec = neu->it_interval.tv_sec;
+    g_ptimers[idx].interval_nsec = neu->it_interval.tv_nsec;
+    return 0;
+}
+
+static long sys_linux_timer_gettime(long timerid, long curr_ptr)
+{
+    int idx = (int)timerid - 1;
+    typedef struct {
+        long tv_sec;
+        long tv_nsec;
+    } bfree_ts_t;
+    typedef struct {
+        bfree_ts_t it_interval;
+        bfree_ts_t it_value;
+    } bfree_its_t;
+    bfree_its_t *cur;
+
+    if (idx < 0 || idx >= BFREE_MAX_PTIMER || !g_ptimers[idx].used) {
+        return -22;
+    }
+    if (curr_ptr == 0 || !bfree_user_ptr_mapped(curr_ptr)) {
+        return -14;
+    }
+    cur = (bfree_its_t *)(uintptr_t)curr_ptr;
+    cur->it_value.tv_sec = g_ptimers[idx].value_sec;
+    cur->it_value.tv_nsec = g_ptimers[idx].value_nsec;
+    cur->it_interval.tv_sec = g_ptimers[idx].interval_sec;
+    cur->it_interval.tv_nsec = g_ptimers[idx].interval_nsec;
+    return 0;
+}
+
+static long sys_linux_timer_delete(long timerid)
+{
+    int idx = (int)timerid - 1;
+
+    if (idx < 0 || idx >= BFREE_MAX_PTIMER || !g_ptimers[idx].used) {
+        return -22;
+    }
+    g_ptimers[idx].used = 0;
+    return 0;
+}
+
+/* SysV shm thin */
+#define BFREE_MAX_SYSV_SHM 4
+#define BFREE_IPC_PRIVATE  0
+#define BFREE_IPC_RMID     0
+#define BFREE_IPC_STAT     2
+typedef struct {
+    int used;
+    size_t size;
+    long addr;
+} bfree_sysv_shm_t;
+static bfree_sysv_shm_t g_sysv_shm[BFREE_MAX_SYSV_SHM];
+
+static long sys_linux_shmget(long key, long size, long shmflg)
+{
+    int i;
+
+    (void)key;
+    (void)shmflg;
+    if (size <= 0) {
+        return -22;
+    }
+    for (i = 0; i < BFREE_MAX_SYSV_SHM; ++i) {
+        if (!g_sysv_shm[i].used) {
+            g_sysv_shm[i].used = 1;
+            g_sysv_shm[i].size = (size_t)size;
+            g_sysv_shm[i].addr = 0;
+            return (long)(i + 1);
+        }
+    }
+    return -28; /* ENOSPC */
+}
+
+static long sys_linux_shmat(long shmid, long shmaddr, long shmflg)
+{
+    int idx = (int)shmid - 1;
+    long addr;
+
+    (void)shmflg;
+    if (idx < 0 || idx >= BFREE_MAX_SYSV_SHM || !g_sysv_shm[idx].used) {
+        return -22;
+    }
+    if (shmaddr != 0) {
+        return -22; /* only kernel-chosen VA */
+    }
+    if (g_sysv_shm[idx].addr != 0) {
+        return g_sysv_shm[idx].addr;
+    }
+    addr = sys_mmap_anonymous_heap(0, (long)g_sysv_shm[idx].size, MAP_ANONYMOUS | MAP_PRIVATE);
+    if (addr < 0) {
+        return addr;
+    }
+    g_sysv_shm[idx].addr = addr;
+    return addr;
+}
+
+static long sys_linux_shmdt(long shmaddr)
+{
+    int i;
+
+    for (i = 0; i < BFREE_MAX_SYSV_SHM; ++i) {
+        if (g_sysv_shm[i].used && g_sysv_shm[i].addr == shmaddr) {
+            g_sysv_shm[i].addr = 0;
+            return 0;
+        }
+    }
+    return 0; /* soft */
+}
+
+static long sys_linux_shmctl(long shmid, long cmd, long buf)
+{
+    int idx = (int)shmid - 1;
+
+    if (idx < 0 || idx >= BFREE_MAX_SYSV_SHM || !g_sysv_shm[idx].used) {
+        return -22;
+    }
+    if (cmd == BFREE_IPC_RMID) {
+        g_sysv_shm[idx].used = 0;
+        g_sysv_shm[idx].addr = 0;
+        g_sysv_shm[idx].size = 0;
+        return 0;
+    }
+    if (cmd == BFREE_IPC_STAT) {
+        if (buf != 0 && bfree_user_ptr_mapped(buf)) {
+            uint8_t *p = (uint8_t *)(uintptr_t)buf;
+            size_t i;
+            for (i = 0; i < 112U; ++i) {
+                p[i] = 0;
+            }
+            /* shm_segsz roughly at offset 48 on x86_64 linux shmid_ds — soft zeros OK */
+        }
+        return 0;
+    }
+    return 0;
+}
+
+/* SysV sem thin (Linux x86_64: semget 64, semop 65, semctl 66) */
+#define BFREE_MAX_SYSV_SEM 4
+#define BFREE_SEM_GETVAL   12
+#define BFREE_SEM_SETVAL   16
+typedef struct {
+    int used;
+    int nsems;
+    int vals[16];
+} bfree_sysv_sem_t;
+static bfree_sysv_sem_t g_sysv_sem[BFREE_MAX_SYSV_SEM];
+
+static long sys_linux_semget(long key, long nsems, long semflg)
+{
+    int i;
+
+    (void)key;
+    (void)semflg;
+    if (nsems <= 0 || nsems > 16) {
+        return -22;
+    }
+    for (i = 0; i < BFREE_MAX_SYSV_SEM; ++i) {
+        if (!g_sysv_sem[i].used) {
+            int j;
+            g_sysv_sem[i].used = 1;
+            g_sysv_sem[i].nsems = (int)nsems;
+            for (j = 0; j < 16; ++j) {
+                g_sysv_sem[i].vals[j] = 0;
+            }
+            return (long)(i + 1);
+        }
+    }
+    return -28;
+}
+
+static long sys_linux_semop(long semid, long sops, long nsops)
+{
+    int idx = (int)semid - 1;
+
+    (void)sops;
+    (void)nsops;
+    if (idx < 0 || idx >= BFREE_MAX_SYSV_SEM || !g_sysv_sem[idx].used) {
+        return -22;
+    }
+    return 0; /* soft success */
+}
+
+static long sys_linux_semctl(long semid, long semnum, long cmd, long arg)
+{
+    int idx = (int)semid - 1;
+
+    if (idx < 0 || idx >= BFREE_MAX_SYSV_SEM || !g_sysv_sem[idx].used) {
+        return -22;
+    }
+    if (cmd == BFREE_IPC_RMID) {
+        g_sysv_sem[idx].used = 0;
+        g_sysv_sem[idx].nsems = 0;
+        return 0;
+    }
+    if (cmd == BFREE_SEM_GETVAL) {
+        if (semnum < 0 || semnum >= g_sysv_sem[idx].nsems) {
+            return -22;
+        }
+        return (long)g_sysv_sem[idx].vals[semnum];
+    }
+    if (cmd == BFREE_SEM_SETVAL) {
+        if (semnum < 0 || semnum >= g_sysv_sem[idx].nsems) {
+            return -22;
+        }
+        g_sysv_sem[idx].vals[semnum] = (int)arg;
+        return 0;
+    }
+    return 0;
+}
+
+/* SysV msg thin (msgget 68, msgsnd 69, msgrcv 70, msgctl 71) */
+#define BFREE_MAX_SYSV_MSG 4
+#define BFREE_MSG_PAYLOAD  240
+typedef struct {
+    int used;
+    int has_msg;
+    long mtype;
+    size_t len;
+    unsigned char data[BFREE_MSG_PAYLOAD];
+} bfree_sysv_msg_t;
+static bfree_sysv_msg_t g_sysv_msg[BFREE_MAX_SYSV_MSG];
+
+static long sys_linux_msgget(long key, long msgflg)
+{
+    int i;
+
+    (void)key;
+    (void)msgflg;
+    for (i = 0; i < BFREE_MAX_SYSV_MSG; ++i) {
+        if (!g_sysv_msg[i].used) {
+            g_sysv_msg[i].used = 1;
+            g_sysv_msg[i].has_msg = 0;
+            g_sysv_msg[i].mtype = 0;
+            g_sysv_msg[i].len = 0;
+            return (long)(i + 1);
+        }
+    }
+    return -28;
+}
+
+static long sys_linux_msgsnd(long msqid, long msgp, long msgsz, long msgflg)
+{
+    int idx = (int)msqid - 1;
+    long mtype;
+
+    (void)msgflg;
+    if (idx < 0 || idx >= BFREE_MAX_SYSV_MSG || !g_sysv_msg[idx].used) {
+        return -22;
+    }
+    if (msgsz < 0 || msgsz > (long)BFREE_MSG_PAYLOAD) {
+        return -22;
+    }
+    if (msgp == 0 || !bfree_user_buf_mapped((uint64_t)(uintptr_t)msgp,
+                                            8ULL + (uint64_t)msgsz)) {
+        return -14;
+    }
+    mtype = *(const long *)(uintptr_t)msgp;
+    if (mtype <= 0) {
+        return -22;
+    }
+    g_sysv_msg[idx].mtype = mtype;
+    g_sysv_msg[idx].len = (size_t)msgsz;
+    if (msgsz > 0) {
+        memcpy(g_sysv_msg[idx].data,
+               (const void *)(uintptr_t)(msgp + 8), (size_t)msgsz);
+    }
+    g_sysv_msg[idx].has_msg = 1;
+    return 0;
+}
+
+static long sys_linux_msgrcv(long msqid, long msgp, long msgsz, long msgtyp,
+                             long msgflg)
+{
+    int idx = (int)msqid - 1;
+    size_t copy;
+
+    (void)msgtyp;
+    (void)msgflg;
+    if (idx < 0 || idx >= BFREE_MAX_SYSV_MSG || !g_sysv_msg[idx].used) {
+        return -22;
+    }
+    if (!g_sysv_msg[idx].has_msg) {
+        return -42; /* ENOMSG soft */
+    }
+    if (msgsz < 0) {
+        return -22;
+    }
+    if (msgp == 0 || !bfree_user_buf_mapped((uint64_t)(uintptr_t)msgp,
+                                            8ULL + (uint64_t)msgsz)) {
+        return -14;
+    }
+    copy = g_sysv_msg[idx].len;
+    if (copy > (size_t)msgsz) {
+        copy = (size_t)msgsz;
+    }
+    *(long *)(uintptr_t)msgp = g_sysv_msg[idx].mtype;
+    if (copy > 0) {
+        memcpy((void *)(uintptr_t)(msgp + 8), g_sysv_msg[idx].data, copy);
+    }
+    g_sysv_msg[idx].has_msg = 0;
+    g_sysv_msg[idx].len = 0;
+    return (long)copy;
+}
+
+static long sys_linux_msgctl(long msqid, long cmd, long buf)
+{
+    int idx = (int)msqid - 1;
+
+    (void)buf;
+    if (idx < 0 || idx >= BFREE_MAX_SYSV_MSG || !g_sysv_msg[idx].used) {
+        return -22;
+    }
+    if (cmd == BFREE_IPC_RMID) {
+        g_sysv_msg[idx].used = 0;
+        g_sysv_msg[idx].has_msg = 0;
+        g_sysv_msg[idx].len = 0;
+        return 0;
+    }
+    return 0;
+}
+
+/* sched_setattr 314 / sched_getattr 315 */
+static long sys_linux_sched_setattr(long pid, long attr_ptr, long flags)
+{
+    (void)pid;
+    (void)flags;
+    if (attr_ptr != 0 && !bfree_user_ptr_mapped(attr_ptr)) {
+        return -14;
+    }
+    return 0;
+}
+
+static long sys_linux_sched_getattr(long pid, long attr_ptr, long size, long flags)
+{
+    uint32_t *u32;
+    size_t i;
+    uint8_t *p;
+
+    (void)pid;
+    (void)flags;
+    if (size < 48) {
+        return -22;
+    }
+    if (attr_ptr == 0 || !bfree_user_buf_mapped((uint64_t)(uintptr_t)attr_ptr,
+                                                (uint64_t)size)) {
+        return -14;
+    }
+    p = (uint8_t *)(uintptr_t)attr_ptr;
+    for (i = 0; i < (size_t)size; ++i) {
+        p[i] = 0;
+    }
+    u32 = (uint32_t *)(uintptr_t)attr_ptr;
+    u32[0] = (uint32_t)size; /* size */
+    u32[1] = 0;              /* SCHED_NORMAL */
+    return 0;
+}
+
+/* adjtimex 159 / clock_adjtime 305 — return TIME_OK (0), zero modes/status */
+static long sys_linux_adjtimex(long buf)
+{
+    uint8_t *p;
+    size_t i;
+
+    if (buf == 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    /* struct timex is large; zero first 128 bytes (modes/offset/status/…) */
+    p = (uint8_t *)(uintptr_t)buf;
+    for (i = 0; i < 128U; ++i) {
+        if (!bfree_user_ptr_mapped(buf + (long)i)) {
+            break;
+        }
+        p[i] = 0;
+    }
+    return 0; /* TIME_OK */
+}
+
+static long sys_linux_clock_adjtime(long clockid, long buf)
+{
+    (void)clockid;
+    return sys_linux_adjtimex(buf);
+}
+
+static long sys_linux_quotactl(long cmd, long special, long id, long addr)
+{
+    (void)cmd;
+    (void)special;
+    (void)id;
+    (void)addr;
+    return 0;
+}
+
+/* keyring thin: add_key 248 / request_key 249 / keyctl 250 */
+static int g_guest_key_next = 1;
+
+static long sys_linux_add_key(long type, long desc, long payload, long plen,
+                              long keyring)
+{
+    (void)type;
+    (void)desc;
+    (void)payload;
+    (void)plen;
+    (void)keyring;
+    if (g_guest_key_next <= 0) {
+        g_guest_key_next = 1;
+    }
+    return (long)g_guest_key_next++;
+}
+
+static long sys_linux_request_key(long type, long desc, long callout, long dest)
+{
+    (void)type;
+    (void)desc;
+    (void)callout;
+    (void)dest;
+    if (g_guest_key_next <= 0) {
+        g_guest_key_next = 1;
+    }
+    return (long)g_guest_key_next++;
+}
+
+static long sys_linux_keyctl(long cmd, long arg2, long arg3, long arg4, long arg5)
+{
+    (void)arg2;
+    (void)arg3;
+    (void)arg4;
+    (void)arg5;
+    /* KEYCTL_READ=11 and others: soft success */
+    if (cmd == 11) {
+        return 0;
+    }
+    return 0;
+}
+
+/* perf_event_open 298 — published anon fd */
+#define BFREE_PERF_FD_BASE 98200
+#define BFREE_MAX_PERF     8
+static int g_perf_used[BFREE_MAX_PERF];
+
+static void bfree_perf_release(int resolved)
+{
+    int slot = resolved - BFREE_PERF_FD_BASE;
+
+    if (slot >= 0 && slot < BFREE_MAX_PERF) {
+        g_perf_used[slot] = 0;
+    }
+}
+
+static long sys_linux_perf_event_open(long attr, long pid, long cpu, long group_fd,
+                                      long flags)
+{
+    int i;
+
+    (void)attr;
+    (void)pid;
+    (void)cpu;
+    (void)group_fd;
+    (void)flags;
+    for (i = 0; i < BFREE_MAX_PERF; ++i) {
+        if (!g_perf_used[i]) {
+            int pub;
+            g_perf_used[i] = 1;
+            pub = bfree_guest_fd_publish(BFREE_PERF_FD_BASE + i);
+            if (pub < 0) {
+                g_perf_used[i] = 0;
+                return pub;
+            }
+            return pub;
+        }
+    }
+    return -24;
+}
+
+static long sys_linux_epoll_pwait2(long epfd, long events, long maxevents,
+                                   long timeout_ts, long sigmask)
+{
+    long timeout_ms = -1;
+
+    (void)sigmask;
+    if (timeout_ts != 0) {
+        if (!bfree_user_ptr_mapped(timeout_ts)) {
+            return -14;
+        }
+        {
+            /* struct timespec { time_t tv_sec; long tv_nsec; } */
+            int64_t sec = ((const int64_t *)(uintptr_t)timeout_ts)[0];
+            int64_t nsec = ((const int64_t *)(uintptr_t)timeout_ts)[1];
+            if (sec < 0 || nsec < 0) {
+                return -22;
+            }
+            if (sec > 86400) {
+                sec = 86400;
+            }
+            timeout_ms = (long)(sec * 1000 + nsec / 1000000);
+        }
+    }
+    return sys_linux_epoll_wait(epfd, events, maxevents, timeout_ms);
+}
+
+static long sys_linux_futex_waitv(long waiters, long nr, long flags, long timeout,
+                                  long clockid)
+{
+    (void)waiters;
+    (void)flags;
+    (void)timeout;
+    (void)clockid;
+    if (nr < 0) {
+        return -22;
+    }
+    return 0;
+}
+
+/* mount API: open_tree 428 / move_mount 429 / fsopen 430 / fsconfig 431 / fsmount 432 */
+#define BFREE_FSCTX_FD_BASE 98300
+#define BFREE_MAX_FSCTX     8
+static int g_fsctx_used[BFREE_MAX_FSCTX];
+
+static void bfree_fsctx_release(int resolved)
+{
+    int slot = resolved - BFREE_FSCTX_FD_BASE;
+
+    if (slot >= 0 && slot < BFREE_MAX_FSCTX) {
+        g_fsctx_used[slot] = 0;
+    }
+}
+
+static long bfree_fsctx_alloc_fd(void)
+{
+    int i;
+
+    for (i = 0; i < BFREE_MAX_FSCTX; ++i) {
+        if (!g_fsctx_used[i]) {
+            int pub;
+            g_fsctx_used[i] = 1;
+            pub = bfree_guest_fd_publish(BFREE_FSCTX_FD_BASE + i);
+            if (pub < 0) {
+                g_fsctx_used[i] = 0;
+                return pub;
+            }
+            return pub;
+        }
+    }
+    return -24;
+}
+
+static long sys_linux_fsopen(long fsname, long flags)
+{
+    (void)fsname;
+    (void)flags;
+    return bfree_fsctx_alloc_fd();
+}
+
+static long sys_linux_fsconfig(long fd, long cmd, long key, long value, long aux)
+{
+    int resolved = bfree_guest_fd_resolve((int)fd);
+    int slot = resolved - BFREE_FSCTX_FD_BASE;
+
+    (void)cmd;
+    (void)key;
+    (void)value;
+    (void)aux;
+    if (slot < 0 || slot >= BFREE_MAX_FSCTX || !g_fsctx_used[slot]) {
+        return -9;
+    }
+    return 0;
+}
+
+static long sys_linux_fsmount(long fd, long flags, long attr_flags)
+{
+    int resolved = bfree_guest_fd_resolve((int)fd);
+    int slot = resolved - BFREE_FSCTX_FD_BASE;
+
+    (void)flags;
+    (void)attr_flags;
+    if (slot < 0 || slot >= BFREE_MAX_FSCTX || !g_fsctx_used[slot]) {
+        return -9;
+    }
+    return bfree_fsctx_alloc_fd();
+}
+
+static long sys_linux_open_tree(long dfd, long path, long flags)
+{
+    (void)dfd;
+    (void)path;
+    (void)flags;
+    return bfree_fsctx_alloc_fd();
+}
+
+static long sys_linux_move_mount(long from_dfd, long from_path, long to_dfd,
+                                 long to_path, long flags)
+{
+    (void)from_dfd;
+    (void)from_path;
+    (void)to_dfd;
+    (void)to_path;
+    (void)flags;
+    return 0;
+}
+
+/* ========== Section S soft ABI holes ========== */
+
+#define BFREE_IOURING_FD_BASE   98400
+#define BFREE_MAX_IOURING       4
+#define BFREE_UFFD_FD_BASE      98500
+#define BFREE_MAX_UFFD          4
+#define BFREE_LANDLOCK_FD_BASE  98600
+#define BFREE_MAX_LANDLOCK      4
+
+static int g_iouring_used[BFREE_MAX_IOURING];
+static int g_uffd_used[BFREE_MAX_UFFD];
+static int g_landlock_used[BFREE_MAX_LANDLOCK];
+
+static void bfree_iouring_release(int resolved)
+{
+    int slot = resolved - BFREE_IOURING_FD_BASE;
+
+    if (slot >= 0 && slot < BFREE_MAX_IOURING) {
+        g_iouring_used[slot] = 0;
+    }
+}
+
+static void bfree_uffd_release(int resolved)
+{
+    int slot = resolved - BFREE_UFFD_FD_BASE;
+
+    if (slot >= 0 && slot < BFREE_MAX_UFFD) {
+        g_uffd_used[slot] = 0;
+    }
+}
+
+static void bfree_landlock_release(int resolved)
+{
+    int slot = resolved - BFREE_LANDLOCK_FD_BASE;
+
+    if (slot >= 0 && slot < BFREE_MAX_LANDLOCK) {
+        g_landlock_used[slot] = 0;
+    }
+}
+
+static long bfree_soft_anon_fd_alloc(int *used, int max, int base)
+{
+    int i;
+
+    for (i = 0; i < max; ++i) {
+        if (!used[i]) {
+            int pub;
+
+            used[i] = 1;
+            pub = bfree_guest_fd_publish(base + i);
+            if (pub < 0) {
+                used[i] = 0;
+                return pub;
+            }
+            return pub;
+        }
+    }
+    return -24;
+}
+
+/* io_uring_setup 425 / enter 426 / register 427 */
+static long sys_linux_io_uring_setup(long entries, long params)
+{
+    (void)entries;
+    (void)params;
+    return bfree_soft_anon_fd_alloc(g_iouring_used, BFREE_MAX_IOURING,
+                                    BFREE_IOURING_FD_BASE);
+}
+
+static long sys_linux_io_uring_enter(long fd, long to_submit, long min_complete,
+                                     long flags, long sig)
+{
+    (void)fd;
+    (void)to_submit;
+    (void)min_complete;
+    (void)flags;
+    (void)sig;
+    return 0;
+}
+
+static long sys_linux_io_uring_register(long fd, long opcode, long arg, long nr_args)
+{
+    (void)fd;
+    (void)opcode;
+    (void)arg;
+    (void)nr_args;
+    return 0;
+}
+
+/* userfaultfd 323 */
+static long sys_linux_userfaultfd(long flags)
+{
+    (void)flags;
+    return bfree_soft_anon_fd_alloc(g_uffd_used, BFREE_MAX_UFFD, BFREE_UFFD_FD_BASE);
+}
+
+/* landlock_create_ruleset 444 / add_rule 445 / restrict_self 446 */
+static long sys_linux_landlock_create_ruleset(long attr, long size, long flags)
+{
+    (void)attr;
+    (void)size;
+    (void)flags;
+    return bfree_soft_anon_fd_alloc(g_landlock_used, BFREE_MAX_LANDLOCK,
+                                    BFREE_LANDLOCK_FD_BASE);
+}
+
+static long sys_linux_landlock_add_rule(long ruleset_fd, long rule_type, long rule_attr,
+                                        long flags)
+{
+    (void)ruleset_fd;
+    (void)rule_type;
+    (void)rule_attr;
+    (void)flags;
+    return 0;
+}
+
+static long sys_linux_landlock_restrict_self(long ruleset_fd, long flags)
+{
+    (void)ruleset_fd;
+    (void)flags;
+    return 0;
+}
+
+/* seccomp 317 */
+static long sys_linux_seccomp(long op, long flags, long uargs)
+{
+    (void)op;
+    (void)flags;
+    (void)uargs;
+    return 0;
+}
+
+/* bpf 321 */
+static long sys_linux_bpf(long cmd, long attr, long size)
+{
+    (void)cmd;
+    (void)attr;
+    (void)size;
+    return 0;
+}
+
+/* ptrace 101 — soft TRACEME / any request */
+static long sys_linux_ptrace(long request, long pid, long addr, long data)
+{
+    (void)request;
+    (void)pid;
+    (void)addr;
+    (void)data;
+    return 0;
+}
+
+/* syslog 103 — SYSLOG_ACTION_READ_ALL=3 or soft 0 */
+static long sys_linux_syslog(long type, long buf, long len)
+{
+    static const char msg[] = "bfree\n";
+    size_t n = sizeof(msg) - 1U;
+    size_t i;
+    char *dst;
+
+    if (type != 3 && type != 0) {
+        return 0;
+    }
+    if (buf == 0 || len <= 0) {
+        return (long)n;
+    }
+    if (!bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    if ((size_t)len < n) {
+        n = (size_t)len;
+    }
+    dst = (char *)(uintptr_t)buf;
+    for (i = 0; i < n; ++i) {
+        dst[i] = msg[i];
+    }
+    return (long)n;
+}
+
+/* acct 163 / swapon 167 / swapoff 168 */
+static long sys_linux_acct(long filename)
+{
+    (void)filename;
+    return 0;
+}
+
+static long sys_linux_swapon(long specialfile, long swap_flags)
+{
+    (void)specialfile;
+    (void)swap_flags;
+    return 0;
+}
+
+static long sys_linux_swapoff(long specialfile)
+{
+    (void)specialfile;
+    return 0;
+}
+
+/* init_module 175 / delete_module 176 / finit_module 313 */
+static long sys_linux_init_module(long module_image, long len, long param_values)
+{
+    (void)module_image;
+    (void)len;
+    (void)param_values;
+    return 0;
+}
+
+static long sys_linux_delete_module(long name, long flags)
+{
+    (void)name;
+    (void)flags;
+    return 0;
+}
+
+static long sys_linux_finit_module(long fd, long param_values, long flags)
+{
+    (void)fd;
+    (void)param_values;
+    (void)flags;
+    return 0;
+}
+
+/* reboot 169 — validate magic, never reset */
+#define BFREE_LINUX_REBOOT_MAGIC1 0xfee1deadL
+#define BFREE_LINUX_REBOOT_MAGIC2 672274793L
+
+static long sys_linux_reboot(long magic, long magic2, long cmd, long arg)
+{
+    (void)cmd;
+    (void)arg;
+    if (magic != BFREE_LINUX_REBOOT_MAGIC1 || magic2 != BFREE_LINUX_REBOOT_MAGIC2) {
+        return -22;
+    }
+    return 0;
+}
+
+/* fspick 433 — reuse fsctx anon fd; mount_setattr 442 soft 0 */
+static long sys_linux_fspick(long dfd, long path, long flags)
+{
+    (void)dfd;
+    (void)path;
+    (void)flags;
+    return bfree_fsctx_alloc_fd();
+}
+
+static long sys_linux_mount_setattr(long dfd, long path, long flags, long uattr,
+                                    long usize)
+{
+    (void)dfd;
+    (void)path;
+    (void)flags;
+    (void)uattr;
+    (void)usize;
+    return 0;
+}
+
+/* personality 135 / modify_ldt 154 */
+static long sys_linux_personality(long persona)
+{
+    (void)persona;
+    return 0;
+}
+
+static long sys_linux_modify_ldt(long func, long ptr, long bytecount)
+{
+    (void)func;
+    (void)ptr;
+    (void)bytecount;
+    return 0;
+}
+
+static long sys_linux_process_madvise(long pidfd, long iovec, long vlen, long advice,
+                                      long flags)
+{
+    (void)pidfd;
+    (void)iovec;
+    (void)vlen;
+    (void)advice;
+    (void)flags;
+    return 0;
+}
+
+/* pkey_mprotect 329 / pkey_alloc 330 / pkey_free 331 */
+static uint16_t g_pkey_bits; /* bits 1..15 */
+
+static long sys_linux_pkey_alloc(long flags, long access_rights)
+{
+    int i;
+
+    (void)flags;
+    (void)access_rights;
+    for (i = 1; i <= 15; ++i) {
+        if ((g_pkey_bits & (uint16_t)(1U << i)) == 0) {
+            g_pkey_bits |= (uint16_t)(1U << i);
+            return (long)i;
+        }
+    }
+    return -28;
+}
+
+static long sys_linux_pkey_free(long pkey)
+{
+    if (pkey < 1 || pkey > 15) {
+        return -22;
+    }
+    g_pkey_bits &= (uint16_t)~(1U << (int)pkey);
+    return 0;
+}
+
+static long sys_linux_pkey_mprotect(long addr, long len, long prot, long pkey)
+{
+    (void)addr;
+    (void)len;
+    (void)prot;
+    (void)pkey;
+    return 0;
+}
+
+/* cachestat 451 / statmount 457 / listmount 458 */
+static long sys_linux_cachestat(long fd, long cstat_range, long cstat, long flags)
+{
+    uint8_t *p;
+    size_t i;
+
+    (void)fd;
+    (void)cstat_range;
+    (void)flags;
+    if (cstat == 0 || !bfree_user_ptr_mapped(cstat)) {
+        return -14;
+    }
+    p = (uint8_t *)(uintptr_t)cstat;
+    for (i = 0; i < 32U; ++i) {
+        if (!bfree_user_ptr_mapped(cstat + (long)i)) {
+            break;
+        }
+        p[i] = 0;
+    }
+    return 0;
+}
+
+static long sys_linux_statmount(long req, long buf, long bufsize, long flags)
+{
+    (void)req;
+    (void)flags;
+    if (buf != 0 && bufsize > 0 && bfree_user_ptr_mapped(buf)) {
+        uint8_t *p = (uint8_t *)(uintptr_t)buf;
+        size_t n = (size_t)bufsize;
+        size_t i;
+        if (n > 64U) {
+            n = 64U;
+        }
+        for (i = 0; i < n; ++i) {
+            p[i] = 0;
+        }
+        if (n >= 8U) {
+            /* size field soft */
+            *(uint32_t *)(uintptr_t)buf = (uint32_t)n;
+        }
+    }
+    return 0;
+}
+
+static long sys_linux_listmount(long req, long mnt_ids, long nr, long flags)
+{
+    (void)req;
+    (void)mnt_ids;
+    (void)nr;
+    (void)flags;
+    return 0;
+}
+
+static long sys_linux_kcmp(long pid1, long pid2, long type, long idx1, long idx2)
+{
+    (void)type;
+    (void)idx1;
+    (void)idx2;
+    (void)pid1;
+    (void)pid2;
+    return 0; /* soft: treat as same */
+}
+
+/* path xattr: setxattr 188 / getxattr 191 / listxattr 194 / removexattr 197
+ * (+ l* aliases 189/192/195/198) — reuse vfile xattr keyed by /tmp name */
+#ifndef BFREE_ENODATA
+#define BFREE_ENODATA 61
+#endif
+static bfree_guest_vfile_t *bfree_guest_vfile_from_xpath(long path_ptr)
+{
+    char path[256];
+    char vname[64];
+
+    if (path_ptr == 0 || copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return 0;
+    }
+    bfree_guest_path_absolutize(path, sizeof(path));
+    if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) ||
+        vname[0] == '\0') {
+        return 0;
+    }
+    return bfree_guest_vfile_find_by_name(vname);
+}
+
+static long sys_linux_setxattr(long path_ptr, long name_ptr, long value_ptr,
+                               long size, long flags)
+{
+    bfree_guest_vfile_t *vf = bfree_guest_vfile_from_xpath(path_ptr);
+    char name[32];
+    size_t n;
+
+    (void)flags;
+    if (!vf || vf->is_dir || vf->is_symlink) {
+        return -95;
+    }
+    if (name_ptr == 0 || !bfree_user_ptr_mapped(name_ptr)) {
+        return -14;
+    }
+    for (n = 0; n + 1U < sizeof(name); ++n) {
+        char c = ((const char *)(uintptr_t)name_ptr)[n];
+        name[n] = c;
+        if (c == '\0') {
+            break;
+        }
+    }
+    name[n] = '\0';
+    if (name[0] == '\0') {
+        return -22;
+    }
+    if (size < 0 || size > (long)sizeof(vf->xattr_value)) {
+        return -34;
+    }
+    if (size > 0 &&
+        (value_ptr == 0 ||
+         !bfree_user_buf_mapped((uint64_t)(uintptr_t)value_ptr, (uint64_t)size))) {
+        return -14;
+    }
+    for (n = 0; n < sizeof(vf->xattr_name); ++n) {
+        vf->xattr_name[n] = name[n];
+        if (name[n] == '\0') {
+            break;
+        }
+    }
+    vf->xattr_name[sizeof(vf->xattr_name) - 1] = '\0';
+    if (size > 0) {
+        memcpy(vf->xattr_value, (const void *)(uintptr_t)value_ptr, (size_t)size);
+    }
+    vf->xattr_len = (size_t)size;
+    return 0;
+}
+
+static long sys_linux_getxattr(long path_ptr, long name_ptr, long value_ptr,
+                               long size)
+{
+    bfree_guest_vfile_t *vf = bfree_guest_vfile_from_xpath(path_ptr);
+    char name[32];
+    size_t n;
+
+    if (!vf || vf->is_dir || vf->is_symlink) {
+        return -95;
+    }
+    if (name_ptr == 0 || !bfree_user_ptr_mapped(name_ptr)) {
+        return -14;
+    }
+    for (n = 0; n + 1U < sizeof(name); ++n) {
+        char c = ((const char *)(uintptr_t)name_ptr)[n];
+        name[n] = c;
+        if (c == '\0') {
+            break;
+        }
+    }
+    name[n] = '\0';
+    if (vf->xattr_name[0] == '\0' || strcmp(vf->xattr_name, name) != 0) {
+        return -BFREE_ENODATA;
+    }
+    if (size == 0) {
+        return (long)vf->xattr_len;
+    }
+    if (size < (long)vf->xattr_len) {
+        return -34;
+    }
+    if (value_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)value_ptr, vf->xattr_len)) {
+        return -14;
+    }
+    if (vf->xattr_len > 0) {
+        memcpy((void *)(uintptr_t)value_ptr, vf->xattr_value, vf->xattr_len);
+    }
+    return (long)vf->xattr_len;
+}
+
+static long sys_linux_listxattr(long path_ptr, long list_ptr, long size)
+{
+    bfree_guest_vfile_t *vf = bfree_guest_vfile_from_xpath(path_ptr);
+    size_t namelen;
+
+    if (!vf || vf->is_dir || vf->is_symlink) {
+        return -95;
+    }
+    if (vf->xattr_name[0] == '\0') {
+        return 0;
+    }
+    namelen = 0;
+    while (vf->xattr_name[namelen] != '\0' &&
+           namelen + 1U < sizeof(vf->xattr_name)) {
+        ++namelen;
+    }
+    namelen += 1;
+    if (size == 0) {
+        return (long)namelen;
+    }
+    if (size < (long)namelen) {
+        return -34;
+    }
+    if (list_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)list_ptr, namelen)) {
+        return -14;
+    }
+    memcpy((void *)(uintptr_t)list_ptr, vf->xattr_name, namelen);
+    return (long)namelen;
+}
+
+static long sys_linux_removexattr(long path_ptr, long name_ptr)
+{
+    bfree_guest_vfile_t *vf = bfree_guest_vfile_from_xpath(path_ptr);
+    char name[32];
+    size_t n;
+
+    if (!vf || vf->is_dir || vf->is_symlink) {
+        return -95;
+    }
+    if (name_ptr == 0 || !bfree_user_ptr_mapped(name_ptr)) {
+        return -14;
+    }
+    for (n = 0; n + 1U < sizeof(name); ++n) {
+        char c = ((const char *)(uintptr_t)name_ptr)[n];
+        name[n] = c;
+        if (c == '\0') {
+            break;
+        }
+    }
+    name[n] = '\0';
+    if (vf->xattr_name[0] == '\0' || strcmp(vf->xattr_name, name) != 0) {
+        return -BFREE_ENODATA;
+    }
+    vf->xattr_name[0] = '\0';
+    vf->xattr_len = 0;
+    return 0;
+}
+
+static long bfree_copy_iovecs(long dst_iov, long dstcnt, long src_iov, long srccnt)
+{
+    long di = 0, si = 0;
+    uint64_t d_off = 0, s_off = 0;
+    long total = 0;
+
+    if (dstcnt <= 0 || srccnt <= 0 || dstcnt > 1024 || srccnt > 1024) {
+        return -22;
+    }
+    if (!bfree_user_ptr_mapped(dst_iov) || !bfree_user_ptr_mapped(src_iov)) {
+        return -14;
+    }
+    while (di < dstcnt && si < srccnt) {
+        bfree_linux_iovec_t dvec, svec;
+        uint64_t d_addr = (uint64_t)(uintptr_t)(dst_iov + di * (long)sizeof(dvec));
+        uint64_t s_addr = (uint64_t)(uintptr_t)(src_iov + si * (long)sizeof(svec));
+        uint64_t d_rem, s_rem, n;
+        uint8_t *dp;
+        const uint8_t *sp;
+
+        if (!bfree_user_buf_mapped(d_addr, sizeof(dvec)) ||
+            !bfree_user_buf_mapped(s_addr, sizeof(svec))) {
+            return -14;
+        }
+        memcpy(&dvec, (const void *)(uintptr_t)d_addr, sizeof(dvec));
+        memcpy(&svec, (const void *)(uintptr_t)s_addr, sizeof(svec));
+        if (d_off >= dvec.iov_len) {
+            d_off = 0;
+            ++di;
+            continue;
+        }
+        if (s_off >= svec.iov_len) {
+            s_off = 0;
+            ++si;
+            continue;
+        }
+        d_rem = dvec.iov_len - d_off;
+        s_rem = svec.iov_len - s_off;
+        n = d_rem < s_rem ? d_rem : s_rem;
+        if (n == 0) {
+            if (d_rem == 0) {
+                d_off = 0;
+                ++di;
+            }
+            if (s_rem == 0) {
+                s_off = 0;
+                ++si;
+            }
+            continue;
+        }
+        if (!bfree_user_buf_mapped(dvec.iov_base + d_off, n) ||
+            !bfree_user_buf_mapped(svec.iov_base + s_off, n)) {
+            return -14;
+        }
+        dp = (uint8_t *)(uintptr_t)(dvec.iov_base + d_off);
+        sp = (const uint8_t *)(uintptr_t)(svec.iov_base + s_off);
+        memcpy(dp, sp, (size_t)n);
+        total += (long)n;
+        d_off += n;
+        s_off += n;
+    }
+    return total;
+}
+
+static long sys_linux_process_vm_readv(long pid, long local_iov, long liovcnt,
+                                       long remote_iov, long riovcnt, long flags)
+{
+    (void)flags;
+    if (pid != sys_linux_getpid() && pid != 0) {
+        return -3; /* ESRCH — self-only soft */
+    }
+    return bfree_copy_iovecs(local_iov, liovcnt, remote_iov, riovcnt);
+}
+
+static long sys_linux_process_vm_writev(long pid, long local_iov, long liovcnt,
+                                        long remote_iov, long riovcnt, long flags)
+{
+    (void)flags;
+    if (pid != sys_linux_getpid() && pid != 0) {
+        return -3;
+    }
+    return bfree_copy_iovecs(remote_iov, riovcnt, local_iov, liovcnt);
+}
+
+/* Linux 435: clone3 → wrap existing clone. */
+static long sys_linux_clone3(long args_ptr, long size)
+{
+    typedef struct {
+        uint64_t flags;
+        uint64_t pidfd;
+        uint64_t child_tid;
+        uint64_t parent_tid;
+        uint64_t exit_signal;
+        uint64_t stack;
+        uint64_t stack_size;
+        uint64_t tls;
+        uint64_t set_tid;
+        uint64_t set_tid_size;
+        uint64_t cgroup;
+    } bfree_clone_args_t;
+    bfree_clone_args_t a;
+    long flags;
+    long stack;
+
+    if (size < 64 || args_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)args_ptr,
+                               (uint64_t)((size > (long)sizeof(a)) ? (long)sizeof(a) : size))) {
+        return -22;
+    }
+    memset(&a, 0, sizeof(a));
+    memcpy(&a, (const void *)(uintptr_t)args_ptr,
+           (size_t)((size < (long)sizeof(a)) ? size : (long)sizeof(a)));
+    flags = (long)(a.flags | (a.exit_signal & 0xffULL));
+    stack = (long)a.stack;
+    if (a.stack_size != 0ULL && a.stack != 0ULL) {
+        stack = (long)(a.stack + a.stack_size);
+    }
+    return sys_linux_clone(flags, stack, (long)a.parent_tid, (long)a.child_tid,
+                           (long)a.tls);
+}
+
+/* fanotify thin — like inotify */
+#define BFREE_FANOTIFY_FD_BASE 98100
+#define BFREE_MAX_FANOTIFY     4
+static struct {
+    int used;
+} g_fanotify[BFREE_MAX_FANOTIFY];
+
+static void bfree_fanotify_release(int resolved)
+{
+    int slot = resolved - BFREE_FANOTIFY_FD_BASE;
+
+    if (slot >= 0 && slot < BFREE_MAX_FANOTIFY) {
+        g_fanotify[slot].used = 0;
+    }
+}
+
+static long sys_linux_fanotify_init(long flags, long event_f_flags)
+{
+    int i;
+
+    (void)flags;
+    (void)event_f_flags;
+    for (i = 0; i < BFREE_MAX_FANOTIFY; ++i) {
+        if (!g_fanotify[i].used) {
+            int pub;
+
+            g_fanotify[i].used = 1;
+            pub = bfree_guest_fd_publish(BFREE_FANOTIFY_FD_BASE + i);
+            if (pub < 0) {
+                g_fanotify[i].used = 0;
+                return pub;
+            }
+            return pub;
+        }
+    }
+    return -24;
+}
+
+static long sys_linux_fanotify_mark(long fanotify_fd, long flags, long mask,
+                                    long dirfd, long pathname)
+{
+    int resolved = bfree_guest_fd_resolve((int)fanotify_fd);
+    int slot = resolved - BFREE_FANOTIFY_FD_BASE;
+
+    (void)flags;
+    (void)mask;
+    (void)dirfd;
+    (void)pathname;
+    if (slot < 0 || slot >= BFREE_MAX_FANOTIFY || !g_fanotify[slot].used) {
+        return -9;
+    }
+    return 0;
+}
+
+/* name_to_handle_at / open_by_handle_at — side table of paths */
+#define BFREE_MAX_FHANDLE 8
+static struct {
+    int used;
+    uint8_t handle[8];
+    char path[96];
+} g_fhandles[BFREE_MAX_FHANDLE];
+static unsigned g_fhandle_seq;
+
+static long sys_linux_name_to_handle_at(long dfd, long path_ptr, long handle_ptr,
+                                        long mount_id_ptr, long flags)
+{
+    char path[256];
+    long path_err;
+    typedef struct {
+        unsigned int handle_bytes;
+        int handle_type;
+    } bfree_file_handle_hdr_t;
+    bfree_file_handle_hdr_t *hdr;
+    uint8_t *f_handle;
+    unsigned need;
+    int i;
+    unsigned seq;
+
+    (void)flags;
+    if (handle_ptr == 0 || !bfree_user_ptr_mapped(handle_ptr)) {
+        return -14;
+    }
+    hdr = (bfree_file_handle_hdr_t *)(uintptr_t)handle_ptr;
+    need = hdr->handle_bytes;
+    if (need < 8U) {
+        hdr->handle_bytes = 8U;
+        return -75; /* EOVERFLOW — tell user needed size */
+    }
+    if (!bfree_user_buf_mapped((uint64_t)(uintptr_t)handle_ptr,
+                               sizeof(*hdr) + 8U)) {
+        return -14;
+    }
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    path_err = bfree_guest_path_at(dfd, path, sizeof(path));
+    if (path_err != 0) {
+        return path_err;
+    }
+    seq = ++g_fhandle_seq;
+    for (i = 0; i < BFREE_MAX_FHANDLE; ++i) {
+        if (!g_fhandles[i].used) {
+            size_t j;
+            g_fhandles[i].used = 1;
+            g_fhandles[i].handle[0] = (uint8_t)(seq & 0xffU);
+            g_fhandles[i].handle[1] = (uint8_t)((seq >> 8) & 0xffU);
+            g_fhandles[i].handle[2] = (uint8_t)((seq >> 16) & 0xffU);
+            g_fhandles[i].handle[3] = (uint8_t)((seq >> 24) & 0xffU);
+            g_fhandles[i].handle[4] = (uint8_t)i;
+            g_fhandles[i].handle[5] = 0xBF;
+            g_fhandles[i].handle[6] = 0xEE;
+            g_fhandles[i].handle[7] = 0x01;
+            for (j = 0; j + 1U < sizeof(g_fhandles[i].path) && path[j]; ++j) {
+                g_fhandles[i].path[j] = path[j];
+            }
+            g_fhandles[i].path[j] = '\0';
+            hdr->handle_bytes = 8U;
+            hdr->handle_type = 1;
+            f_handle = (uint8_t *)(uintptr_t)(handle_ptr + (long)sizeof(*hdr));
+            for (j = 0; j < 8U; ++j) {
+                f_handle[j] = g_fhandles[i].handle[j];
+            }
+            if (mount_id_ptr != 0 && bfree_user_ptr_mapped(mount_id_ptr)) {
+                *(int *)(uintptr_t)mount_id_ptr = 1;
+            }
+            return 0;
+        }
+    }
+    return -28;
+}
+
+static long sys_linux_open_by_handle_at(long mount_fd, long handle_ptr, long flags)
+{
+    typedef struct {
+        unsigned int handle_bytes;
+        int handle_type;
+    } bfree_file_handle_hdr_t;
+    bfree_file_handle_hdr_t *hdr;
+    uint8_t *f_handle;
+    int i;
+    int cloexec;
+
+    (void)mount_fd;
+    if (handle_ptr == 0 || !bfree_user_ptr_mapped(handle_ptr)) {
+        return -14;
+    }
+    hdr = (bfree_file_handle_hdr_t *)(uintptr_t)handle_ptr;
+    if (hdr->handle_bytes < 8U) {
+        return -22;
+    }
+    if (!bfree_user_buf_mapped((uint64_t)(uintptr_t)handle_ptr,
+                               sizeof(*hdr) + 8U)) {
+        return -14;
+    }
+    f_handle = (uint8_t *)(uintptr_t)(handle_ptr + (long)sizeof(*hdr));
+    cloexec = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
+    for (i = 0; i < BFREE_MAX_FHANDLE; ++i) {
+        int same = 1;
+        int b;
+
+        if (!g_fhandles[i].used) {
+            continue;
+        }
+        for (b = 0; b < 8; ++b) {
+            if (g_fhandles[i].handle[b] != f_handle[b]) {
+                same = 0;
+                break;
+            }
+        }
+        if (same) {
+            const char *path = g_fhandles[i].path;
+            int pub = -9;
+
+            if (path[0] == '/' && path[1] == '\0') {
+                pub = bfree_guest_fd_publish(BFREE_GUEST_ROOT_DIR_FD);
+            } else if (strcmp(path, "/tmp") == 0) {
+                pub = bfree_guest_fd_publish(BFREE_GUEST_TMP_DIR_FD);
+            } else if (strncmp(path, "/tmp/", 5) == 0 && path[5] != '\0') {
+                bfree_guest_vfile_t *vf =
+                    bfree_guest_vfile_find_by_name(path + 5);
+                if (vf) {
+                    int target = (int)BFREE_GUEST_VFILE_FD_BASE +
+                                 (int)(vf - g_guest_vfiles);
+                    pub = bfree_guest_vfile_publish_open(target, (int)flags, 0);
+                }
+                if (pub < 0) {
+                    pub = bfree_guest_fd_publish(BFREE_GUEST_TMP_DIR_FD);
+                }
+            } else {
+                pub = bfree_guest_fd_publish(BFREE_GUEST_TMP_DIR_FD);
+            }
+            if (pub >= 0 && cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+                g_guest_fd_cloexec[pub] = 1;
+            }
+            return pub;
+        }
+    }
+    {
+        int pub = bfree_guest_fd_publish(BFREE_GUEST_TMP_DIR_FD);
+        if (pub >= 0 && cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+            g_guest_fd_cloexec[pub] = 1;
+        }
+        return pub;
+    }
+}
+
+/* memfd_secret — like memfd_create with distinct name prefix */
+static unsigned g_guest_memfd_secret_seq;
+
+static long sys_linux_memfd_secret(long flags)
+{
+    char vname[48];
+    size_t i = 0;
+    int target;
+    int pub;
+    int cloexec;
+    bfree_guest_vfile_t *dir;
+    unsigned seq;
+
+    cloexec = ((unsigned long)flags & (unsigned long)BFREE_MFD_CLOEXEC) != 0UL;
+    seq = g_guest_memfd_secret_seq++;
+    vname[0] = 'm';
+    vname[1] = 'e';
+    vname[2] = 'm';
+    vname[3] = 'f';
+    vname[4] = 'd';
+    vname[5] = '_';
+    vname[6] = 's';
+    vname[7] = 'e';
+    vname[8] = 'c';
+    vname[9] = 'r';
+    vname[10] = 'e';
+    vname[11] = 't';
+    vname[12] = '/';
+    {
+        char num[16];
+        size_t n = 0;
+        unsigned v = seq;
+
+        if (v == 0U) {
+            num[n++] = '0';
+        } else {
+            while (v > 0U && n < sizeof(num)) {
+                num[n++] = (char)('0' + (v % 10U));
+                v /= 10U;
+            }
+        }
+        while (n > 0U && i + 14U < sizeof(vname)) {
+            vname[13 + i] = num[--n];
+            ++i;
+        }
+    }
+    vname[13 + i] = '\0';
+
+    dir = bfree_guest_vfile_find_by_name("memfd_secret");
+    if (!dir) {
+        int dfd = bfree_guest_vfile_alloc_slot("memfd_secret", 1);
+        if (dfd < 0) {
+            return dfd;
+        }
+        dir = bfree_guest_vfile_from_fd(dfd);
+        if (dir) {
+            dir->is_dir = 1;
+        }
+    }
+    target = bfree_guest_vfile_alloc_slot(vname, 1);
+    if (target < 0) {
+        return target;
+    }
+    pub = bfree_guest_vfile_publish_open(target, 2 /* O_RDWR */, 0);
+    if (pub >= 0 && cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+        g_guest_fd_cloexec[pub] = 1;
+    }
+    return pub;
+}
+
+static long sys_linux_clock_settime(long clockid, long tp)
+{
+    typedef struct {
+        long tv_sec;
+        long tv_nsec;
+    } bfree_ts_t;
+    bfree_ts_t *ts;
+
+    if (clockid != 0) { /* only CLOCK_REALTIME soft-store */
+        return 0;
+    }
+    if (tp == 0 || !bfree_user_ptr_mapped(tp)) {
+        return -14;
+    }
+    ts = (bfree_ts_t *)(uintptr_t)tp;
+    if (ts->tv_nsec < 0 || ts->tv_nsec >= 1000000000L) {
+        return -22;
+    }
+    g_guest_realtime_sec = ts->tv_sec;
+    g_guest_realtime_nsec = ts->tv_nsec;
+    g_guest_realtime_override = 1;
+    return 0;
+}
+
+static long sys_linux_settimeofday(long tv_ptr, long tz_ptr)
+{
+    typedef struct {
+        long tv_sec;
+        long tv_usec;
+    } bfree_tv_t;
+    bfree_tv_t *tv;
+
+    (void)tz_ptr;
+    if (tv_ptr == 0) {
+        return 0;
+    }
+    if (!bfree_user_ptr_mapped(tv_ptr)) {
+        return -14;
+    }
+    tv = (bfree_tv_t *)(uintptr_t)tv_ptr;
+    g_guest_realtime_sec = tv->tv_sec;
+    g_guest_realtime_nsec = tv->tv_usec * 1000L;
+    g_guest_realtime_override = 1;
+    return 0;
+}
+
+/* Linux 436: CLOSE_RANGE_CLOEXEC marks the range instead of closing it. */
+#define BFREE_CLOSE_RANGE_CLOEXEC 4
+
+static long sys_linux_close_range(long first, long last, long flags)
+{
+    long fd;
+
+    if (first < 0 || last < first) {
+        return -22;
+    }
+    if ((flags & ~(long)(BFREE_CLOSE_RANGE_CLOEXEC | 2)) != 0L) {
+        return -22; /* only CLOEXEC and UNSHARE are known */
+    }
+    if (last >= BFREE_GUEST_FD_TABLE_SIZE) {
+        last = BFREE_GUEST_FD_TABLE_SIZE - 1;
+    }
+    for (fd = first; fd <= last; ++fd) {
+        /* Same open check as fstat/F_GETFD: resolve alone is not enough. */
+        if (fd > 2 && fd < BFREE_GUEST_FD_TABLE_SIZE &&
+            g_guest_fd_target[fd] < 0 && g_guest_fd_dup_save[fd] < 0) {
+            continue;
+        }
+        if ((flags & BFREE_CLOSE_RANGE_CLOEXEC) != 0L) {
+            g_guest_fd_cloexec[fd] = 1;
+        } else {
+            (void)sys_linux_close(fd);
+        }
+    }
+    return 0;
+}
+
+/* Linux 437: struct open_how { u64 flags; u64 mode; u64 resolve; }. */
+static long sys_linux_openat2(long dirfd, long path_ptr, long how_ptr,
+                              long how_size)
+{
+    typedef struct {
+        uint64_t flags;
+        uint64_t mode;
+        uint64_t resolve;
+    } bfree_open_how_t;
+    bfree_open_how_t how;
+    const uint8_t *src;
+    size_t n;
+
+    if (how_size < 24) {
+        return -22;
+    }
+    if (how_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)how_ptr, sizeof(how))) {
+        return -14;
+    }
+    src = (const uint8_t *)(uintptr_t)how_ptr;
+    for (n = 0; n < sizeof(how); ++n) {
+        ((uint8_t *)&how)[n] = src[n];
+    }
+    /* RESOLVE_* is advisory here: every guest path is already sandboxed. */
+    return sys_linux_openat(dirfd, path_ptr, (long)how.flags, (long)how.mode);
 }
 
 static void bfree_guest_trace_sc_num(long num)
@@ -11263,6 +15622,378 @@ static void bfree_guest_sig_raise(int sig)
     g_guest_sig_pending |= (1ULL << (unsigned)(sig - 1));
 }
 
+/* --- signalfd / splice (LTP G) --- */
+static bfree_signalfd_t *bfree_find_signalfd(int fd)
+{
+    int resolved = bfree_guest_fd_resolve(fd);
+    int i = resolved - BFREE_SIGNALFD_FD_BASE;
+
+    if (i < 0 || i >= BFREE_MAX_SIGNALFD || !g_guest_signalfds[i].used) {
+        return 0;
+    }
+    return &g_guest_signalfds[i];
+}
+
+static long sys_linux_signalfd4(long fd, long mask_ptr, long sizemask, long flags)
+{
+    uint64_t mask = 0;
+    int i;
+    int pub;
+    int cloexec = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
+    int nonblock = ((unsigned long)flags & (unsigned long)BFREE_LINUX_O_NONBLOCK) != 0UL;
+
+    if (mask_ptr == 0 || sizemask < 8 || !bfree_user_ptr_mapped(mask_ptr)) {
+        return -14;
+    }
+    mask = *(const uint64_t *)(uintptr_t)mask_ptr;
+    if (fd >= 0) {
+        bfree_signalfd_t *sf = bfree_find_signalfd((int)fd);
+        if (!sf) {
+            return -9;
+        }
+        sf->mask = mask;
+        return fd;
+    }
+    for (i = 0; i < BFREE_MAX_SIGNALFD; ++i) {
+        if (!g_guest_signalfds[i].used) {
+            g_guest_signalfds[i].used = 1;
+            g_guest_signalfds[i].magic_fd = BFREE_SIGNALFD_FD_BASE + i;
+            g_guest_signalfds[i].mask = mask;
+            g_guest_signalfds[i].nonblock = nonblock;
+            pub = bfree_guest_fd_publish(g_guest_signalfds[i].magic_fd);
+            if (pub < 0) {
+                g_guest_signalfds[i].used = 0;
+                g_guest_signalfds[i].nonblock = 0;
+                return pub;
+            }
+            if (cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
+                g_guest_fd_cloexec[pub] = 1;
+            }
+            return pub;
+        }
+    }
+    return -24;
+}
+
+static long bfree_linux_read_signalfd(long fd, long buf, long count)
+{
+    bfree_signalfd_t *sf = bfree_find_signalfd((int)fd);
+    uint64_t hit;
+    int sig;
+    uint8_t *dst;
+    size_t i;
+
+    if (!sf) {
+        return -9;
+    }
+    if (buf == 0 || count < 128 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    for (;;) {
+        hit = g_guest_sig_pending & sf->mask;
+        if (hit != 0) {
+            break;
+        }
+        if (sf->nonblock) {
+            return -11; /* EAGAIN */
+        }
+        {
+            int er = bfree_guest_sig_take_eintr();
+            if (er < 0) {
+                return er;
+            }
+        }
+        __asm__ volatile("sti; hlt" ::: "memory");
+    }
+    sig = 0;
+    for (i = 0; i < 64; ++i) {
+        if ((hit & (1ULL << i)) != 0) {
+            sig = (int)i + 1;
+            break;
+        }
+    }
+    if (sig <= 0) {
+        return -11;
+    }
+    g_guest_sig_pending &= ~(1ULL << (unsigned)(sig - 1));
+    dst = (uint8_t *)(uintptr_t)buf;
+    for (i = 0; i < 128; ++i) {
+        dst[i] = 0;
+    }
+    /* struct signalfd_siginfo: ssi_signo at offset 0 (uint32) */
+    dst[0] = (uint8_t)(sig & 0xff);
+    dst[1] = (uint8_t)((sig >> 8) & 0xff);
+    dst[2] = (uint8_t)((sig >> 16) & 0xff);
+    dst[3] = (uint8_t)((sig >> 24) & 0xff);
+    return 128;
+}
+
+static long sys_linux_splice(long fd_in, long off_in, long fd_out, long off_out,
+                             long len, long flags)
+{
+    int in_res;
+    int out_res;
+    bfree_guest_pipe_slot_t *pin = 0;
+    bfree_guest_pipe_slot_t *pout = 0;
+    bfree_guest_vfile_t *vin = 0;
+    bfree_guest_vfile_t *vout = 0;
+    bfree_guest_ofd_t *in_ofd = 0;
+    bfree_guest_ofd_t *out_ofd = 0;
+    size_t n;
+    size_t i;
+    size_t *ipos;
+    size_t *opos;
+    size_t room;
+    /* SPLICE_F_NONBLOCK is 0x02 on Linux; also accept legacy bit0. */
+    int nonblock = ((unsigned long)flags & 3UL) != 0UL;
+
+    if (len < 0) {
+        return -22;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    if (off_in != 0 || off_out != 0) {
+        return -22; /* only current-offset splice */
+    }
+    in_res = bfree_guest_fd_resolve((int)fd_in);
+    out_res = bfree_guest_fd_resolve((int)fd_out);
+    if (bfree_guest_is_pipe_rd(in_res)) {
+        pin = bfree_guest_pipe_slot_from_fd(in_res);
+    } else {
+        vin = bfree_guest_vfile_from_open_fd(in_res, &in_ofd);
+    }
+    if (bfree_guest_is_pipe_wr(out_res)) {
+        pout = bfree_guest_pipe_slot_from_fd(out_res);
+    } else {
+        vout = bfree_guest_vfile_from_open_fd(out_res, &out_ofd);
+    }
+    /* Honor O_NONBLOCK on either end as well as SPLICE_F_NONBLOCK. */
+    if (pin && pin->nonblock) {
+        nonblock = 1;
+    }
+    if (pout && pout->nonblock) {
+        nonblock = 1;
+    }
+    if (pin && pout) {
+        n = pin->len;
+        if (n > (size_t)len) {
+            n = (size_t)len;
+        }
+        room = sizeof(pout->buf) - pout->len;
+        if (n > room) {
+            n = room;
+        }
+        if (n == 0) {
+            if (pin->len != 0) {
+                return -11; /* output pipe full */
+            }
+            return nonblock ? -11 : 0;
+        }
+        for (i = 0; i < n; ++i) {
+            pout->buf[pout->len + i] = pin->buf[i];
+        }
+        pout->len += n;
+        if (n < pin->len) {
+            for (i = 0; i < pin->len - n; ++i) {
+                pin->buf[i] = pin->buf[i + n];
+            }
+        }
+        pin->len -= n;
+        return (long)n;
+    }
+    if (vin && !vin->is_dir && pout) {
+        ipos = in_ofd ? &in_ofd->pos : &vin->pos;
+        if (*ipos >= vin->len) {
+            return 0;
+        }
+        n = vin->len - *ipos;
+        if (n > (size_t)len) {
+            n = (size_t)len;
+        }
+        room = sizeof(pout->buf) - pout->len;
+        if (n > room) {
+            n = room;
+        }
+        if (n == 0) {
+            return -11;
+        }
+        for (i = 0; i < n; ++i) {
+            pout->buf[pout->len + i] = vin->data[*ipos + i];
+        }
+        pout->len += n;
+        *ipos += n;
+        return (long)n;
+    }
+    if (pin && vout && !vout->is_dir && !vout->is_symlink) {
+        opos = out_ofd ? &out_ofd->pos : &vout->pos;
+        if (*opos > vout->len) {
+            *opos = vout->len;
+        }
+        n = pin->len;
+        if (n > (size_t)len) {
+            n = (size_t)len;
+        }
+        if (*opos >= BFREE_GUEST_VFILE_SIZE) {
+            return -28;
+        }
+        if (n > BFREE_GUEST_VFILE_SIZE - *opos) {
+            n = BFREE_GUEST_VFILE_SIZE - *opos;
+        }
+        if (n == 0) {
+            if (pin->len != 0) {
+                return -11;
+            }
+            return nonblock ? -11 : 0;
+        }
+        for (i = 0; i < n; ++i) {
+            vout->data[*opos + i] = pin->buf[i];
+        }
+        *opos += n;
+        if (*opos > vout->len) {
+            vout->len = *opos;
+        }
+        if (n < pin->len) {
+            for (i = 0; i < pin->len - n; ++i) {
+                pin->buf[i] = pin->buf[i + n];
+            }
+        }
+        pin->len -= n;
+        return (long)n;
+    }
+    return -22;
+}
+
+/* Linux tee(fdin, fdout, len, flags): copy pipe→pipe without consuming input. */
+static long sys_linux_tee(long fd_in, long fd_out, long len, long flags)
+{
+    int in_res;
+    int out_res;
+    bfree_guest_pipe_slot_t *pin;
+    bfree_guest_pipe_slot_t *pout;
+    size_t n;
+    size_t i;
+    size_t room;
+    int nonblock = ((unsigned long)flags & 3UL) != 0UL; /* SPLICE_F_NONBLOCK */
+
+    if (len < 0) {
+        return -22;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    in_res = bfree_guest_fd_resolve((int)fd_in);
+    out_res = bfree_guest_fd_resolve((int)fd_out);
+    if (!bfree_guest_is_pipe_rd(in_res) || !bfree_guest_is_pipe_wr(out_res)) {
+        return -22;
+    }
+    pin = bfree_guest_pipe_slot_from_fd(in_res);
+    pout = bfree_guest_pipe_slot_from_fd(out_res);
+    if (!pin || !pout) {
+        return -9;
+    }
+    if (pin == pout) {
+        return -22;
+    }
+    if (pin->nonblock || pout->nonblock) {
+        nonblock = 1;
+    }
+    n = pin->len;
+    if (n > (size_t)len) {
+        n = (size_t)len;
+    }
+    room = sizeof(pout->buf) - pout->len;
+    if (n > room) {
+        n = room;
+    }
+    if (n == 0) {
+        if (pin->len != 0) {
+            return -11; /* output pipe full */
+        }
+        return nonblock ? -11 : 0;
+    }
+    for (i = 0; i < n; ++i) {
+        pout->buf[pout->len + i] = pin->buf[i];
+    }
+    pout->len += n;
+    return (long)n;
+}
+
+/* Linux vmsplice(fd, iov, nr_segs, flags): copy user iovecs into a pipe write end. */
+static long sys_linux_vmsplice(long fd, long iov_ptr, long nr_segs, long flags)
+{
+    typedef struct {
+        uint64_t iov_base;
+        uint64_t iov_len;
+    } bfree_iovec64_t;
+    int out_res;
+    bfree_guest_pipe_slot_t *pout;
+    long total = 0;
+    long i;
+    int nonblock = ((unsigned long)flags & 3UL) != 0UL; /* SPLICE_F_NONBLOCK */
+
+    if (nr_segs < 0 || nr_segs > 1024) {
+        return -22;
+    }
+    if (nr_segs == 0) {
+        return 0;
+    }
+    if (iov_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)iov_ptr,
+                               (uint64_t)nr_segs * sizeof(bfree_iovec64_t))) {
+        return -14;
+    }
+    out_res = bfree_guest_fd_resolve((int)fd);
+    if (!bfree_guest_is_pipe_wr(out_res)) {
+        return -22;
+    }
+    pout = bfree_guest_pipe_slot_from_fd(out_res);
+    if (!pout) {
+        return -9;
+    }
+    if (pout->nonblock) {
+        nonblock = 1;
+    }
+    for (i = 0; i < nr_segs; ++i) {
+        bfree_iovec64_t iov;
+        const uint8_t *src;
+        size_t n;
+        size_t room;
+        size_t j;
+        const uint8_t *raw = (const uint8_t *)(uintptr_t)iov_ptr;
+
+        for (j = 0; j < sizeof(iov); ++j) {
+            ((uint8_t *)&iov)[j] = raw[(size_t)i * sizeof(iov) + j];
+        }
+        if (iov.iov_len == 0) {
+            continue;
+        }
+        if (iov.iov_base == 0 ||
+            !bfree_user_buf_mapped(iov.iov_base, iov.iov_len)) {
+            return total > 0 ? total : -14;
+        }
+        room = sizeof(pout->buf) - pout->len;
+        if (room == 0) {
+            /* Full pipe: NONBLOCK / O_NONBLOCK → EAGAIN; else soft-0. */
+            return total > 0 ? total : (nonblock ? -11L : 0L);
+        }
+        n = (size_t)iov.iov_len;
+        if (n > room) {
+            n = room;
+        }
+        src = (const uint8_t *)(uintptr_t)iov.iov_base;
+        for (j = 0; j < n; ++j) {
+            pout->buf[pout->len + j] = src[j];
+        }
+        pout->len += n;
+        total += (long)n;
+        if (n < (size_t)iov.iov_len) {
+            break; /* pipe full */
+        }
+    }
+    return total;
+}
+
 static int bfree_guest_sig_is_blocked(int sig)
 {
     if (sig <= 0 || sig >= BFREE_NSIG) {
@@ -11541,7 +16272,8 @@ static long bfree_guest_exit_from_fork_signal(int sig)
     g_bfree_sysret_exec_cr3 = 0;
     {
         int parent_waiting =
-            (g_coop_parent_in_wait || g_guest_wait_status_ptr != 0) ? 1 : 0;
+            (g_coop_parent_in_wait || g_guest_wait_status_ptr != 0 ||
+             g_guest_waitid_active) ? 1 : 0;
         int wst = 0;
         long wr = 0;
 
@@ -11553,25 +16285,45 @@ static long bfree_guest_exit_from_fork_signal(int sig)
                 *(int *)(uintptr_t)g_guest_wait_status_ptr =
                     (wr > 0) ? wst : (st & 0x7f);
             }
+            if (g_guest_waitid_active && g_guest_waitid_infop != 0 &&
+                bfree_user_ptr_mapped(g_guest_waitid_infop)) {
+                uint8_t *raw = (uint8_t *)(uintptr_t)g_guest_waitid_infop;
+                size_t i;
+                int use_st = (wr > 0) ? wst : (((int)(st & 0xff)) << 8);
+                long use_pid = (wr > 0) ? wr : (long)g_guest_fork_pid;
+                for (i = 0; i < 32; ++i) {
+                    raw[i] = 0;
+                }
+                *(int *)(void *)(raw + 0) = BFREE_SIGCHLD;
+                *(int *)(void *)(raw + 8) = BFREE_CLD_EXITED;
+                *(int *)(void *)(raw + 16) = (int)use_pid;
+                *(int *)(void *)(raw + 24) = (use_st >> 8) & 0xff;
+            }
         }
         if (as_copy && g_coop_parent_started) {
             bfree_coop_publish_parent_resume();
             if (parent_waiting) {
                 g_coop_parent_resume_rax =
-                    (uint64_t)(wr > 0 ? wr : (long)g_guest_fork_pid);
+                    g_guest_waitid_active
+                        ? 0ULL
+                        : (uint64_t)(wr > 0 ? wr : (long)g_guest_fork_pid);
                 g_coop_parent_resume_mode = 2;
             }
             bfree_coop_arm_parent_resume();
         } else {
             g_bfree_fork_parent_ret =
-                parent_waiting && wr > 0
-                    ? (uint64_t)wr
-                    : (uint64_t)(long)g_guest_fork_pid;
+                g_guest_waitid_active
+                    ? 0ULL
+                    : (parent_waiting && wr > 0
+                           ? (uint64_t)wr
+                           : (uint64_t)(long)g_guest_fork_pid);
         }
     }
     g_coop_parent_started = 0;
     g_coop_parent_in_wait = 0;
     g_guest_wait_status_ptr = 0;
+    g_guest_waitid_active = 0;
+    g_guest_waitid_infop = 0;
     if (resume_pt && knl_current_task) {
         knl_current_task->page_table_base = resume_pt;
         __asm__ volatile("mov %0, %%cr3" :: "r"(resume_pt) : "memory");
@@ -11625,6 +16377,48 @@ static int bfree_inet_parse_sockaddr(long addr, long addrlen, uint32_t *out_addr
     }
     raw = (const uint8_t *)(uintptr_t)addr;
     family = (uint16_t)(raw[0] | (raw[1] << 8));
+    if (family == (uint16_t)BFREE_LINUX_AF_INET6) {
+        /* sockaddr_in6: family(2) port(2) flowinfo(4) addr(16) scope_id(4). */
+        const uint8_t *v6 = raw + 8;
+        size_t k;
+        int lead12_zero = 1;
+        int lead10_zero = 1;
+
+        if (addrlen < 24) {
+            return -22;
+        }
+        if (!bfree_user_buf_mapped((uint64_t)(uintptr_t)addr, 24)) {
+            return -14;
+        }
+        port_be = (uint16_t)(raw[2] | (raw[3] << 8));
+        if (out_port) {
+            *out_port = bfree_inet_ntohs(port_be);
+        }
+        for (k = 0; k < 12U; ++k) {
+            if (v6[k] != 0) {
+                lead12_zero = 0;
+                if (k < 10U) {
+                    lead10_zero = 0;
+                }
+                break;
+            }
+        }
+        if (out_addr) {
+            if (lead12_zero && v6[12] == 0 && v6[13] == 0 && v6[14] == 0) {
+                /* :: → INADDR_ANY, ::1 → IPv4 loopback. */
+                *out_addr = (v6[15] == 0) ? BFREE_INADDR_ANY
+                          : (v6[15] == 1) ? BFREE_INADDR_LOOPBACK
+                                          : 0xFFFFFFFEU;
+            } else if (lead10_zero && v6[10] == 0xff && v6[11] == 0xff) {
+                /* ::ffff:a.b.c.d */
+                *out_addr = ((uint32_t)v6[12] << 24) | ((uint32_t)v6[13] << 16) |
+                            ((uint32_t)v6[14] << 8) | (uint32_t)v6[15];
+            } else {
+                *out_addr = 0xFFFFFFFEU; /* never routable → ENETUNREACH */
+            }
+        }
+        return 0;
+    }
     if (family != (uint16_t)BFREE_LINUX_AF_INET) {
         return -97; /* EAFNOSUPPORT */
     }
@@ -11656,14 +16450,66 @@ static int bfree_inet_is_loopback(uint32_t addr)
 {
     return bfree_inet_is_guest_routable(addr);
 }
+/* Listener backlog helpers shared by the AF_INET and AF_UNIX paths. */
+static void bfree_sock_accept_q_reset(int *q_rd, int *q_wr, int *q_len,
+                                      int *backlog)
+{
+    int i;
+
+    for (i = 0; i < BFREE_ACCEPT_Q; ++i) {
+        q_rd[i] = -1;
+        q_wr[i] = -1;
+    }
+    *q_len = 0;
+    *backlog = 1;
+}
+
+static int bfree_sock_accept_q_push(int *q_rd, int *q_wr, int *q_len,
+                                    int backlog, int rd, int wr)
+{
+    int cap = (backlog < 1) ? 1 : backlog;
+
+    if (cap > BFREE_ACCEPT_Q) {
+        cap = BFREE_ACCEPT_Q;
+    }
+    if (*q_len >= cap) {
+        return -11; /* EAGAIN — backlog full */
+    }
+    q_rd[*q_len] = rd;
+    q_wr[*q_len] = wr;
+    ++(*q_len);
+    return 0;
+}
+
+static int bfree_sock_accept_q_pop(int *q_rd, int *q_wr, int *q_len,
+                                   int *rd_out, int *wr_out)
+{
+    int i;
+
+    if (*q_len <= 0) {
+        return -11;
+    }
+    *rd_out = q_rd[0];
+    *wr_out = q_wr[0];
+    for (i = 1; i < *q_len; ++i) {
+        q_rd[i - 1] = q_rd[i];
+        q_wr[i - 1] = q_wr[i];
+    }
+    --(*q_len);
+    q_rd[*q_len] = -1;
+    q_wr[*q_len] = -1;
+    return 0;
+}
+
 static long sys_linux_socket(long domain, long type, long protocol)
 {
     int i;
     int stype = (int)(type & 0xFF);
     int cloexec = ((unsigned long)type & (unsigned long)BFREE_LINUX_O_CLOEXEC) != 0UL;
+    int nonblock = ((unsigned long)type & (unsigned long)BFREE_LINUX_O_NONBLOCK) != 0UL;
     int pub;
 
-    if (domain == BFREE_LINUX_AF_INET) {
+    if (domain == BFREE_LINUX_AF_INET || domain == BFREE_LINUX_AF_INET6) {
         for (i = 0; i < BFREE_INET_SLOTS; ++i) {
             if (!g_inet_socks[i].used) {
                 g_inet_socks[i].used = 1;
@@ -11671,17 +16517,41 @@ static long sys_linux_socket(long domain, long type, long protocol)
                 g_inet_socks[i].connected = 0;
                 g_inet_socks[i].bound = 0;
                 g_inet_socks[i].is_dgram = (stype == 2); /* SOCK_DGRAM */
+                g_inet_socks[i].is_v6 = (domain == BFREE_LINUX_AF_INET6);
                 g_inet_socks[i].is_raw = (stype == BFREE_SOCK_RAW);
                 g_inet_socks[i].ip_proto = (int)protocol;
+                g_inet_socks[i].shut_rd = 0;
+                g_inet_socks[i].shut_wr = 0;
+                g_inet_socks[i].nonblock = nonblock;
+                g_inet_socks[i].so_reuseaddr = 0;
+                g_inet_socks[i].so_reuseport = 0;
+                g_inet_socks[i].so_keepalive = 0;
+                g_inet_socks[i].so_broadcast = 0;
+                g_inet_socks[i].so_linger_on = 0;
+                g_inet_socks[i].so_linger_sec = 0;
+                g_inet_socks[i].so_oobinline = 0;
+                g_inet_socks[i].so_error = 0;
+                g_inet_socks[i].tcp_nodelay = 0;
+                g_inet_socks[i].ip_ttl = 64;
+                g_inet_socks[i].ip_tos = 0;
+                g_inet_socks[i].so_rcvbuf = 8192;
+                g_inet_socks[i].so_sndbuf = 8192;
+                g_inet_socks[i].so_rcvtimeo_us = 0;
+                g_inet_socks[i].so_sndtimeo_us = 0;
                 g_inet_socks[i].addr = BFREE_INADDR_ANY;
                 g_inet_socks[i].port = 0;
                 g_inet_socks[i].accept_rd = -1;
+                g_inet_socks[i].accept_wr = -1;
                 g_inet_socks[i].pipe_magic = -1;
                 g_inet_socks[i].tcp_pcb = -1;
                 g_inet_socks[i].peer_addr = 0;
                 g_inet_socks[i].peer_port = 0;
                 g_inet_socks[i].dg_head = 0;
                 g_inet_socks[i].dg_count = 0;
+                bfree_sock_accept_q_reset(g_inet_socks[i].q_rd,
+                                          g_inet_socks[i].q_wr,
+                                          &g_inet_socks[i].q_len,
+                                          &g_inet_socks[i].listen_backlog);
                 pub = bfree_guest_fd_publish((int)BFREE_INET_FD_BASE + i);
                 if (pub >= 0 && cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
                     g_guest_fd_cloexec[pub] = 1;
@@ -11699,9 +16569,25 @@ static long sys_linux_socket(long domain, long type, long protocol)
             g_unix_socks[i].used = 1;
             g_unix_socks[i].listening = 0;
             g_unix_socks[i].connected = 0;
+            g_unix_socks[i].is_dgram = (stype == BFREE_SOCK_DGRAM);
+            g_unix_socks[i].shut_rd = 0;
+            g_unix_socks[i].shut_wr = 0;
+            g_unix_socks[i].nonblock = nonblock;
+            g_unix_socks[i].so_keepalive = 0;
+            g_unix_socks[i].so_rcvbuf = 8192;
+            g_unix_socks[i].so_sndbuf = 8192;
             g_unix_socks[i].accept_rd = -1;
+            g_unix_socks[i].accept_wr = -1;
             g_unix_socks[i].pipe_magic = -1;
             g_unix_socks[i].path[0] = '\0';
+            g_unix_socks[i].peer_path[0] = '\0';
+            g_unix_socks[i].dg_src[0] = '\0';
+            g_unix_socks[i].dg_pending = 0;
+            g_unix_socks[i].dg_len = 0;
+            bfree_sock_accept_q_reset(g_unix_socks[i].q_rd,
+                                      g_unix_socks[i].q_wr,
+                                      &g_unix_socks[i].q_len,
+                                      &g_unix_socks[i].listen_backlog);
             pub = bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + i);
             if (pub >= 0 && cloexec && pub < BFREE_GUEST_FD_TABLE_SIZE) {
                 g_guest_fd_cloexec[pub] = 1;
@@ -11745,7 +16631,10 @@ static long sys_linux_bind(long sockfd, long addr, long addrlen)
                 (g_inet_socks[i].addr == in_addr ||
                  g_inet_socks[i].addr == BFREE_INADDR_ANY ||
                  in_addr == BFREE_INADDR_ANY)) {
-                return -98; /* EADDRINUSE */
+                /* SO_REUSEADDR: allow when both sides opted in. */
+                if (!(g_inet_socks[idx].so_reuseaddr && g_inet_socks[i].so_reuseaddr)) {
+                    return -98; /* EADDRINUSE */
+                }
             }
         }
         g_inet_socks[idx].addr = in_addr;
@@ -11783,33 +16672,54 @@ static long sys_linux_bind(long sockfd, long addr, long addrlen)
     return 0;
 }
 
+static int bfree_sock_clamp_backlog(long backlog)
+{
+    if (backlog < 1) {
+        return 1;
+    }
+    if (backlog > BFREE_ACCEPT_Q) {
+        return BFREE_ACCEPT_Q;
+    }
+    return (int)backlog;
+}
+
 static long sys_linux_listen(long sockfd, long backlog)
 {
     int idx;
-    (void)backlog;
+
     sockfd = bfree_guest_fd_resolve((int)sockfd);
     idx = bfree_inet_from_fd((int)sockfd);
     if (idx >= 0) {
+        if (g_inet_socks[idx].is_dgram || g_inet_socks[idx].is_raw) {
+            return -95; /* EOPNOTSUPP */
+        }
         if (!g_inet_socks[idx].bound) {
             return -22;
         }
         g_inet_socks[idx].listening = 1;
+        g_inet_socks[idx].listen_backlog = bfree_sock_clamp_backlog(backlog);
+        g_inet_socks[idx].q_len = 0;
         return 0;
     }
     idx = bfree_unix_from_fd((int)sockfd);
     if (idx < 0) {
         return -88;
     }
+    if (g_unix_socks[idx].is_dgram) {
+        return -95; /* EOPNOTSUPP */
+    }
     if (g_unix_socks[idx].path[0] == '\0') {
         return -22;
     }
     g_unix_socks[idx].listening = 1;
+    g_unix_socks[idx].listen_backlog = bfree_sock_clamp_backlog(backlog);
+    g_unix_socks[idx].q_len = 0;
     return 0;
 }
 
 static long sys_linux_connect(long sockfd, long addr, long addrlen)
 {
-    int idx, li, i, slot = -1, rd, wr;
+    int idx, li, i;
     const uint8_t *raw;
     char path[96];
     size_t n;
@@ -11862,33 +16772,65 @@ static long sys_linux_connect(long sockfd, long addr, long addrlen)
                 g_inet_socks[idx].connected = 1;
                 return 0;
             }
+            g_inet_socks[idx].so_error = 111;
             return -111; /* ECONNREFUSED — no loopback listener */
         }
-        if (g_inet_socks[li].accept_rd >= 0) {
-            return -11; /* EAGAIN — one pending accept */
+        if (g_inet_socks[li].q_len >= g_inet_socks[li].listen_backlog ||
+            g_inet_socks[li].q_len >= BFREE_ACCEPT_Q) {
+            return -11; /* EAGAIN — backlog full */
         }
-        for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
-            if (!g_guest_pipes[i].used) {
-                slot = i;
-                break;
+        {
+            int slot0 = -1;
+            int slot1 = -1;
+            int rd0, wr0, rd1, wr1;
+
+            for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
+                if (!g_guest_pipes[i].used) {
+                    if (slot0 < 0) {
+                        slot0 = i;
+                    } else {
+                        slot1 = i;
+                        break;
+                    }
+                }
             }
+            if (slot0 < 0 || slot1 < 0) {
+                return -24;
+            }
+            g_guest_pipes[slot0].used = 1;
+            g_guest_pipes[slot0].rd_open = 1;
+            g_guest_pipes[slot0].wr_open = 1;
+            g_guest_pipes[slot0].len = 0;
+            g_guest_pipes[slot0].nonblock = g_inet_socks[idx].nonblock;
+            g_guest_pipes[slot1].used = 1;
+            g_guest_pipes[slot1].rd_open = 1;
+            g_guest_pipes[slot1].wr_open = 1;
+            g_guest_pipes[slot1].len = 0;
+            g_guest_pipes[slot1].nonblock = g_inet_socks[idx].nonblock;
+            rd0 = bfree_guest_pipe_magic_fd(slot0, 0);
+            wr0 = bfree_guest_pipe_magic_fd(slot0, 1);
+            rd1 = bfree_guest_pipe_magic_fd(slot1, 0);
+            wr1 = bfree_guest_pipe_magic_fd(slot1, 1);
+            /* Client writes wr0 → accepted reads rd0; accepted writes wr1 → client reads rd1. */
+            if (bfree_sock_accept_q_push(g_inet_socks[li].q_rd,
+                                         g_inet_socks[li].q_wr,
+                                         &g_inet_socks[li].q_len,
+                                         g_inet_socks[li].listen_backlog,
+                                         rd0, wr1) != 0) {
+                g_guest_pipes[slot0].used = 0;
+                g_guest_pipes[slot1].used = 0;
+                return -11;
+            }
+            g_inet_socks[idx].connected = 1;
+            g_inet_socks[idx].pipe_magic = wr0;
+            g_inet_socks[idx].accept_rd = rd1;
+            g_inet_socks[idx].accept_wr = -1;
+            g_inet_socks[idx].addr = in_addr;
+            g_inet_socks[idx].port = in_port;
+            g_inet_socks[idx].peer_addr = in_addr;
+            g_inet_socks[idx].peer_port = in_port;
+            return 0;
         }
-        if (slot < 0) {
-            return -24;
-        }
-        g_guest_pipes[slot].used = 1;
-        g_guest_pipes[slot].rd_open = 1;
-        g_guest_pipes[slot].wr_open = 1;
-        g_guest_pipes[slot].len = 0;
-        g_guest_pipes[slot].nonblock = 0;
-        rd = bfree_guest_pipe_magic_fd(slot, 0);
-        wr = bfree_guest_pipe_magic_fd(slot, 1);
-        g_inet_socks[idx].connected = 1;
-        g_inet_socks[idx].pipe_magic = wr;
-        g_inet_socks[idx].addr = in_addr;
-        g_inet_socks[idx].port = in_port;
-        g_inet_socks[li].accept_rd = rd;
-        return 0;
     }
     idx = bfree_unix_from_fd((int)sockfd);
     if (idx < 0) {
@@ -11904,6 +16846,26 @@ static long sys_linux_connect(long sockfd, long addr, long addrlen)
         ++n;
     }
     path[n] = '\0';
+    if (g_unix_socks[idx].is_dgram) {
+        /* Datagram connect(): remember the default destination path only. */
+        for (li = 0; li < BFREE_UNIX_SLOTS; ++li) {
+            if (g_unix_socks[li].used && g_unix_socks[li].is_dgram &&
+                g_unix_socks[li].path[0] != '\0' &&
+                strcmp(g_unix_socks[li].path, path) == 0) {
+                break;
+            }
+        }
+        if (li >= BFREE_UNIX_SLOTS) {
+            return -111; /* ECONNREFUSED — nothing bound to that path */
+        }
+        for (n = 0; path[n] != '\0' &&
+                    n + 1U < sizeof(g_unix_socks[idx].peer_path); ++n) {
+            g_unix_socks[idx].peer_path[n] = path[n];
+        }
+        g_unix_socks[idx].peer_path[n] = '\0';
+        g_unix_socks[idx].connected = 1;
+        return 0;
+    }
     for (li = 0; li < BFREE_UNIX_SLOTS; ++li) {
         if (g_unix_socks[li].used && g_unix_socks[li].listening &&
             strcmp(g_unix_socks[li].path, path) == 0) {
@@ -11913,34 +16875,63 @@ static long sys_linux_connect(long sockfd, long addr, long addrlen)
     if (li >= BFREE_UNIX_SLOTS) {
         return -111;
     }
-    if (g_unix_socks[li].accept_rd >= 0) {
+    if (g_unix_socks[li].q_len >= g_unix_socks[li].listen_backlog ||
+        g_unix_socks[li].q_len >= BFREE_ACCEPT_Q) {
         return -11;
     }
-    for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
-        if (!g_guest_pipes[i].used) {
-            slot = i;
-            break;
+    {
+        int slot0 = -1;
+        int slot1 = -1;
+        int rd0, wr0, rd1, wr1;
+
+        for (i = 0; i < BFREE_GUEST_PIPE_SLOTS; ++i) {
+            if (!g_guest_pipes[i].used) {
+                if (slot0 < 0) {
+                    slot0 = i;
+                } else {
+                    slot1 = i;
+                    break;
+                }
+            }
         }
+        if (slot0 < 0 || slot1 < 0) {
+            return -24;
+        }
+        g_guest_pipes[slot0].used = 1;
+        g_guest_pipes[slot0].rd_open = 1;
+        g_guest_pipes[slot0].wr_open = 1;
+        g_guest_pipes[slot0].len = 0;
+        g_guest_pipes[slot0].nonblock = 0;
+        g_guest_pipes[slot1].used = 1;
+        g_guest_pipes[slot1].rd_open = 1;
+        g_guest_pipes[slot1].wr_open = 1;
+        g_guest_pipes[slot1].len = 0;
+        g_guest_pipes[slot1].nonblock = 0;
+        rd0 = bfree_guest_pipe_magic_fd(slot0, 0);
+        wr0 = bfree_guest_pipe_magic_fd(slot0, 1);
+        rd1 = bfree_guest_pipe_magic_fd(slot1, 0);
+        wr1 = bfree_guest_pipe_magic_fd(slot1, 1);
+        if (bfree_sock_accept_q_push(g_unix_socks[li].q_rd,
+                                     g_unix_socks[li].q_wr,
+                                     &g_unix_socks[li].q_len,
+                                     g_unix_socks[li].listen_backlog,
+                                     rd0, wr1) != 0) {
+            g_guest_pipes[slot0].used = 0;
+            g_guest_pipes[slot1].used = 0;
+            return -11;
+        }
+        g_unix_socks[idx].connected = 1;
+        g_unix_socks[idx].pipe_magic = wr0;
+        g_unix_socks[idx].accept_rd = rd1;
+        g_unix_socks[idx].accept_wr = -1;
+        return 0;
     }
-    if (slot < 0) {
-        return -24;
-    }
-    g_guest_pipes[slot].used = 1;
-    g_guest_pipes[slot].rd_open = 1;
-    g_guest_pipes[slot].wr_open = 1;
-    g_guest_pipes[slot].len = 0;
-    g_guest_pipes[slot].nonblock = 0;
-    rd = bfree_guest_pipe_magic_fd(slot, 0);
-    wr = bfree_guest_pipe_magic_fd(slot, 1);
-    g_unix_socks[idx].connected = 1;
-    g_unix_socks[idx].pipe_magic = wr;
-    g_unix_socks[li].accept_rd = rd;
-    return 0;
 }
 
 static long sys_linux_accept(long sockfd, long addr, long addrlen)
 {
-    int idx, rd;
+    int idx, rd, wr, ni, pub;
+    int spins;
     (void)addr;
     (void)addrlen;
     sockfd = bfree_guest_fd_resolve((int)sockfd);
@@ -11949,12 +16940,81 @@ static long sys_linux_accept(long sockfd, long addr, long addrlen)
         if (!g_inet_socks[idx].listening) {
             return -22;
         }
-        if (g_inet_socks[idx].accept_rd < 0) {
+        if (g_inet_socks[idx].q_len <= 0) {
+            if (g_inet_socks[idx].nonblock) {
+                return -11; /* EAGAIN */
+            }
+            for (spins = 0; spins < 200000; ++spins) {
+                bfree_guest_alarm_poll();
+                if (g_inet_socks[idx].q_len > 0) {
+                    break;
+                }
+                __asm__ volatile("sti; hlt" ::: "memory");
+            }
+            if (g_inet_socks[idx].q_len <= 0) {
+                return -11;
+            }
+        }
+        if (bfree_sock_accept_q_pop(g_inet_socks[idx].q_rd,
+                                    g_inet_socks[idx].q_wr,
+                                    &g_inet_socks[idx].q_len, &rd, &wr) != 0) {
             return -11;
         }
-        rd = g_inet_socks[idx].accept_rd;
-        g_inet_socks[idx].accept_rd = -1;
-        return bfree_guest_fd_publish(rd);
+        for (ni = 0; ni < BFREE_INET_SLOTS; ++ni) {
+            if (!g_inet_socks[ni].used) {
+                break;
+            }
+        }
+        if (ni >= BFREE_INET_SLOTS) {
+            return -24;
+        }
+        g_inet_socks[ni].used = 1;
+        g_inet_socks[ni].listening = 0;
+        g_inet_socks[ni].connected = 1;
+        g_inet_socks[ni].bound = 1;
+        g_inet_socks[ni].is_dgram = 0;
+        g_inet_socks[ni].is_v6 = g_inet_socks[idx].is_v6;
+        g_inet_socks[ni].is_raw = 0;
+        g_inet_socks[ni].ip_proto = 0;
+        g_inet_socks[ni].shut_rd = 0;
+        g_inet_socks[ni].shut_wr = 0;
+        g_inet_socks[ni].nonblock = 0;
+        g_inet_socks[ni].so_reuseaddr = g_inet_socks[idx].so_reuseaddr;
+        g_inet_socks[ni].so_reuseport = g_inet_socks[idx].so_reuseport;
+        g_inet_socks[ni].so_keepalive = g_inet_socks[idx].so_keepalive;
+        g_inet_socks[ni].so_broadcast = g_inet_socks[idx].so_broadcast;
+        g_inet_socks[ni].so_linger_on = g_inet_socks[idx].so_linger_on;
+        g_inet_socks[ni].so_linger_sec = g_inet_socks[idx].so_linger_sec;
+        g_inet_socks[ni].so_oobinline = g_inet_socks[idx].so_oobinline;
+        g_inet_socks[ni].so_error = 0;
+        g_inet_socks[ni].tcp_nodelay = g_inet_socks[idx].tcp_nodelay;
+        g_inet_socks[ni].ip_ttl = g_inet_socks[idx].ip_ttl > 0
+                                      ? g_inet_socks[idx].ip_ttl
+                                      : 64;
+        g_inet_socks[ni].ip_tos = g_inet_socks[idx].ip_tos;
+        g_inet_socks[ni].so_rcvbuf = g_inet_socks[idx].so_rcvbuf;
+        g_inet_socks[ni].so_sndbuf = g_inet_socks[idx].so_sndbuf;
+        g_inet_socks[ni].so_rcvtimeo_us = g_inet_socks[idx].so_rcvtimeo_us;
+        g_inet_socks[ni].so_sndtimeo_us = g_inet_socks[idx].so_sndtimeo_us;
+        g_inet_socks[ni].addr = g_inet_socks[idx].addr;
+        g_inet_socks[ni].port = g_inet_socks[idx].port;
+        g_inet_socks[ni].accept_rd = rd;
+        g_inet_socks[ni].accept_wr = -1;
+        g_inet_socks[ni].pipe_magic = wr;
+        g_inet_socks[ni].tcp_pcb = -1;
+        g_inet_socks[ni].peer_addr = 0;
+        g_inet_socks[ni].peer_port = 0;
+        g_inet_socks[ni].dg_head = 0;
+        g_inet_socks[ni].dg_count = 0;
+        bfree_sock_accept_q_reset(g_inet_socks[ni].q_rd, g_inet_socks[ni].q_wr,
+                                  &g_inet_socks[ni].q_len,
+                                  &g_inet_socks[ni].listen_backlog);
+        pub = bfree_guest_fd_publish((int)BFREE_INET_FD_BASE + ni);
+        if (pub < 0) {
+            g_inet_socks[ni].used = 0;
+            return pub;
+        }
+        return pub;
     }
     idx = bfree_unix_from_fd((int)sockfd);
     if (idx < 0) {
@@ -11963,12 +17023,60 @@ static long sys_linux_accept(long sockfd, long addr, long addrlen)
     if (!g_unix_socks[idx].listening) {
         return -22;
     }
-    if (g_unix_socks[idx].accept_rd < 0) {
+    if (g_unix_socks[idx].q_len <= 0) {
+        if (g_unix_socks[idx].nonblock) {
+            return -11;
+        }
+        for (spins = 0; spins < 200000; ++spins) {
+            bfree_guest_alarm_poll();
+            if (g_unix_socks[idx].q_len > 0) {
+                break;
+            }
+            __asm__ volatile("sti; hlt" ::: "memory");
+        }
+        if (g_unix_socks[idx].q_len <= 0) {
+            return -11;
+        }
+    }
+    if (bfree_sock_accept_q_pop(g_unix_socks[idx].q_rd, g_unix_socks[idx].q_wr,
+                                &g_unix_socks[idx].q_len, &rd, &wr) != 0) {
         return -11;
     }
-    rd = g_unix_socks[idx].accept_rd;
-    g_unix_socks[idx].accept_rd = -1;
-    return bfree_guest_fd_publish(rd);
+    for (ni = 0; ni < BFREE_UNIX_SLOTS; ++ni) {
+        if (!g_unix_socks[ni].used) {
+            break;
+        }
+    }
+    if (ni >= BFREE_UNIX_SLOTS) {
+        return -24;
+    }
+    g_unix_socks[ni].used = 1;
+    g_unix_socks[ni].listening = 0;
+    g_unix_socks[ni].connected = 1;
+    g_unix_socks[ni].is_dgram = 0;
+    g_unix_socks[ni].shut_rd = 0;
+    g_unix_socks[ni].shut_wr = 0;
+    g_unix_socks[ni].nonblock = 0;
+    g_unix_socks[ni].so_keepalive = g_unix_socks[idx].so_keepalive;
+    g_unix_socks[ni].so_rcvbuf = g_unix_socks[idx].so_rcvbuf;
+    g_unix_socks[ni].so_sndbuf = g_unix_socks[idx].so_sndbuf;
+    g_unix_socks[ni].accept_rd = rd;
+    g_unix_socks[ni].accept_wr = -1;
+    g_unix_socks[ni].pipe_magic = wr;
+    g_unix_socks[ni].path[0] = '\0';
+    g_unix_socks[ni].peer_path[0] = '\0';
+    g_unix_socks[ni].dg_src[0] = '\0';
+    g_unix_socks[ni].dg_pending = 0;
+    g_unix_socks[ni].dg_len = 0;
+    bfree_sock_accept_q_reset(g_unix_socks[ni].q_rd, g_unix_socks[ni].q_wr,
+                              &g_unix_socks[ni].q_len,
+                              &g_unix_socks[ni].listen_backlog);
+    pub = bfree_guest_fd_publish((int)BFREE_UNIX_FD_BASE + ni);
+    if (pub < 0) {
+        g_unix_socks[ni].used = 0;
+        return pub;
+    }
+    return pub;
 }
 
 
@@ -12410,18 +17518,165 @@ static long bfree_inet_raw_recvfrom(int idx, long buf, long len, long addr)
     return (long)out;
 }
 
+/* Copy the sun_path out of a user sockaddr_un (offset 2, NUL-terminated). */
+static int bfree_unix_copy_sun_path(long addr, long addrlen, char *out, size_t cap)
+{
+    const uint8_t *raw;
+    size_t n = 0;
+    size_t limit = (addrlen > 0) ? (size_t)addrlen : 0;
+
+    if (addr == 0 || limit < 3U || !bfree_user_ptr_mapped(addr)) {
+        return -14;
+    }
+    raw = (const uint8_t *)(uintptr_t)addr;
+    while (n + 2U < limit && n + 1U < cap && raw[2 + n] != 0) {
+        out[n] = (char)raw[2 + n];
+        ++n;
+    }
+    out[n] = '\0';
+    return (n == 0U) ? -22 : 0;
+}
+
+static int bfree_unix_find_bound(const char *path)
+{
+    int i;
+
+    for (i = 0; i < BFREE_UNIX_SLOTS; ++i) {
+        if (g_unix_socks[i].used && g_unix_socks[i].is_dgram &&
+            g_unix_socks[i].path[0] != '\0' &&
+            strcmp(g_unix_socks[i].path, path) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* AF_UNIX SOCK_DGRAM: one in-flight datagram per receiver mailbox. */
+static long bfree_unix_dgram_send(int idx, long buf, long len, long addr,
+                                  long addrlen)
+{
+    char path[96];
+    bfree_unix_sock_t *rs;
+    int ri;
+    size_t n;
+    size_t i;
+    const uint8_t *src;
+
+    if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    if ((size_t)len > BFREE_UNIX_DGRAM_SIZE) {
+        return -90; /* EMSGSIZE */
+    }
+    if (addr != 0) {
+        int rc = bfree_unix_copy_sun_path(addr, addrlen ? addrlen : 110,
+                                          path, sizeof(path));
+        if (rc != 0) {
+            return rc;
+        }
+    } else if (g_unix_socks[idx].connected &&
+               g_unix_socks[idx].peer_path[0] != '\0') {
+        for (i = 0; g_unix_socks[idx].peer_path[i] != '\0' &&
+                    i + 1U < sizeof(path); ++i) {
+            path[i] = g_unix_socks[idx].peer_path[i];
+        }
+        path[i] = '\0';
+    } else {
+        return -89; /* EDESTADDRREQ */
+    }
+    ri = bfree_unix_find_bound(path);
+    if (ri < 0) {
+        return -111; /* ECONNREFUSED — nothing bound there */
+    }
+    rs = &g_unix_socks[ri];
+    if (rs->dg_pending) {
+        return -11; /* EAGAIN — mailbox full */
+    }
+    n = (size_t)len;
+    src = (const uint8_t *)(uintptr_t)buf;
+    for (i = 0; i < n; ++i) {
+        rs->dg_buf[i] = src[i];
+    }
+    rs->dg_len = n;
+    rs->dg_pending = 1;
+    for (i = 0; g_unix_socks[idx].path[i] != '\0' &&
+                i + 1U < sizeof(rs->dg_src); ++i) {
+        rs->dg_src[i] = g_unix_socks[idx].path[i];
+    }
+    rs->dg_src[i] = '\0';
+    return (long)n;
+}
+
+static long bfree_unix_dgram_recv(int idx, long buf, long len, int peek,
+                                  int dontwait, long addr)
+{
+    bfree_unix_sock_t *s = &g_unix_socks[idx];
+    size_t n;
+    size_t i;
+    uint8_t *dst;
+    int spins;
+
+    if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
+        return -14;
+    }
+    /* Bounded wait: the sender is the same guest thread in every practical
+     * case, so a long spin here would only look like a hang. */
+    if (!s->dg_pending && !(s->nonblock || dontwait)) {
+        for (spins = 0; spins < 4096 && !s->dg_pending; ++spins) {
+            bfree_guest_alarm_poll();
+            if (s->dg_pending) {
+                break;
+            }
+            __asm__ volatile("sti; hlt" ::: "memory");
+        }
+    }
+    if (!s->dg_pending) {
+        return -11; /* EAGAIN */
+    }
+    n = s->dg_len;
+    if (n > (size_t)len) {
+        n = (size_t)len;
+    }
+    dst = (uint8_t *)(uintptr_t)buf;
+    for (i = 0; i < n; ++i) {
+        dst[i] = s->dg_buf[i];
+    }
+    if (addr != 0 && bfree_user_ptr_mapped(addr)) {
+        uint8_t *sa = (uint8_t *)(uintptr_t)addr;
+
+        sa[0] = (uint8_t)BFREE_LINUX_AF_UNIX;
+        sa[1] = 0;
+        for (i = 0; s->dg_src[i] != '\0' && i < 106U; ++i) {
+            sa[2 + i] = (uint8_t)s->dg_src[i];
+        }
+        sa[2 + i] = 0;
+    }
+    if (!peek) {
+        s->dg_pending = 0;
+        s->dg_len = 0;
+    }
+    return (long)n;
+}
+
 static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr, long addrlen)
 {
     int idx;
+    /* MSG_OOB is sent in-band; MSG_CMSG_CLOEXEC is meaningless without SCM. */
+    flags = (long)((unsigned long)flags & ~BFREE_MSG_SOFT_IGNORED);
     (void)flags;
     (void)addrlen;
     fd = bfree_guest_fd_resolve((int)fd);
     idx = bfree_inet_from_fd((int)fd);
+    if (idx >= 0 && g_inet_socks[idx].shut_wr) {
+        bfree_guest_sig_raise(13); /* SIGPIPE */
+        return -32; /* EPIPE */
+    }
     if (idx >= 0 && g_inet_socks[idx].is_raw) {
         uint32_t dst_addr;
         uint16_t dst_port;
         if (addr != 0) {
-            long perr = bfree_inet_parse_sockaddr(addr, 16, &dst_addr, &dst_port);
+            long perr = bfree_inet_parse_sockaddr(
+                addr, g_inet_socks[idx].is_v6 ? 28 : 16, &dst_addr, &dst_port);
             if (perr != 0) {
                 return perr;
             }
@@ -12438,8 +17693,9 @@ static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr,
         uint16_t dst_port;
 
         if (addr != 0) {
-            /* Dispatch drops arg6; sockaddr_in is 16 bytes. */
-            long perr = bfree_inet_parse_sockaddr(addr, 16, &dst_addr, &dst_port);
+            /* Dispatch drops arg6; sockaddr_in is 16 bytes, sockaddr_in6 28. */
+            long perr = bfree_inet_parse_sockaddr(
+                addr, g_inet_socks[idx].is_v6 ? 28 : 16, &dst_addr, &dst_port);
             if (perr != 0) {
                 return perr;
             }
@@ -12465,6 +17721,13 @@ static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr,
         return sys_linux_write(g_inet_socks[idx].pipe_magic, buf, len);
     }
     idx = bfree_unix_from_fd((int)fd);
+    if (idx >= 0 && g_unix_socks[idx].shut_wr) {
+        bfree_guest_sig_raise(13); /* SIGPIPE */
+        return -32; /* EPIPE */
+    }
+    if (idx >= 0 && g_unix_socks[idx].is_dgram) {
+        return bfree_unix_dgram_send(idx, buf, len, addr, addrlen);
+    }
     if (idx >= 0 && g_unix_socks[idx].connected && g_unix_socks[idx].pipe_magic >= 0) {
         return sys_linux_write(g_unix_socks[idx].pipe_magic, buf, len);
     }
@@ -12474,10 +17737,29 @@ static long sys_linux_sendto(long fd, long buf, long len, long flags, long addr,
 static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long addr, long addrlen)
 {
     int idx;
-    int peek = ((unsigned long)flags & 2UL) != 0UL; /* MSG_PEEK */
+    int peek;
+    int dontwait;
+    int waitall;
+    int trunc;
+
+    /* MSG_OOB reads the in-band stream; MSG_CMSG_CLOEXEC has no SCM to apply. */
+    flags = (long)((unsigned long)flags & ~BFREE_MSG_SOFT_IGNORED);
+    peek = ((unsigned long)flags & 2UL) != 0UL; /* MSG_PEEK */
+    dontwait = ((unsigned long)flags & (unsigned long)BFREE_MSG_DONTWAIT) != 0UL;
+    waitall = ((unsigned long)flags & (unsigned long)BFREE_MSG_WAITALL) != 0UL;
+    trunc = ((unsigned long)flags & (unsigned long)BFREE_MSG_TRUNC) != 0UL;
     (void)addrlen;
     fd = bfree_guest_fd_resolve((int)fd);
     idx = bfree_inet_from_fd((int)fd);
+    if (idx >= 0 && g_inet_socks[idx].shut_rd) {
+        return 0;
+    }
+    {
+        int uidx = bfree_unix_from_fd((int)fd);
+        if (uidx >= 0 && g_unix_socks[uidx].shut_rd) {
+            return 0;
+        }
+    }
     if (idx >= 0 && g_inet_socks[idx].is_raw) {
         return bfree_inet_raw_recvfrom(idx, buf, len, addr);
     }
@@ -12485,39 +17767,77 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
         int pcb = g_inet_socks[idx].tcp_pcb;
         int n;
         int spins;
+        int max_spins = (g_inet_socks[idx].nonblock || dontwait) ? 1 : 20000;
+        long total = 0;
 
         if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
             return -14;
         }
-        for (spins = 0; spins < 20000; ++spins) {
-            n = tcp_min_recv(pcb, (uint8_t *)(uintptr_t)buf, (size_t)len);
-            if (n != -11) {
-                return (long)n;
+        for (;;) {
+            for (spins = 0; spins < max_spins; ++spins) {
+                n = tcp_min_recv(pcb, (uint8_t *)(uintptr_t)(buf + total),
+                                 (size_t)(len - total));
+                if (n != -11) {
+                    break;
+                }
+                net_runtime_poll();
             }
-            net_runtime_poll();
+            if (n == -11) {
+                return total > 0 ? total : -11;
+            }
+            if (n <= 0) {
+                return total > 0 ? total : (long)n;
+            }
+            total += n;
+            if (!waitall || total >= len || peek) {
+                return total;
+            }
         }
-        return -11;
     }
     if (idx >= 0 && g_inet_socks[idx].is_dgram) {
         bfree_inet_sock_t *s = &g_inet_socks[idx];
         size_t n;
+        size_t full;
         int h;
         int spins;
+        int max_spins;
 
         if (buf == 0 || len < 0 || !bfree_user_ptr_mapped(buf)) {
             return -14;
         }
-        /* F2 RX: drain e1000 longer — hostfwd packets often arrive between calls. */
-        for (spins = 0; s->dg_count == 0 && spins < 4096; ++spins) {
+        max_spins = (s->nonblock || dontwait) ? 8 : 200000;
+        for (spins = 0; s->dg_count == 0 && spins < max_spins; ++spins) {
             net_runtime_poll();
+            if (!(s->nonblock || dontwait)) {
+                bfree_guest_alarm_poll();
+                if (s->dg_count == 0) {
+                    __asm__ volatile("sti; hlt" ::: "memory");
+                }
+            }
+        }
+        /* connect()ed UDP only sees traffic from the registered peer; drop
+         * anything else off the head of the queue (Linux filters at input). */
+        if (s->connected && s->peer_port != 0) {
+            while (s->dg_count > 0) {
+                int qh = s->dg_head;
+
+                if (s->dg_src_port[qh] == s->peer_port &&
+                    (s->peer_addr == BFREE_INADDR_ANY ||
+                     s->dg_src_addr[qh] == s->peer_addr)) {
+                    break;
+                }
+                s->dg_head = (qh + 1) % BFREE_INET_DGRAMS;
+                s->dg_count--;
+            }
         }
         if (s->dg_count == 0) {
             return -11; /* EAGAIN — no datagram queued */
         }
         h = s->dg_head;
-        n = s->dg_len[h];
+        full = s->dg_len[h];
+        n = full;
         if (n > (size_t)len) {
-            n = (size_t)len; /* truncate (UDP semantics) */
+            n = (size_t)len; /* truncate into buffer */
         }
         memcpy((void *)(uintptr_t)buf, s->dg_buf[h], n);
         if (addr != 0 && bfree_user_ptr_mapped(addr)) {
@@ -12533,16 +17853,43 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
             s->dg_head = (h + 1) % BFREE_INET_DGRAMS;
             s->dg_count--;
         }
-        return (long)n;
+        /* MSG_TRUNC: report full datagram length even if buffer was short. */
+        return trunc ? (long)full : (long)n;
     }
-    if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].pipe_magic >= 0) {
-        int mag = g_inet_socks[idx].pipe_magic;
-        if (bfree_guest_pipe_is_wr_magic(mag)) {
-            mag = mag - 1;
+    if (idx >= 0 && g_inet_socks[idx].connected && g_inet_socks[idx].tcp_pcb < 0) {
+        /* Loopback stream: read peer pipe (accept_rd), not the local write slot. */
+        int mag = g_inet_socks[idx].accept_rd;
+        if (mag < 0 && g_inet_socks[idx].pipe_magic >= 0) {
+            mag = g_inet_socks[idx].pipe_magic;
+            if (bfree_guest_pipe_is_wr_magic(mag)) {
+                mag = mag - 1;
+            }
         }
-        return peek ? bfree_guest_pipe_peek(mag, buf, len) : sys_linux_read(mag, buf, len);
+        if (mag >= 0) {
+            if (peek) {
+                return bfree_guest_pipe_peek(mag, buf, len);
+            }
+            if (waitall && len > 0) {
+                long total = 0;
+                while (total < len) {
+                    long n = sys_linux_read(mag, buf + total, len - total);
+                    if (n < 0) {
+                        return total > 0 ? total : n;
+                    }
+                    if (n == 0) {
+                        return total;
+                    }
+                    total += n;
+                }
+                return total;
+            }
+            return sys_linux_read(mag, buf, len);
+        }
     }
     idx = bfree_unix_from_fd((int)fd);
+    if (idx >= 0 && g_unix_socks[idx].is_dgram) {
+        return bfree_unix_dgram_recv(idx, buf, len, peek, dontwait, addr);
+    }
     if (idx >= 0 && g_unix_socks[idx].connected && g_unix_socks[idx].pipe_magic >= 0) {
         /* Prefer peer read end (socketpair); else same-slot rd (connect client). */
         int mag = g_unix_socks[idx].accept_rd;
@@ -12552,7 +17899,24 @@ static long sys_linux_recvfrom(long fd, long buf, long len, long flags, long add
                 mag = mag - 1;
             }
         }
-        return peek ? bfree_guest_pipe_peek(mag, buf, len) : sys_linux_read(mag, buf, len);
+        if (peek) {
+            return bfree_guest_pipe_peek(mag, buf, len);
+        }
+        if (waitall && len > 0) {
+            long total = 0;
+            while (total < len) {
+                long n = sys_linux_read(mag, buf + total, len - total);
+                if (n < 0) {
+                    return total > 0 ? total : n;
+                }
+                if (n == 0) {
+                    return total;
+                }
+                total += n;
+            }
+            return total;
+        }
+        return sys_linux_read(mag, buf, len);
     }
     if (peek && bfree_guest_is_pipe_rd((int)fd)) {
         return bfree_guest_pipe_peek((int)fd, buf, len);
@@ -12573,22 +17937,109 @@ typedef struct {
     uint32_t _pad1;
 } bfree_linux_msghdr_t;
 
-/* 46/47: only the common single-iovec, no-cmsg shape (musl UDP/DNS). */
+/* 46/47: no cmsg support; iovecs are gathered/scattered through a bounce buffer. */
+#define BFREE_MSG_IOV_MAX   8    /* iovecs actually gathered/scattered */
+#define BFREE_LINUX_IOV_MAX 1024 /* above this Linux reports EMSGSIZE */
+#define BFREE_MSG_BOUNCE    2048
+
+static uint8_t g_msg_bounce[BFREE_MSG_BOUNCE];
+
+/* Datagram-ish sockets need one send per message, so gather first. */
+static int bfree_sock_is_datagram(long fd)
+{
+    int resolved = bfree_guest_fd_resolve((int)fd);
+    int iidx = bfree_inet_from_fd(resolved);
+    int uidx;
+
+    if (iidx >= 0) {
+        return (g_inet_socks[iidx].is_dgram || g_inet_socks[iidx].is_raw);
+    }
+    uidx = bfree_unix_from_fd(resolved);
+    if (uidx >= 0) {
+        return g_unix_socks[uidx].is_dgram;
+    }
+    return 0;
+}
+
 static long sys_linux_sendmsg(long fd, long msg_ptr, long flags)
 {
     const bfree_linux_msghdr_t *mh;
     const bfree_linux_iovec_t *iov;
+    uint64_t nio;
+    uint64_t i;
+    size_t total = 0;
 
     if (msg_ptr == 0 || !bfree_user_ptr_mapped(msg_ptr)) {
         return -14;
     }
+    /* Ancillary data (msg_control) is not carried; MSG_OOB goes in-band. */
+    flags = (long)((unsigned long)flags & ~BFREE_MSG_SOFT_IGNORED);
     mh = (const bfree_linux_msghdr_t *)(uintptr_t)msg_ptr;
-    if (mh->msg_iovlen != 1 || mh->msg_iov == 0 ||
-        !bfree_user_ptr_mapped((long)mh->msg_iov)) {
-        return -38; /* multi-iov remains intentional residual */
+    nio = mh->msg_iovlen;
+    if (nio > BFREE_LINUX_IOV_MAX) {
+        return -90; /* EMSGSIZE — also catches a negative msg_iovlen */
+    }
+    if (nio == 0) {
+        return 0;
+    }
+    if (mh->msg_iov == 0 || !bfree_user_ptr_mapped((long)mh->msg_iov)) {
+        return -14;
+    }
+    if (nio > BFREE_MSG_IOV_MAX) {
+        nio = BFREE_MSG_IOV_MAX;
     }
     iov = (const bfree_linux_iovec_t *)(uintptr_t)mh->msg_iov;
-    return sys_linux_sendto(fd, (long)iov->iov_base, (long)iov->iov_len,
+    if (nio == 1) {
+        return sys_linux_sendto(fd, (long)iov[0].iov_base, (long)iov[0].iov_len,
+                                flags, (long)mh->msg_name, (long)mh->msg_namelen);
+    }
+    if (!bfree_sock_is_datagram(fd)) {
+        /* Stream: one write per iovec preserves byte order on the wire. */
+        long sent = 0;
+
+        for (i = 0; i < nio; ++i) {
+            long n;
+
+            if (iov[i].iov_len == 0) {
+                continue;
+            }
+            n = sys_linux_sendto(fd, (long)iov[i].iov_base,
+                                 (long)iov[i].iov_len, flags,
+                                 (long)mh->msg_name, (long)mh->msg_namelen);
+            if (n < 0) {
+                return sent > 0 ? sent : n;
+            }
+            sent += n;
+            if ((size_t)n < (size_t)iov[i].iov_len) {
+                break; /* short write: stop gathering */
+            }
+        }
+        return sent;
+    }
+    /* Datagram: gather into the bounce buffer and emit exactly one packet. */
+    for (i = 0; i < nio; ++i) {
+        const uint8_t *src = (const uint8_t *)(uintptr_t)iov[i].iov_base;
+        size_t n = (size_t)iov[i].iov_len;
+        size_t k;
+
+        if (n == 0) {
+            continue;
+        }
+        if (src == 0 || !bfree_user_ptr_mapped((long)iov[i].iov_base)) {
+            return -14;
+        }
+        if (n > BFREE_MSG_BOUNCE - total) {
+            n = BFREE_MSG_BOUNCE - total;
+        }
+        for (k = 0; k < n; ++k) {
+            g_msg_bounce[total + k] = src[k];
+        }
+        total += n;
+        if (total >= BFREE_MSG_BOUNCE) {
+            break;
+        }
+    }
+    return sys_linux_sendto(fd, (long)(uintptr_t)g_msg_bounce, (long)total,
                             flags, (long)mh->msg_name, (long)mh->msg_namelen);
 }
 
@@ -12596,20 +18047,161 @@ static long sys_linux_recvmsg(long fd, long msg_ptr, long flags)
 {
     bfree_linux_msghdr_t *mh;
     const bfree_linux_iovec_t *iov;
+    uint64_t nio;
+    uint64_t i;
+    long n;
+    size_t want;
+    size_t off;
 
     if (msg_ptr == 0 || !bfree_user_ptr_mapped(msg_ptr)) {
         return -14;
     }
+    /* MSG_CMSG_CLOEXEC only applies to SCM_RIGHTS fds, which are never
+     * produced here; msg_controllen is reported as 0 on every return path. */
+    flags = (long)((unsigned long)flags & ~BFREE_MSG_SOFT_IGNORED);
     mh = (bfree_linux_msghdr_t *)(uintptr_t)msg_ptr;
-    if (mh->msg_iovlen != 1 || mh->msg_iov == 0 ||
-        !bfree_user_ptr_mapped((long)mh->msg_iov)) {
-        return -38;
+    nio = mh->msg_iovlen;
+    if (nio > BFREE_LINUX_IOV_MAX) {
+        return -90; /* EMSGSIZE */
+    }
+    if (nio == 0) {
+        mh->msg_controllen = 0;
+        mh->msg_flags = 0;
+        return 0;
+    }
+    if (mh->msg_iov == 0 || !bfree_user_ptr_mapped((long)mh->msg_iov)) {
+        return -14;
+    }
+    if (nio > BFREE_MSG_IOV_MAX) {
+        nio = BFREE_MSG_IOV_MAX;
     }
     iov = (const bfree_linux_iovec_t *)(uintptr_t)mh->msg_iov;
     mh->msg_controllen = 0;
     mh->msg_flags = 0;
-    return sys_linux_recvfrom(fd, (long)iov->iov_base, (long)iov->iov_len,
-                              flags, (long)mh->msg_name, 0);
+    if (nio == 1) {
+        want = (size_t)iov[0].iov_len;
+        n = sys_linux_recvfrom(fd, (long)iov[0].iov_base, (long)iov[0].iov_len,
+                               flags, (long)mh->msg_name, 0);
+        if (n > 0 && (size_t)n > want) {
+            /* MSG_TRUNC path returned full datagram length. */
+            mh->msg_flags |= (uint32_t)BFREE_MSG_TRUNC;
+        }
+        return n;
+    }
+    /* Multi-iov: receive once into the bounce buffer, then scatter. */
+    want = 0;
+    for (i = 0; i < nio; ++i) {
+        want += (size_t)iov[i].iov_len;
+    }
+    if (want > BFREE_MSG_BOUNCE) {
+        want = BFREE_MSG_BOUNCE;
+    }
+    if (want == 0) {
+        return 0;
+    }
+    n = sys_linux_recvfrom(fd, (long)(uintptr_t)g_msg_bounce, (long)want,
+                           flags, (long)mh->msg_name, 0);
+    if (n <= 0) {
+        return n;
+    }
+    if ((size_t)n > want) {
+        /* MSG_TRUNC: n is the full datagram length, bounce holds want bytes. */
+        mh->msg_flags |= (uint32_t)BFREE_MSG_TRUNC;
+        off = want;
+    } else {
+        off = (size_t)n;
+    }
+    {
+        size_t done = 0;
+
+        for (i = 0; i < nio && done < off; ++i) {
+            uint8_t *dst = (uint8_t *)(uintptr_t)iov[i].iov_base;
+            size_t cap = (size_t)iov[i].iov_len;
+            size_t k;
+
+            if (cap == 0) {
+                continue;
+            }
+            if (dst == 0 || !bfree_user_ptr_mapped((long)iov[i].iov_base)) {
+                return -14;
+            }
+            if (cap > off - done) {
+                cap = off - done;
+            }
+            for (k = 0; k < cap; ++k) {
+                dst[k] = g_msg_bounce[done + k];
+            }
+            done += cap;
+        }
+    }
+    return n;
+}
+
+/* Linux x86_64 mmsghdr: msghdr (56) + msg_len (4) + pad → 64. */
+typedef struct {
+    bfree_linux_msghdr_t msg_hdr;
+    uint32_t msg_len;
+    uint32_t _pad;
+} bfree_linux_mmsghdr_t;
+
+static long sys_linux_sendmmsg(long fd, long mmsg_ptr, long vlen, long flags)
+{
+    long i;
+    long sent = 0;
+
+    if (vlen < 0) {
+        return -22;
+    }
+    if (vlen == 0) {
+        return 0;
+    }
+    if (mmsg_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)mmsg_ptr,
+                               (uint64_t)vlen * sizeof(bfree_linux_mmsghdr_t))) {
+        return -14;
+    }
+    for (i = 0; i < vlen; ++i) {
+        bfree_linux_mmsghdr_t *mm =
+            &((bfree_linux_mmsghdr_t *)(uintptr_t)mmsg_ptr)[i];
+        long n = sys_linux_sendmsg(fd, (long)(uintptr_t)&mm->msg_hdr, flags);
+        if (n < 0) {
+            return sent > 0 ? sent : n;
+        }
+        mm->msg_len = (uint32_t)n;
+        ++sent;
+    }
+    return sent;
+}
+
+static long sys_linux_recvmmsg(long fd, long mmsg_ptr, long vlen, long flags,
+                               long timeout_ptr)
+{
+    long i;
+    long got = 0;
+    (void)timeout_ptr; /* timeout ignored: single-shot drain */
+
+    if (vlen < 0) {
+        return -22;
+    }
+    if (vlen == 0) {
+        return 0;
+    }
+    if (mmsg_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)mmsg_ptr,
+                               (uint64_t)vlen * sizeof(bfree_linux_mmsghdr_t))) {
+        return -14;
+    }
+    for (i = 0; i < vlen; ++i) {
+        bfree_linux_mmsghdr_t *mm =
+            &((bfree_linux_mmsghdr_t *)(uintptr_t)mmsg_ptr)[i];
+        long n = sys_linux_recvmsg(fd, (long)(uintptr_t)&mm->msg_hdr, flags);
+        if (n < 0) {
+            return got > 0 ? got : n;
+        }
+        mm->msg_len = (uint32_t)n;
+        ++got;
+    }
+    return got;
 }
 
 static long sys_linux_pread64(long fd, long buf, long count, long offset)
@@ -12888,16 +18480,26 @@ static long sys_linux_flock(long fd, long op)
 
 
 static uint64_t g_guest_alarm_deadline_us;
+static uint64_t g_guest_alarm_interval_us;
 static int g_guest_alarm_armed;
 
 static void bfree_guest_alarm_poll(void)
 {
+    uint64_t now;
+
     if (!g_guest_alarm_armed) {
         return;
     }
-    if (knl_get_current_time() >= g_guest_alarm_deadline_us) {
-        g_guest_alarm_armed = 0;
+    now = knl_get_current_time();
+    if (now >= g_guest_alarm_deadline_us) {
         bfree_guest_sig_raise(14); /* SIGALRM */
+        if (g_guest_alarm_interval_us > 0) {
+            g_guest_alarm_deadline_us = now + g_guest_alarm_interval_us;
+            g_guest_alarm_armed = 1;
+        } else {
+            g_guest_alarm_armed = 0;
+            g_guest_alarm_deadline_us = 0;
+        }
     }
 }
 
@@ -12913,6 +18515,7 @@ static long sys_linux_alarm(long sec)
             }
         }
     }
+    g_guest_alarm_interval_us = 0;
     if (sec <= 0) {
         g_guest_alarm_armed = 0;
         return prev;
@@ -12944,6 +18547,10 @@ static long sys_linux_getitimer(long which, long curr)
         return -14;
     }
     memset(&out, 0, sizeof(out));
+    if (g_guest_alarm_interval_us > 0) {
+        out.it_interval.tv_sec = (int64_t)(g_guest_alarm_interval_us / 1000000ULL);
+        out.it_interval.tv_usec = (int64_t)(g_guest_alarm_interval_us % 1000000ULL);
+    }
     if (g_guest_alarm_armed) {
         uint64_t now = knl_get_current_time();
         if (g_guest_alarm_deadline_us > now) {
@@ -12961,7 +18568,6 @@ static long sys_linux_getitimer(long which, long curr)
 static long sys_linux_setitimer(long which, long newv, long oldv)
 {
     bfree_itimerval64_t neu;
-    long prev_sec;
 
     if (which != 0) { /* only ITIMER_REAL */
         return -22;
@@ -12979,24 +18585,32 @@ static long sys_linux_setitimer(long which, long newv, long oldv)
         return -14;
     }
     neu = *(const bfree_itimerval64_t *)(uintptr_t)newv;
-    /* Interval reload not implemented; one-shot via it_value (musl alarm). */
-    (void)neu.it_interval;
-    prev_sec = (long)neu.it_value.tv_sec;
-    if (neu.it_value.tv_usec > 0 && prev_sec >= 0) {
-        /* Round up partial seconds so alarm(1)-style doesn't vanish. */
-        if (prev_sec < 0x7fffffffL) {
-            prev_sec += 1;
+    {
+        uint64_t us = 0;
+        uint64_t ius = 0;
+
+        if (neu.it_value.tv_sec > 0) {
+            us += (uint64_t)neu.it_value.tv_sec * 1000000ULL;
         }
-    }
-    if (prev_sec <= 0 && neu.it_value.tv_usec <= 0) {
-        g_guest_alarm_armed = 0;
+        if (neu.it_value.tv_usec > 0) {
+            us += (uint64_t)neu.it_value.tv_usec;
+        }
+        if (neu.it_interval.tv_sec > 0) {
+            ius += (uint64_t)neu.it_interval.tv_sec * 1000000ULL;
+        }
+        if (neu.it_interval.tv_usec > 0) {
+            ius += (uint64_t)neu.it_interval.tv_usec;
+        }
+        g_guest_alarm_interval_us = ius;
+        if (us == 0) {
+            g_guest_alarm_armed = 0;
+            g_guest_alarm_deadline_us = 0;
+            return 0;
+        }
+        g_guest_alarm_deadline_us = knl_get_current_time() + us;
+        g_guest_alarm_armed = 1;
         return 0;
     }
-    if (prev_sec <= 0) {
-        prev_sec = 1;
-    }
-    (void)sys_linux_alarm(prev_sec);
-    return 0;
 }
 
 /* Linux 204: sched_getaffinity — report single online CPU 0. */
@@ -13015,6 +18629,321 @@ static long sys_linux_sched_getaffinity(long pid, long len, long user_mask)
     memset((void *)(uintptr_t)user_mask, 0, (size_t)len);
     *(uint64_t *)(uintptr_t)user_mask = mask;
     return (long)sizeof(mask);
+}
+
+/* Linux 203: sched_setaffinity — accept any non-empty mask that includes a bit. */
+static long sys_linux_sched_setaffinity(long pid, long len, long user_mask)
+{
+    size_t i;
+    int any = 0;
+
+    (void)pid;
+    if (len <= 0 || user_mask == 0) {
+        return -22;
+    }
+    if (!bfree_user_range_mapped((uint64_t)(uintptr_t)user_mask, (size_t)len)) {
+        return -14;
+    }
+    for (i = 0; i < (size_t)len; ++i) {
+        if (((const unsigned char *)(uintptr_t)user_mask)[i] != 0) {
+            any = 1;
+            break;
+        }
+    }
+    if (!any) {
+        return -22; /* empty mask */
+    }
+    return 0;
+}
+
+#define BFREE_LINUX_CAP_VERSION3 0x20080522U
+
+static long sys_linux_capget(long hdr_ptr, long data_ptr)
+{
+    typedef struct {
+        uint32_t version;
+        int pid;
+    } bfree_cap_header_t;
+    bfree_cap_header_t *hdr;
+
+    if (hdr_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)hdr_ptr, sizeof(*hdr))) {
+        return -14;
+    }
+    hdr = (bfree_cap_header_t *)(uintptr_t)hdr_ptr;
+    hdr->version = BFREE_LINUX_CAP_VERSION3;
+    if (data_ptr != 0) {
+        /* 2 × {effective,permitted,inheritable} u32 for v3 — fill zeros. */
+        if (!bfree_user_buf_mapped((uint64_t)(uintptr_t)data_ptr, 24)) {
+            return -14;
+        }
+        memset((void *)(uintptr_t)data_ptr, 0, 24);
+    }
+    return 0;
+}
+
+static long sys_linux_capset(long hdr_ptr, long data_ptr)
+{
+    (void)hdr_ptr;
+    (void)data_ptr;
+    return 0;
+}
+
+static long sys_linux_preadv2(long fd, long iov_ptr, long iovcnt, long offset,
+                              long flags)
+{
+    long total = 0;
+    long i;
+    long pos = offset;
+
+    (void)flags;
+    if (offset < 0) {
+        return -22;
+    }
+    if (iovcnt <= 0 || iovcnt > 1024) {
+        return -22;
+    }
+    if (iov_ptr == 0 || !bfree_user_ptr_mapped(iov_ptr)) {
+        return -14;
+    }
+    for (i = 0; i < iovcnt; ++i) {
+        bfree_linux_iovec_t vec;
+        uint64_t vec_addr = (uint64_t)(uintptr_t)(iov_ptr + i * (long)sizeof(vec));
+        long chunk;
+
+        if (!bfree_user_buf_mapped(vec_addr, sizeof(vec))) {
+            return -14;
+        }
+        memcpy(&vec, (const void *)(uintptr_t)vec_addr, sizeof(vec));
+        if (vec.iov_len == 0) {
+            continue;
+        }
+        if (!bfree_user_buf_mapped(vec.iov_base, vec.iov_len)) {
+            return -14;
+        }
+        chunk = sys_linux_pread64(fd, (long)vec.iov_base, (long)vec.iov_len, pos);
+        if (chunk < 0) {
+            return total > 0 ? total : chunk;
+        }
+        if (chunk == 0) {
+            break;
+        }
+        total += chunk;
+        pos += chunk;
+        if (chunk < (long)vec.iov_len) {
+            break;
+        }
+    }
+    return total;
+}
+
+static long sys_linux_pwritev2(long fd, long iov_ptr, long iovcnt, long offset,
+                               long flags)
+{
+    long total = 0;
+    long i;
+    long pos = offset;
+
+    (void)flags;
+    if (offset < 0) {
+        return -22;
+    }
+    if (iovcnt <= 0 || iovcnt > 1024) {
+        return -22;
+    }
+    if (iov_ptr == 0 || !bfree_user_ptr_mapped(iov_ptr)) {
+        return -14;
+    }
+    for (i = 0; i < iovcnt; ++i) {
+        bfree_linux_iovec_t vec;
+        uint64_t vec_addr = (uint64_t)(uintptr_t)(iov_ptr + i * (long)sizeof(vec));
+        long chunk;
+
+        if (!bfree_user_buf_mapped(vec_addr, sizeof(vec))) {
+            return -14;
+        }
+        memcpy(&vec, (const void *)(uintptr_t)vec_addr, sizeof(vec));
+        if (vec.iov_len == 0) {
+            continue;
+        }
+        if (!bfree_user_buf_mapped(vec.iov_base, vec.iov_len)) {
+            return -14;
+        }
+        chunk = sys_linux_pwrite64(fd, (long)vec.iov_base, (long)vec.iov_len, pos);
+        if (chunk < 0) {
+            return total > 0 ? total : chunk;
+        }
+        total += chunk;
+        pos += chunk;
+        if (chunk < (long)vec.iov_len) {
+            break;
+        }
+    }
+    return total;
+}
+
+#ifndef BFREE_ENODATA
+#define BFREE_ENODATA 61
+#endif
+
+static long sys_linux_fsetxattr(long fd, long name_ptr, long value_ptr,
+                                long size, long flags)
+{
+    bfree_guest_ofd_t *ofd = 0;
+    bfree_guest_vfile_t *vf;
+    char name[32];
+    size_t n;
+
+    (void)flags;
+    fd = bfree_guest_fd_resolve((int)fd);
+    vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
+    (void)ofd;
+    if (!vf || vf->is_dir || vf->is_symlink) {
+        return -95; /* EOPNOTSUPP soft for non-vfile */
+    }
+    if (name_ptr == 0 || !bfree_user_ptr_mapped(name_ptr)) {
+        return -14;
+    }
+    for (n = 0; n + 1U < sizeof(name); ++n) {
+        char c = ((const char *)(uintptr_t)name_ptr)[n];
+        name[n] = c;
+        if (c == '\0') {
+            break;
+        }
+    }
+    name[n] = '\0';
+    if (name[0] == '\0') {
+        return -22;
+    }
+    if (size < 0 || size > (long)sizeof(vf->xattr_value)) {
+        return -34; /* ERANGE */
+    }
+    if (size > 0 &&
+        (value_ptr == 0 ||
+         !bfree_user_buf_mapped((uint64_t)(uintptr_t)value_ptr, (uint64_t)size))) {
+        return -14;
+    }
+    for (n = 0; n < sizeof(vf->xattr_name); ++n) {
+        vf->xattr_name[n] = name[n];
+        if (name[n] == '\0') {
+            break;
+        }
+    }
+    vf->xattr_name[sizeof(vf->xattr_name) - 1] = '\0';
+    if (size > 0) {
+        memcpy(vf->xattr_value, (const void *)(uintptr_t)value_ptr, (size_t)size);
+    }
+    vf->xattr_len = (size_t)size;
+    return 0;
+}
+
+static long sys_linux_fgetxattr(long fd, long name_ptr, long value_ptr, long size)
+{
+    bfree_guest_ofd_t *ofd = 0;
+    bfree_guest_vfile_t *vf;
+    char name[32];
+    size_t n;
+
+    fd = bfree_guest_fd_resolve((int)fd);
+    vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
+    (void)ofd;
+    if (!vf || vf->is_dir || vf->is_symlink) {
+        return -95;
+    }
+    if (name_ptr == 0 || !bfree_user_ptr_mapped(name_ptr)) {
+        return -14;
+    }
+    for (n = 0; n + 1U < sizeof(name); ++n) {
+        char c = ((const char *)(uintptr_t)name_ptr)[n];
+        name[n] = c;
+        if (c == '\0') {
+            break;
+        }
+    }
+    name[n] = '\0';
+    if (vf->xattr_name[0] == '\0' || strcmp(vf->xattr_name, name) != 0) {
+        return -BFREE_ENODATA;
+    }
+    if (size == 0) {
+        return (long)vf->xattr_len;
+    }
+    if (size < (long)vf->xattr_len) {
+        return -34;
+    }
+    if (value_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)value_ptr, vf->xattr_len)) {
+        return -14;
+    }
+    if (vf->xattr_len > 0) {
+        memcpy((void *)(uintptr_t)value_ptr, vf->xattr_value, vf->xattr_len);
+    }
+    return (long)vf->xattr_len;
+}
+
+static long sys_linux_flistxattr(long fd, long list_ptr, long size)
+{
+    bfree_guest_ofd_t *ofd = 0;
+    bfree_guest_vfile_t *vf;
+    size_t namelen;
+
+    fd = bfree_guest_fd_resolve((int)fd);
+    vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
+    (void)ofd;
+    if (!vf || vf->is_dir || vf->is_symlink) {
+        return -95;
+    }
+    if (vf->xattr_name[0] == '\0') {
+        return 0;
+    }
+    namelen = 0;
+    while (vf->xattr_name[namelen] != '\0' && namelen + 1U < sizeof(vf->xattr_name)) {
+        ++namelen;
+    }
+    namelen += 1; /* including NUL */
+    if (size == 0) {
+        return (long)namelen;
+    }
+    if (size < (long)namelen) {
+        return -34;
+    }
+    if (list_ptr == 0 ||
+        !bfree_user_buf_mapped((uint64_t)(uintptr_t)list_ptr, namelen)) {
+        return -14;
+    }
+    memcpy((void *)(uintptr_t)list_ptr, vf->xattr_name, namelen);
+    return (long)namelen;
+}
+
+static long sys_linux_fremovexattr(long fd, long name_ptr)
+{
+    bfree_guest_ofd_t *ofd = 0;
+    bfree_guest_vfile_t *vf;
+    char name[32];
+    size_t n;
+
+    fd = bfree_guest_fd_resolve((int)fd);
+    vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
+    (void)ofd;
+    if (!vf || vf->is_dir || vf->is_symlink) {
+        return -95;
+    }
+    if (name_ptr == 0 || !bfree_user_ptr_mapped(name_ptr)) {
+        return -14;
+    }
+    for (n = 0; n + 1U < sizeof(name); ++n) {
+        char c = ((const char *)(uintptr_t)name_ptr)[n];
+        name[n] = c;
+        if (c == '\0') {
+            break;
+        }
+    }
+    name[n] = '\0';
+    if (vf->xattr_name[0] == '\0' || strcmp(vf->xattr_name, name) != 0) {
+        return -BFREE_ENODATA;
+    }
+    vf->xattr_name[0] = '\0';
+    vf->xattr_len = 0;
+    return 0;
 }
 
 
@@ -13083,8 +19012,71 @@ static long sys_linux_sigaltstack(long uss, long uoss)
 
 #ifndef BFREE_RESTORE_SOFT_STUBS
 #define BFREE_RESTORE_SOFT_STUBS 1
-static long sys_linux_fchown(long fd, long uid, long gid) { (void)fd;(void)uid;(void)gid; return 0; }
-static long sys_linux_chown(long dirfd, long path, long uid, long gid) { (void)dirfd;(void)path;(void)uid;(void)gid; return 0; }
+static long sys_linux_fchown(long fd, long uid, long gid)
+{
+    bfree_guest_vfile_t *vf;
+    bfree_guest_ofd_t *ofd;
+
+    fd = bfree_guest_fd_resolve((int)fd);
+    vf = bfree_guest_vfile_from_open_fd((int)fd, &ofd);
+    (void)ofd;
+    if (!vf) {
+        return 0; /* non-vfile: soft success */
+    }
+    if (uid != -1) {
+        vf->uid = (uint32_t)uid;
+    }
+    if (gid != -1) {
+        vf->gid = (uint32_t)gid;
+    }
+    return 0;
+}
+static long sys_linux_chown(long dirfd, long path_ptr, long uid, long gid)
+{
+    char path[192];
+    char vname[64];
+    bfree_guest_vfile_t *vf;
+    long path_err;
+
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    path_err = bfree_guest_path_at(dirfd, path, sizeof(path));
+    if (path_err != 0) {
+        return path_err;
+    }
+    if (strncmp(path, "/dev/shm/", 9) == 0 && path[9] != '\0') {
+        char alt[192];
+        size_t i;
+
+        alt[0] = '/'; alt[1] = 't'; alt[2] = 'm'; alt[3] = 'p';
+        alt[4] = '/'; alt[5] = 's'; alt[6] = 'h'; alt[7] = 'm';
+        alt[8] = '/';
+        for (i = 0; path[9 + i] != '\0' && i + 10U < sizeof(alt); ++i) {
+            alt[9 + i] = path[9 + i];
+        }
+        alt[9 + i] = '\0';
+        for (i = 0; alt[i] != '\0' && i + 1U < sizeof(path); ++i) {
+            path[i] = alt[i];
+        }
+        path[i] = '\0';
+    }
+    if (!bfree_guest_path_is_under_tmp(path, vname, sizeof(vname)) ||
+        vname[0] == '\0') {
+        return 0; /* outside /tmp: soft success */
+    }
+    vf = bfree_guest_vfile_find_by_name(vname);
+    if (!vf) {
+        return -2; /* ENOENT */
+    }
+    if (uid != -1) {
+        vf->uid = (uint32_t)uid;
+    }
+    if (gid != -1) {
+        vf->gid = (uint32_t)gid;
+    }
+    return 0;
+}
 /* sys_linux_flock: real impl below */
 static long sys_linux_flock(long fd, long op);
 static long sys_linux_fsync(long fd) { (void)fd; return 0; }
@@ -13105,6 +19097,665 @@ static long sys_linux_clock_getres_linux(long clk, long tp) { (void)clk;(void)tp
 /* bfree_pty_slot_from_fd: real impl above */
 static unsigned initrd_presence_mask(void) { return 0; }
 #endif
+
+/* === Practical ABI holes (B2.26): thin fills for musl/BusyBox/Desktop === */
+
+static long sys_linux_pause(void)
+{
+    for (;;) {
+        if ((g_guest_sig_pending & ~g_guest_sig_mask) != 0ULL) {
+            return -4; /* EINTR — delivery via bfree_guest_sig_try_deliver */
+        }
+        __asm__ volatile("sti; hlt" ::: "memory");
+    }
+}
+
+static long sys_linux_time(long tloc)
+{
+    uint64_t us = knl_get_current_time();
+    long sec = (long)(us / 1000000ULL);
+
+    if (tloc != 0) {
+        if (!bfree_user_vaddr_mapped((uint64_t)(uintptr_t)tloc)) {
+            return -14;
+        }
+        *(long *)(uintptr_t)tloc = sec;
+    }
+    return sec;
+}
+
+static long sys_linux_setreuid(long ruid, long euid)
+{
+    if (ruid != -1) {
+        g_guest_uid = (uint32_t)ruid;
+    }
+    if (euid != -1) {
+        g_guest_euid = (uint32_t)euid;
+    }
+    return 0;
+}
+
+static long sys_linux_setregid(long rgid, long egid)
+{
+    if (rgid != -1) {
+        g_guest_gid = (uint32_t)rgid;
+    }
+    if (egid != -1) {
+        g_guest_egid = (uint32_t)egid;
+    }
+    return 0;
+}
+
+static long sys_linux_setresuid(long ruid, long euid, long suid)
+{
+    (void)suid;
+    return sys_linux_setreuid(ruid, euid);
+}
+
+static long sys_linux_setresgid(long rgid, long egid, long sgid)
+{
+    (void)sgid;
+    return sys_linux_setregid(rgid, egid);
+}
+
+static long sys_linux_getresuid(long ruid, long euid, long suid)
+{
+    if (ruid != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)ruid)) {
+        *(uint32_t *)(uintptr_t)ruid = g_guest_uid;
+    } else if (ruid != 0) {
+        return -14;
+    }
+    if (euid != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)euid)) {
+        *(uint32_t *)(uintptr_t)euid = g_guest_euid;
+    } else if (euid != 0) {
+        return -14;
+    }
+    if (suid != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)suid)) {
+        *(uint32_t *)(uintptr_t)suid = g_guest_uid;
+    } else if (suid != 0) {
+        return -14;
+    }
+    return 0;
+}
+
+static long sys_linux_getresgid(long rgid, long egid, long sgid)
+{
+    if (rgid != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)rgid)) {
+        *(uint32_t *)(uintptr_t)rgid = g_guest_gid;
+    } else if (rgid != 0) {
+        return -14;
+    }
+    if (egid != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)egid)) {
+        *(uint32_t *)(uintptr_t)egid = g_guest_egid;
+    } else if (egid != 0) {
+        return -14;
+    }
+    if (sgid != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)sgid)) {
+        *(uint32_t *)(uintptr_t)sgid = g_guest_gid;
+    } else if (sgid != 0) {
+        return -14;
+    }
+    return 0;
+}
+
+static long sys_linux_rt_sigpending_real(long set, long sigsetsize)
+{
+    if (sigsetsize < (long)sizeof(uint64_t)) {
+        return -22;
+    }
+    if (set == 0 || !bfree_user_vaddr_mapped((uint64_t)(uintptr_t)set)) {
+        return -14;
+    }
+    *(uint64_t *)(uintptr_t)set = g_guest_sig_pending;
+    return 0;
+}
+
+static long sys_linux_rt_sigtimedwait(long uset, long uinfo, long uts, long sigsetsize)
+{
+    uint64_t want;
+    int spins;
+
+    if (sigsetsize < (long)sizeof(uint64_t)) {
+        return -22;
+    }
+    if (uset == 0 || !bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uset)) {
+        return -14;
+    }
+    want = *(const uint64_t *)(uintptr_t)uset;
+
+    for (spins = 0; spins < 100000; ++spins) {
+        uint64_t hit = g_guest_sig_pending & want;
+        int sig;
+
+        if (hit != 0ULL) {
+            for (sig = 1; sig < BFREE_NSIG; ++sig) {
+                uint64_t bit = 1ULL << (unsigned)(sig - 1);
+                if ((hit & bit) != 0ULL) {
+                    g_guest_sig_pending &= ~bit;
+                    if (uinfo != 0 &&
+                        bfree_user_range_mapped((uint64_t)(uintptr_t)uinfo, 32)) {
+                        int *si = (int *)(uintptr_t)uinfo;
+                        si[0] = sig; /* si_signo */
+                        si[1] = 0;   /* si_errno */
+                        si[2] = 0;   /* si_code */
+                    }
+                    return (long)sig;
+                }
+            }
+        }
+        if (uts != 0) {
+            typedef struct {
+                long tv_sec;
+                long tv_nsec;
+            } bfree_ts_t;
+            bfree_ts_t ts;
+
+            if (!bfree_user_range_mapped((uint64_t)(uintptr_t)uts, sizeof(ts))) {
+                return -14;
+            }
+            ts = *(const bfree_ts_t *)(uintptr_t)uts;
+            if (ts.tv_sec == 0 && ts.tv_nsec == 0) {
+                return -11; /* EAGAIN */
+            }
+            (void)sys_linux_nanosleep(uts, 0);
+            /* One more pending check after sleep, then timeout. */
+            hit = g_guest_sig_pending & want;
+            if (hit != 0ULL) {
+                continue;
+            }
+            return -110; /* ETIMEDOUT */
+        }
+        __asm__ volatile("sti; hlt" ::: "memory");
+    }
+    return -4; /* EINTR fallback */
+}
+
+static long sys_linux_rt_sigqueueinfo(long pid, long sig, long uinfo)
+{
+    (void)uinfo;
+    return sys_linux_kill(pid, sig);
+}
+
+static long sys_linux_tgkill(long tgid, long tid, long sig)
+{
+    (void)tid;
+    return sys_linux_kill(tgid, sig);
+}
+
+static long sys_linux_tkill(long tid, long sig)
+{
+    return sys_linux_kill(tid, sig);
+}
+
+static long sys_linux_rt_tgsigqueueinfo(long tgid, long tid, long sig, long uinfo)
+{
+    (void)tid;
+    (void)uinfo;
+    return sys_linux_kill(tgid, sig);
+}
+
+static long sys_linux_getdents(long fd, long dirp, long count)
+{
+    long r;
+
+    g_getdents_legacy = 1;
+    r = sys_linux_getdents64(fd, dirp, count);
+    g_getdents_legacy = 0;
+    return r;
+}
+
+static long sys_linux_creat(long path_ptr, long mode)
+{
+    long fd = sys_linux_openat(
+        BFREE_LINUX_AT_FDCWD, path_ptr,
+        (long)(BFREE_LINUX_O_CREAT | 1 /* O_WRONLY */ | BFREE_LINUX_O_TRUNC),
+        mode);
+    return fd;
+}
+
+static long sys_linux_mknodat(long dirfd, long path_ptr, long mode, long dev)
+{
+    unsigned type = (unsigned)mode & 0170000U;
+
+    (void)dev;
+    if (type == 0U || type == 0100000U) { /* REG */
+        long fd = sys_linux_openat(
+            dirfd, path_ptr,
+            (long)(BFREE_LINUX_O_CREAT | 1 | BFREE_LINUX_O_TRUNC), mode);
+        if (fd < 0) {
+            return fd;
+        }
+        (void)sys_linux_close(fd);
+        return 0;
+    }
+    if (type == 0040000U) { /* DIR */
+        return sys_linux_mkdir(dirfd, path_ptr, mode);
+    }
+    if (type == 0010000U) { /* FIFO */
+        long fd;
+        bfree_guest_vfile_t *vf;
+        bfree_guest_ofd_t *ofd;
+
+        fd = sys_linux_openat(
+            dirfd, path_ptr,
+            (long)(BFREE_LINUX_O_CREAT | 1 | BFREE_LINUX_O_TRUNC), mode);
+        if (fd < 0) {
+            return fd;
+        }
+        vf = bfree_guest_vfile_from_open_fd(
+            bfree_guest_fd_resolve((int)fd), &ofd);
+        (void)ofd;
+        if (vf) {
+            vf->mode = BFREE_LINUX_S_IFIFO | ((uint32_t)mode & 0777U);
+        }
+        (void)sys_linux_close(fd);
+        return 0;
+    }
+    return -22;
+}
+
+/* fallocate() mode bits */
+#define BFREE_FALLOC_FL_KEEP_SIZE  0x01
+#define BFREE_FALLOC_FL_PUNCH_HOLE 0x02
+#define BFREE_FALLOC_FL_ZERO_RANGE 0x10
+
+static long sys_linux_fallocate(long fd, long mode, long offset, long len)
+{
+    bfree_guest_vfile_t *vf;
+    bfree_guest_ofd_t *ofd = 0;
+    int resolved;
+
+    if (offset < 0 || len < 0) {
+        return -22;
+    }
+    if ((mode & BFREE_FALLOC_FL_ZERO_RANGE) != 0) {
+        size_t start;
+        size_t end;
+        size_t i;
+
+        if ((mode & ~(long)(BFREE_FALLOC_FL_KEEP_SIZE |
+                            BFREE_FALLOC_FL_ZERO_RANGE)) != 0) {
+            return -95; /* EOPNOTSUPP */
+        }
+        resolved = bfree_guest_fd_resolve((int)fd);
+        if (resolved < 0) {
+            return -9;
+        }
+        vf = bfree_guest_vfile_from_open_fd(resolved, &ofd);
+        if (!vf) {
+            return -9;
+        }
+        if (vf->is_dir) {
+            return -21;
+        }
+        if ((vf->seals & (uint32_t)BFREE_F_SEAL_WRITE) != 0U) {
+            return -1;
+        }
+        if (len == 0) {
+            return 0;
+        }
+        start = (size_t)offset;
+        if (start >= vf->len) {
+            return 0;
+        }
+        end = start + (size_t)len;
+        if (end > vf->len) {
+            end = vf->len;
+        }
+        for (i = start; i < end; ++i) {
+            vf->data[i] = 0;
+        }
+        bfree_persist_maybe_flush(vf);
+        return 0;
+    }
+    if ((mode & BFREE_FALLOC_FL_PUNCH_HOLE) != 0) {
+        size_t start;
+        size_t end;
+        size_t i;
+
+        /* Linux requires PUNCH_HOLE to be paired with KEEP_SIZE. */
+        if ((mode & BFREE_FALLOC_FL_KEEP_SIZE) == 0) {
+            return -22;
+        }
+        if ((mode & ~(long)(BFREE_FALLOC_FL_KEEP_SIZE |
+                            BFREE_FALLOC_FL_PUNCH_HOLE)) != 0) {
+            return -95; /* EOPNOTSUPP */
+        }
+        resolved = bfree_guest_fd_resolve((int)fd);
+        if (resolved < 0) {
+            return -9;
+        }
+        vf = bfree_guest_vfile_from_open_fd(resolved, &ofd);
+        if (!vf) {
+            return -9; /* EBADF: no backing vfile to punch */
+        }
+        if (vf->is_dir) {
+            return -21;
+        }
+        if ((vf->seals & (uint32_t)BFREE_F_SEAL_WRITE) != 0U) {
+            return -1; /* EPERM */
+        }
+        if (len == 0) {
+            return 0;
+        }
+        start = (size_t)offset;
+        if (start >= vf->len) {
+            return 0; /* hole entirely past EOF: nothing to zero */
+        }
+        end = start + (size_t)len;
+        if (end > vf->len) {
+            end = vf->len;
+        }
+        for (i = start; i < end; ++i) {
+            vf->data[i] = 0;
+        }
+        bfree_persist_maybe_flush(vf);
+        return 0;
+    }
+    if ((mode & ~(long)BFREE_FALLOC_FL_KEEP_SIZE) != 0) {
+        return -95; /* EOPNOTSUPP */
+    }
+    if ((mode & BFREE_FALLOC_FL_KEEP_SIZE) != 0) {
+        /* Reserve space without moving EOF: nothing to do on a RAM store. */
+        resolved = bfree_guest_fd_resolve((int)fd);
+        if (resolved < 0) {
+            return -9;
+        }
+        if (offset + len > (long)BFREE_GUEST_VFILE_SIZE) {
+            return -28; /* ENOSPC */
+        }
+        return 0;
+    }
+    /* Extend to offset+len (best-effort). */
+    return sys_linux_ftruncate(fd, offset + len);
+}
+
+static long sys_linux_sync_file_range(long fd, long offset, long nbytes, long flags)
+{
+    int resolved;
+    /* SYNC_FILE_RANGE_* : WAIT_BEFORE=1, WRITE=2, WAIT_AFTER=4 */
+    if (offset < 0 || nbytes < 0) {
+        return -22;
+    }
+    if ((flags & ~7L) != 0) {
+        return -22;
+    }
+    resolved = bfree_guest_fd_resolve((int)fd);
+    if (resolved < 0) {
+        return -9;
+    }
+    (void)resolved;
+    return sys_linux_fsync(fd);
+}
+
+/* Linux 221: fadvise64(fd, offset, len, advice) — posix_fadvise. */
+static long sys_linux_fadvise64(long fd, long offset, long len, long advice)
+{
+    int resolved;
+
+    if (offset < 0 || len < 0) {
+        return -22;
+    }
+    if (advice < 0 || advice > 5) { /* POSIX_FADV_NORMAL..NOREUSE */
+        return -22;
+    }
+    resolved = bfree_guest_fd_resolve((int)fd);
+    if (resolved < 0) {
+        return -9;
+    }
+    (void)resolved;
+    return 0;
+}
+
+static long sys_linux_sendfile(long out_fd, long in_fd, long offset_ptr, long count)
+{
+    bfree_guest_ofd_t *in_ofd = 0;
+    bfree_guest_ofd_t *out_ofd = 0;
+    bfree_guest_vfile_t *in_vf;
+    bfree_guest_vfile_t *out_vf;
+    size_t off = 0;
+    size_t n;
+    size_t i;
+    size_t *opos;
+
+    if (count < 0) {
+        return -22;
+    }
+    if (count == 0) {
+        return 0;
+    }
+    in_fd = bfree_guest_fd_resolve((int)in_fd);
+    out_fd = bfree_guest_fd_resolve((int)out_fd);
+    in_vf = bfree_guest_vfile_from_open_fd((int)in_fd, &in_ofd);
+    if (!in_vf || in_vf->is_dir) {
+        return -22;
+    }
+    if (offset_ptr != 0) {
+        if (!bfree_user_vaddr_mapped((uint64_t)(uintptr_t)offset_ptr)) {
+            return -14;
+        }
+        off = (size_t)*(long *)(uintptr_t)offset_ptr;
+    } else if (in_ofd) {
+        off = in_ofd->pos;
+    }
+    if (off >= in_vf->len) {
+        return 0;
+    }
+    n = in_vf->len - off;
+    if (n > (size_t)count) {
+        n = (size_t)count;
+    }
+    out_vf = bfree_guest_vfile_from_open_fd((int)out_fd, &out_ofd);
+    if (out_vf && !out_vf->is_dir && !out_vf->is_symlink) {
+        opos = out_ofd ? &out_ofd->pos : &out_vf->pos;
+        if (*opos > out_vf->len) {
+            *opos = out_vf->len;
+        }
+        if (*opos >= BFREE_GUEST_VFILE_SIZE) {
+            return -28;
+        }
+        if (n > BFREE_GUEST_VFILE_SIZE - *opos) {
+            n = BFREE_GUEST_VFILE_SIZE - *opos;
+        }
+        for (i = 0; i < n; ++i) {
+            out_vf->data[*opos + i] = in_vf->data[off + i];
+        }
+        *opos += n;
+        if (*opos > out_vf->len) {
+            out_vf->len = *opos;
+        }
+    } else if (out_fd == 1 || out_fd == 2 ||
+               out_fd == (long)BFREE_GUEST_DEV_TTY_FD) {
+        bfree_guest_console_write(in_vf->data + off, n);
+    } else if (bfree_guest_is_pipe_wr((int)out_fd)) {
+        bfree_guest_pipe_slot_t *ps = bfree_guest_pipe_slot_from_fd((int)out_fd);
+        size_t room;
+
+        if (!ps) {
+            return -9;
+        }
+        room = sizeof(ps->buf) - ps->len;
+        if (n > room) {
+            n = room;
+        }
+        if (n == 0) {
+            return -11;
+        }
+        for (i = 0; i < n; ++i) {
+            ps->buf[ps->len + i] = in_vf->data[off + i];
+        }
+        ps->len += n;
+    } else {
+        return -22;
+    }
+    if (offset_ptr != 0) {
+        *(long *)(uintptr_t)offset_ptr = (long)(off + n);
+    } else if (in_ofd) {
+        in_ofd->pos = off + n;
+    }
+    return (long)n;
+}
+
+/* Linux 326: copy_file_range(fd_in, off_in, fd_out, off_out, len, flags). */
+static long sys_linux_copy_file_range(long fd_in, long off_in_ptr, long fd_out,
+                                      long off_out_ptr, long len, long flags)
+{
+    bfree_guest_ofd_t *in_ofd = 0;
+    bfree_guest_ofd_t *out_ofd = 0;
+    bfree_guest_vfile_t *in_vf;
+    bfree_guest_vfile_t *out_vf;
+    size_t in_off = 0;
+    size_t out_off = 0;
+    size_t n;
+    size_t i;
+
+    (void)flags;
+    if (len < 0) {
+        return -22;
+    }
+    if (len == 0) {
+        return 0;
+    }
+    fd_in = bfree_guest_fd_resolve((int)fd_in);
+    fd_out = bfree_guest_fd_resolve((int)fd_out);
+    in_vf = bfree_guest_vfile_from_open_fd((int)fd_in, &in_ofd);
+    out_vf = bfree_guest_vfile_from_open_fd((int)fd_out, &out_ofd);
+    if (!in_vf || in_vf->is_dir || in_vf->is_symlink ||
+        !out_vf || out_vf->is_dir || out_vf->is_symlink) {
+        return -22;
+    }
+    if (off_in_ptr != 0) {
+        if (!bfree_user_vaddr_mapped((uint64_t)(uintptr_t)off_in_ptr)) {
+            return -14;
+        }
+        if (*(long *)(uintptr_t)off_in_ptr < 0) {
+            return -22;
+        }
+        in_off = (size_t)*(long *)(uintptr_t)off_in_ptr;
+    } else if (in_ofd) {
+        in_off = in_ofd->pos;
+    }
+    if (off_out_ptr != 0) {
+        if (!bfree_user_vaddr_mapped((uint64_t)(uintptr_t)off_out_ptr)) {
+            return -14;
+        }
+        if (*(long *)(uintptr_t)off_out_ptr < 0) {
+            return -22;
+        }
+        out_off = (size_t)*(long *)(uintptr_t)off_out_ptr;
+    } else if (out_ofd) {
+        out_off = out_ofd->pos;
+    }
+    if (in_off >= in_vf->len) {
+        return 0;
+    }
+    n = in_vf->len - in_off;
+    if (n > (size_t)len) {
+        n = (size_t)len;
+    }
+    if (out_off >= BFREE_GUEST_VFILE_SIZE) {
+        return -28;
+    }
+    if (n > BFREE_GUEST_VFILE_SIZE - out_off) {
+        n = BFREE_GUEST_VFILE_SIZE - out_off;
+    }
+    for (i = 0; i < n; ++i) {
+        out_vf->data[out_off + i] = in_vf->data[in_off + i];
+    }
+    if (out_off + n > out_vf->len) {
+        out_vf->len = out_off + n;
+    }
+    if (off_in_ptr != 0) {
+        *(long *)(uintptr_t)off_in_ptr = (long)(in_off + n);
+    } else if (in_ofd) {
+        in_ofd->pos = in_off + n;
+    }
+    if (off_out_ptr != 0) {
+        *(long *)(uintptr_t)off_out_ptr = (long)(out_off + n);
+    } else if (out_ofd) {
+        out_ofd->pos = out_off + n;
+    }
+    return (long)n;
+}
+
+static long sys_linux_accept4(long sockfd, long addr, long addrlen, long flags)
+{
+    long fd = sys_linux_accept(sockfd, addr, addrlen);
+    int resolved;
+    int iidx;
+    int uidx;
+
+    if (fd < 0) {
+        return fd;
+    }
+    if ((flags & (long)BFREE_LINUX_O_CLOEXEC) != 0 &&
+        fd >= 0 && fd < BFREE_GUEST_FD_TABLE_SIZE) {
+        g_guest_fd_cloexec[fd] = 1;
+    }
+    if ((flags & (long)BFREE_LINUX_O_NONBLOCK) != 0) {
+        resolved = bfree_guest_fd_resolve((int)fd);
+        iidx = bfree_inet_from_fd(resolved);
+        uidx = bfree_unix_from_fd(resolved);
+        if (iidx >= 0) {
+            g_inet_socks[iidx].nonblock = 1;
+        }
+        if (uidx >= 0) {
+            g_unix_socks[uidx].nonblock = 1;
+        }
+        (void)sys_linux_fcntl(fd, 4 /* F_SETFL */, BFREE_LINUX_O_NONBLOCK);
+    }
+    return fd;
+}
+
+static long sys_linux_execveat(long dirfd, long path_ptr, long argv, long envp, long flags)
+{
+    char path[256];
+    size_t i;
+    bfree_linux_stat_t st;
+
+#ifndef BFREE_AT_EMPTY_PATH
+#define BFREE_AT_EMPTY_PATH 0x1000L
+#endif
+
+    /* AT_EMPTY_PATH: empty pathname operates on dirfd (prove resolution). */
+    if ((flags & BFREE_AT_EMPTY_PATH) != 0L) {
+        if (path_ptr == 0) {
+            path[0] = '\0';
+        } else if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+            return -14;
+        }
+        if (path[0] == '\0') {
+            if (sys_linux_fstat(dirfd, (long)(uintptr_t)&st) != 0) {
+                return -9; /* EBADF */
+            }
+            if ((st.st_mode & BFREE_LINUX_S_IFDIR) == BFREE_LINUX_S_IFDIR) {
+                return -21; /* EISDIR */
+            }
+            /* Regular/other file: not a valid ELF image — ENOEXEC proves path. */
+            (void)argv;
+            (void)envp;
+            return -8; /* ENOEXEC */
+        }
+    }
+
+    if (path_ptr == 0) {
+        return -14;
+    }
+    if (copy_user_cstr(path_ptr, path, sizeof(path)) != 0) {
+        return -14;
+    }
+    if (path[0] != '/') {
+        long er = bfree_guest_path_at(dirfd, path, sizeof(path));
+        if (er != 0) {
+            return er;
+        }
+        for (i = 0; i + 1U < sizeof(g_execve_kpath_override) && path[i] != '\0'; ++i) {
+            g_execve_kpath_override[i] = path[i];
+        }
+        g_execve_kpath_override[i] = '\0';
+    }
+    return sys_linux_execve(path_ptr, argv, envp);
+}
 
 static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, long arg3, long arg4, long arg5)
 {
@@ -13133,8 +19784,23 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_pread64(arg1, arg2, arg3, arg4);
     case 18: /* pwrite64 */
         return sys_linux_pwrite64(arg1, arg2, arg3, arg4);
+    case 295: /* preadv */
+        return sys_linux_preadv2(arg1, arg2, arg3, arg4, 0);
+    case 296: /* pwritev */
+        return sys_linux_pwritev2(arg1, arg2, arg3, arg4, 0);
+    case 327: /* preadv2 — flags in R8 (arg5) */
+        return sys_linux_preadv2(arg1, arg2, arg3, arg4, arg5);
+    case 328: /* pwritev2 — flags in R8 (arg5) */
+        return sys_linux_pwritev2(arg1, arg2, arg3, arg4, arg5);
     case 23: /* select */
         return sys_linux_select(arg1, arg2, arg3, arg4, arg5);
+    case 34: /* pause */
+        return sys_linux_pause();
+    case 40: /* sendfile */
+        return sys_linux_sendfile(arg1, arg2, arg3, arg4);
+    case 326: /* copy_file_range — flags in R9 (arg6) */
+        return sys_linux_copy_file_range(arg1, arg2, arg3, arg4, arg5,
+                                         (long)g_bfree_user_syscall_r9);
     case 270: /* pselect6 */
         return sys_linux_pselect6(arg1, arg2, arg3, arg4, arg5, 0);
     case 36: /* getitimer */
@@ -13149,6 +19815,12 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_connect(arg1, arg2, arg3);
     case 43: /* accept */
         return sys_linux_accept(arg1, arg2, arg3);
+    case 288: /* accept4 */
+        return sys_linux_accept4(arg1, arg2, arg3, arg4);
+    case 289: /* signalfd4 */
+        return sys_linux_signalfd4(arg1, arg2, arg3, arg4);
+    case 282: /* signalfd (legacy) */
+        return sys_linux_signalfd4(-1, arg2, arg3, 0);
     case 44: /* sendto */
         return sys_linux_sendto(arg1, arg2, arg3, arg4, arg5, 0);
     case 45: /* recvfrom */
@@ -13157,6 +19829,10 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_sendmsg(arg1, arg2, arg3);
     case 47: /* recvmsg — single-iovec path via recvfrom */
         return sys_linux_recvmsg(arg1, arg2, arg3);
+    case 307: /* sendmmsg */
+        return sys_linux_sendmmsg(arg1, arg2, arg3, arg4);
+    case 299: /* recvmmsg */
+        return sys_linux_recvmmsg(arg1, arg2, arg3, arg4, arg5);
     case 49: /* bind */
         return sys_linux_bind(arg1, arg2, arg3);
     case 50: /* listen */
@@ -13168,6 +19844,19 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
     case 75: /* fdatasync */
         return sys_linux_fsync(arg1);
     case 162: /* sync */
+        return 0;
+    case 306: /* syncfs */
+        return 0;
+    case 149: /* mlock */
+    case 150: /* munlock */
+    case 151: /* mlockall */
+    case 152: /* munlockall */
+        return 0;
+    case 125: /* capget */
+        return sys_linux_capget(arg1, arg2);
+    case 126: /* capset */
+        return sys_linux_capset(arg1, arg2);
+    case 272: /* unshare */
         return 0;
     case 105: /* setuid */
         return sys_linux_setuid(arg1);
@@ -13213,8 +19902,8 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_epoll_wait(arg1, arg2, arg3, arg4);
     case 233:
         return sys_linux_epoll_ctl(arg1, arg2, arg3, arg4);
-    case 281:
-        return sys_linux_epoll_wait(arg1, arg2, arg3, arg5);
+    case 281: /* epoll_pwait — timeout is arg4; arg5 is sigmask (ignored) */
+        return sys_linux_epoll_wait(arg1, arg2, arg3, arg4);
     case 53:
         return sys_linux_socketpair(arg1, arg2, arg3, arg4);
     case 48: /* shutdown — soft-0 (pipe-backed; no half-close track) */
@@ -13238,35 +19927,88 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         }
     case 286: /* timerfd_settime */
         {
+            /* Linux x86_64 itimerspec: 2× {i64 sec, i64 nsec}. */
+            typedef struct {
+                int64_t sec;
+                int64_t nsec;
+            } bfree_ts64_t;
+            typedef struct {
+                bfree_ts64_t it_interval;
+                bfree_ts64_t it_value;
+            } bfree_its64_t;
+            bfree_its64_t raw;
             struct itimerspec neu;
             struct itimerspec old;
             long rc;
+            size_t i;
+            const uint8_t *src;
+            uint8_t *dst;
 
-            if (arg3 == 0 || !bfree_user_ptr_mapped(arg3)) {
+            if (arg3 == 0 || !bfree_user_buf_mapped((uint64_t)(uintptr_t)arg3, sizeof(raw))) {
                 return -14;
             }
-            {
-                const uint8_t *src = (const uint8_t *)(uintptr_t)arg3;
-                uint8_t *dst = (uint8_t *)&neu;
-                size_t i;
-                for (i = 0; i < sizeof(neu); ++i) {
-                    dst[i] = src[i];
-                }
+            src = (const uint8_t *)(uintptr_t)arg3;
+            dst = (uint8_t *)&raw;
+            for (i = 0; i < sizeof(raw); ++i) {
+                dst[i] = src[i];
             }
+            /* musl layout is it_interval then it_value — match Linux. */
+            neu.it_interval.tv_sec = (time_t)raw.it_interval.sec;
+            neu.it_interval.tv_nsec = (long)raw.it_interval.nsec;
+            neu.it_value.tv_sec = (time_t)raw.it_value.sec;
+            neu.it_value.tv_nsec = (long)raw.it_value.nsec;
             rc = bfree_timerfd_schedule(bfree_find_timerfd((int)arg1), (int)arg2, &neu,
                                         arg4 != 0 ? &old : 0);
-            if (rc == 0 && arg4 != 0 && bfree_user_ptr_mapped(arg4)) {
-                const uint8_t *src = (const uint8_t *)&old;
-                uint8_t *dst = (uint8_t *)(uintptr_t)arg4;
-                size_t i;
-                for (i = 0; i < sizeof(old); ++i) {
+            if (rc < 0) {
+                return -22;
+            }
+            if (arg4 != 0 && bfree_user_ptr_mapped(arg4)) {
+                bfree_its64_t out;
+                out.it_interval.sec = (int64_t)old.it_interval.tv_sec;
+                out.it_interval.nsec = (int64_t)old.it_interval.tv_nsec;
+                out.it_value.sec = (int64_t)old.it_value.tv_sec;
+                out.it_value.nsec = (int64_t)old.it_value.tv_nsec;
+                src = (const uint8_t *)&out;
+                dst = (uint8_t *)(uintptr_t)arg4;
+                for (i = 0; i < sizeof(out); ++i) {
                     dst[i] = src[i];
                 }
             }
-            return rc < 0 ? -22 : rc;
+            return 0;
         }
     case 287: /* timerfd_gettime */
-        return sys_timerfd_gettime(arg1, arg2) < 0 ? -22 : 0;
+        {
+            typedef struct {
+                int64_t sec;
+                int64_t nsec;
+            } bfree_ts64_t;
+            typedef struct {
+                bfree_ts64_t it_interval;
+                bfree_ts64_t it_value;
+            } bfree_its64_t;
+            struct itimerspec cur;
+            bfree_its64_t out;
+            size_t i;
+            const uint8_t *src;
+            uint8_t *dst;
+
+            if (arg2 == 0 || !bfree_user_buf_mapped((uint64_t)(uintptr_t)arg2, sizeof(out))) {
+                return -14;
+            }
+            if (sys_timerfd_gettime(arg1, (long)(uintptr_t)&cur) < 0) {
+                return -22;
+            }
+            out.it_interval.sec = (int64_t)cur.it_interval.tv_sec;
+            out.it_interval.nsec = (int64_t)cur.it_interval.tv_nsec;
+            out.it_value.sec = (int64_t)cur.it_value.tv_sec;
+            out.it_value.nsec = (int64_t)cur.it_value.tv_nsec;
+            src = (const uint8_t *)&out;
+            dst = (uint8_t *)(uintptr_t)arg2;
+            for (i = 0; i < sizeof(out); ++i) {
+                dst[i] = src[i];
+            }
+            return 0;
+        }
     case 291:
         return sys_linux_epoll_create1(arg1);
     case 293:
@@ -13283,12 +20025,14 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_mprotect(arg1, arg2, arg3);
     case 25: /* mremap */
         return sys_linux_mremap(arg1, arg2, arg3, arg4, arg5);
-    case 26: /* msync — anonymous/vfile: soft success */
-        return 0;
+    case 26: /* msync — live MAP_SHARED write-through */
+        return sys_linux_msync(arg1, arg2, arg3);
     case 27: /* mincore */
         return sys_linux_mincore(arg1, arg2, arg3);
     case 28:
         return sys_linux_madvise(arg1, arg2, arg3);
+    case 221: /* fadvise64 */
+        return sys_linux_fadvise64(arg1, arg2, arg3, arg4);
     case 11:
         return sys_munmap(arg1, arg2);
     case 12:
@@ -13309,6 +20053,8 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_access(arg1, arg2);
     case 269: /* faccessat */
         return sys_linux_faccessat(arg1, arg2, arg3, arg4);
+    case 439: /* faccessat2 */
+        return sys_linux_faccessat(arg1, arg2, arg3, arg4);
     case 22:
         return sys_linux_pipe2(arg1, 0);
     case 32:
@@ -13328,10 +20074,20 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         }
         bfree_guest_sig_raise(17);
         return -4; /* EINTR */
-    case 230:
-        return sys_linux_nanosleep(arg3, arg4);
+    case 127: /* rt_sigpending */
+        return sys_linux_rt_sigpending_real(arg1, arg2);
+    case 128: /* rt_sigtimedwait */
+        return sys_linux_rt_sigtimedwait(arg1, arg2, arg3, arg4);
+    case 129: /* rt_sigqueueinfo */
+        return sys_linux_rt_sigqueueinfo(arg1, arg2, arg3);
+    case 230: /* clock_nanosleep */
+        return sys_linux_clock_nanosleep(arg1, arg2, arg3, arg4);
     case 60:
     case 231:
+        /* PR_SET_PDEATHSIG: the parent is going away, so tell the coop child. */
+        if (g_guest_pdeathsig > 0 && g_coop_side == 0 && g_guest_fork_active) {
+            bfree_guest_sig_raise(g_guest_pdeathsig);
+        }
         if (g_guest_thread_active) {
             long te = bfree_guest_thread_exit(arg1);
 
@@ -13341,7 +20097,13 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
             }
             /* Main thread tore down all guest threads — process exit below. */
         }
-        if (g_guest_fork_active) {
+        if (g_guest_fork_active || bfree_process_child_active()) {
+            /* Heal: execve_reset / nested paths may clear the flag while the
+             * private-AS child is still live (desktop Terminal→busybox). */
+            if (!g_guest_fork_active) {
+                g_guest_fork_active = 1;
+                uart_puts("[VFORK] exit heal fork_active for child_active\n");
+            }
             bfree_guest_fork_child_pipe_close_writers();
             return bfree_guest_exit_from_fork(arg1);
         }
@@ -13459,12 +20221,17 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_fchdir(arg1);
     case 83:
         return sys_linux_mkdir(BFREE_LINUX_AT_FDCWD, arg1, arg2);
+    case 85: /* creat */
+        return sys_linux_creat(arg1, arg2);
+    case 78: /* getdents (legacy) */
+        return sys_linux_getdents(arg1, arg2, arg3);
     case 82:
-        return sys_linux_rename(BFREE_LINUX_AT_FDCWD, arg1, BFREE_LINUX_AT_FDCWD, arg2);
+        return sys_linux_rename(BFREE_LINUX_AT_FDCWD, arg1, BFREE_LINUX_AT_FDCWD,
+                                arg2, 0);
     case 264: /* renameat */
-        return sys_linux_rename(arg1, arg2, arg3, arg4);
-    case 316: /* renameat2 */
-        return sys_linux_rename(arg1, arg2, arg3, arg4);
+        return sys_linux_rename(arg1, arg2, arg3, arg4, 0);
+    case 316: /* renameat2 — flags in arg5 (R8) */
+        return sys_linux_rename(arg1, arg2, arg3, arg4, arg5);
     case 87:
         return sys_linux_unlink(BFREE_LINUX_AT_FDCWD, arg1);
     case 263: /* unlinkat: AT_REMOVEDIR => rmdir */
@@ -13476,6 +20243,23 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_rmdir(BFREE_LINUX_AT_FDCWD, arg1);
     case 258: /* mkdirat */
         return sys_linux_mkdir(arg1, arg2, arg3);
+    case 259: /* mknodat */
+        return sys_linux_mknodat(arg1, arg2, arg3, arg4);
+    case 133: /* mknod — musl mkfifo() uses this, not mknodat */
+        return sys_linux_mknodat(BFREE_LINUX_AT_FDCWD, arg1, arg2, arg3);
+    case 261: /* futimesat — thin alias of utimensat */
+        return sys_linux_utimensat(arg1, arg2, arg3, 0);
+    case 277: /* sync_file_range */
+        return sys_linux_sync_file_range(arg1, arg2, arg3, arg4);
+    case 285: /* fallocate */
+        return sys_linux_fallocate(arg1, arg2, arg3, arg4);
+    case 275: /* splice — flags in R9 (arg6) */
+        return sys_linux_splice(arg1, arg2, arg3, arg4, arg5,
+                                (long)g_bfree_user_syscall_r9);
+    case 276: /* tee */
+        return sys_linux_tee(arg1, arg2, arg3, arg4);
+    case 278: /* vmsplice */
+        return sys_linux_vmsplice(arg1, arg2, arg3, arg4);
     case 86: /* link */
         return sys_linux_link(BFREE_LINUX_AT_FDCWD, arg1, BFREE_LINUX_AT_FDCWD, arg2);
     case 265: /* linkat */
@@ -13488,11 +20272,12 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_readlink(BFREE_LINUX_AT_FDCWD, arg1, arg2, arg3);
     case 267: /* readlinkat */
         return sys_linux_readlink(arg1, arg2, arg3, arg4);
-    case 90: /* chmod — /tmp vfiles have no mode bits; accept and ignore */
+    case 90: /* chmod */
+        return sys_linux_chmod(BFREE_LINUX_AT_FDCWD, arg1, arg2);
     case 91: /* fchmod */
-        return 0;
+        return sys_linux_fchmod(arg1, arg2);
     case 268: /* fchmodat */
-        return 0;
+        return sys_linux_chmod(arg1, arg2, arg3);
     case 92: /* chown */
         return sys_linux_chown(BFREE_LINUX_AT_FDCWD, arg1, arg2, arg3);
     case 93: /* fchown */
@@ -13550,12 +20335,27 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         (void)arg2;
         (void)arg3;
         return 0;
-    case 160: /* setrlimit — accept, store ignored (prlimit64 preferred by musl) */
-        (void)arg1;
-        if (arg2 != 0 && !bfree_user_ptr_mapped(arg2)) {
-            return -14;
+    case 160: /* setrlimit */
+        {
+            typedef struct {
+                uint64_t rlim_cur;
+                uint64_t rlim_max;
+            } bfree_rlimit64_t;
+            bfree_rlimit64_t neu;
+
+            if (arg2 == 0) {
+                return -14;
+            }
+            if (!bfree_user_ptr_mapped(arg2)) {
+                return -14;
+            }
+            neu = *(const bfree_rlimit64_t *)(uintptr_t)arg2;
+            if (neu.rlim_cur > neu.rlim_max) {
+                return -22;
+            }
+            bfree_rlimit_store(arg1, neu.rlim_cur, neu.rlim_max);
+            return 0;
         }
-        return 0;
     case 102:
         return sys_linux_getuid();
     case 104:
@@ -13564,20 +20364,48 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_geteuid();
     case 108:
         return sys_linux_getegid();
+    case 113: /* setreuid */
+        return sys_linux_setreuid(arg1, arg2);
+    case 114: /* setregid */
+        return sys_linux_setregid(arg1, arg2);
+    case 117: /* setresuid */
+        return sys_linux_setresuid(arg1, arg2, arg3);
+    case 118: /* getresuid (x86_64) */
+        return sys_linux_getresuid(arg1, arg2, arg3);
+    case 119: /* setresgid (x86_64) */
+        return sys_linux_setresgid(arg1, arg2, arg3);
+    case 120: /* getresgid */
+        return sys_linux_getresgid(arg1, arg2, arg3);
     case 115:
         return sys_linux_getgroups(arg1, arg2);
+    case 116: /* setgroups */
+        return sys_linux_setgroups(arg1, arg2);
     case 158:
         return sys_arch_prctl(arg1, arg2);
-    case 170:
-        return sys_linux_gethostname(arg1, arg2);
+    case 170: /* sethostname (was wrongly gethostname) */
+        return sys_linux_sethostname(arg1, arg2);
+    case 171: /* setdomainname */
+        return sys_linux_setdomainname(arg1, arg2);
     case 157:
         return sys_linux_prctl(arg1, arg2, arg3, arg4, arg5);
-    case 200:
+    case 200: /* tkill */
+        return sys_linux_tkill(arg1, arg2);
+    case 201: /* time */
+        return sys_linux_time(arg1);
+    case 234: /* tgkill */
+        return sys_linux_tgkill(arg1, arg2, arg3);
+    case 297: /* rt_tgsigqueueinfo */
+        return sys_linux_rt_tgsigqueueinfo(arg1, arg2, arg3, arg4);
+    case 273: /* set_robust_list */
+        return sys_linux_set_robust_list_real(arg1, arg2);
+    case 274: /* get_robust_list */
         return sys_linux_get_robust_list(arg1, arg2, arg3);
     case 202:
         return sys_futex(arg1, arg2, arg3, arg4, arg5, 0);
     case 204: /* sched_getaffinity — musl sysconf(_SC_NPROCESSORS_ONLN) */
         return sys_linux_sched_getaffinity(arg1, arg2, arg3);
+    case 203: /* sched_setaffinity */
+        return sys_linux_sched_setaffinity(arg1, arg2, arg3);
     case 218:
         return sys_set_tid_address(arg1);
     case 228:
@@ -13612,6 +20440,8 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_statx(arg1, arg2, arg3, arg4, arg5);
     case 280: /* utimensat */
         return sys_linux_utimensat(arg1, arg2, arg3, arg4);
+    case 235: /* utimes */
+        return sys_linux_utimes(arg1, arg2);
     case 56: /* clone — vfork-compatible flags only */
         return sys_linux_clone(arg1, arg2, arg3, arg4, arg5);
     case 57: /* fork — cooperative eager AS copy (H02) */
@@ -13620,6 +20450,206 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return bfree_guest_fork_enter(0);
     case 59: /* execve — vfork child into private AS when possible */
         return sys_linux_execve(arg1, arg2, arg3);
+    case 322: /* execveat */
+        return sys_linux_execveat(arg1, arg2, arg3, arg4, arg5);
+    case 165: /* mount */
+        return sys_linux_mount(arg1, arg2, arg3, arg4, arg5);
+    case 166: /* umount2 */
+        return sys_linux_umount2(arg1, arg2);
+    case 155: /* pivot_root */
+        return sys_linux_pivot_root(arg1, arg2);
+    case 161: /* chroot */
+        return sys_linux_chroot(arg1);
+    case 164: /* settimeofday */
+        return sys_linux_settimeofday(arg1, arg2);
+    case 29: /* shmget */
+        return sys_linux_shmget(arg1, arg2, arg3);
+    case 30: /* shmat */
+        return sys_linux_shmat(arg1, arg2, arg3);
+    case 31: /* shmctl */
+        return sys_linux_shmctl(arg1, arg2, arg3);
+    case 67: /* shmdt */
+        return sys_linux_shmdt(arg1);
+    case 64: /* semget */
+        return sys_linux_semget(arg1, arg2, arg3);
+    case 65: /* semop */
+        return sys_linux_semop(arg1, arg2, arg3);
+    case 66: /* semctl */
+        return sys_linux_semctl(arg1, arg2, arg3, arg4);
+    case 68: /* msgget */
+        return sys_linux_msgget(arg1, arg2);
+    case 69: /* msgsnd */
+        return sys_linux_msgsnd(arg1, arg2, arg3, arg4);
+    case 70: /* msgrcv */
+        return sys_linux_msgrcv(arg1, arg2, arg3, arg4, arg5);
+    case 71: /* msgctl */
+        return sys_linux_msgctl(arg1, arg2, arg3);
+    case 159: /* adjtimex */
+        return sys_linux_adjtimex(arg1);
+    case 179: /* quotactl */
+        return sys_linux_quotactl(arg1, arg2, arg3, arg4);
+    case 188: /* setxattr */
+    case 189: /* lsetxattr */
+        return sys_linux_setxattr(arg1, arg2, arg3, arg4, arg5);
+    case 191: /* getxattr */
+    case 192: /* lgetxattr */
+        return sys_linux_getxattr(arg1, arg2, arg3, arg4);
+    case 194: /* listxattr */
+    case 195: /* llistxattr */
+        return sys_linux_listxattr(arg1, arg2, arg3);
+    case 197: /* removexattr */
+    case 198: /* lremovexattr */
+        return sys_linux_removexattr(arg1, arg2);
+    case 248: /* add_key */
+        return sys_linux_add_key(arg1, arg2, arg3, arg4, arg5);
+    case 249: /* request_key */
+        return sys_linux_request_key(arg1, arg2, arg3, arg4);
+    case 250: /* keyctl */
+        return sys_linux_keyctl(arg1, arg2, arg3, arg4, arg5);
+    case 298: /* perf_event_open */
+        return sys_linux_perf_event_open(arg1, arg2, arg3, arg4, arg5);
+    case 305: /* clock_adjtime */
+        return sys_linux_clock_adjtime(arg1, arg2);
+    case 312: /* kcmp */
+        return sys_linux_kcmp(arg1, arg2, arg3, arg4, arg5);
+    case 314: /* sched_setattr */
+        return sys_linux_sched_setattr(arg1, arg2, arg3);
+    case 315: /* sched_getattr */
+        return sys_linux_sched_getattr(arg1, arg2, arg3, arg4);
+    case 329: /* pkey_mprotect */
+        return sys_linux_pkey_mprotect(arg1, arg2, arg3, arg4);
+    case 330: /* pkey_alloc */
+        return sys_linux_pkey_alloc(arg1, arg2);
+    case 331: /* pkey_free */
+        return sys_linux_pkey_free(arg1);
+    case 428: /* open_tree */
+        return sys_linux_open_tree(arg1, arg2, arg3);
+    case 429: /* move_mount */
+        return sys_linux_move_mount(arg1, arg2, arg3, arg4, arg5);
+    case 430: /* fsopen */
+        return sys_linux_fsopen(arg1, arg2);
+    case 431: /* fsconfig */
+        return sys_linux_fsconfig(arg1, arg2, arg3, arg4, arg5);
+    case 432: /* fsmount */
+        return sys_linux_fsmount(arg1, arg2, arg3);
+    case 433: /* fspick */
+        return sys_linux_fspick(arg1, arg2, arg3);
+    case 425: /* io_uring_setup */
+        return sys_linux_io_uring_setup(arg1, arg2);
+    case 426: /* io_uring_enter */
+        return sys_linux_io_uring_enter(arg1, arg2, arg3, arg4, arg5);
+    case 427: /* io_uring_register */
+        return sys_linux_io_uring_register(arg1, arg2, arg3, arg4);
+    case 442: /* mount_setattr */
+        return sys_linux_mount_setattr(arg1, arg2, arg3, arg4, arg5);
+    case 444: /* landlock_create_ruleset */
+        return sys_linux_landlock_create_ruleset(arg1, arg2, arg3);
+    case 445: /* landlock_add_rule */
+        return sys_linux_landlock_add_rule(arg1, arg2, arg3, arg4);
+    case 446: /* landlock_restrict_self */
+        return sys_linux_landlock_restrict_self(arg1, arg2);
+    case 101: /* ptrace */
+        return sys_linux_ptrace(arg1, arg2, arg3, arg4);
+    case 103: /* syslog */
+        return sys_linux_syslog(arg1, arg2, arg3);
+    case 135: /* personality */
+        return sys_linux_personality(arg1);
+    case 154: /* modify_ldt */
+        return sys_linux_modify_ldt(arg1, arg2, arg3);
+    case 163: /* acct */
+        return sys_linux_acct(arg1);
+    case 167: /* swapon */
+        return sys_linux_swapon(arg1, arg2);
+    case 168: /* swapoff */
+        return sys_linux_swapoff(arg1);
+    case 169: /* reboot */
+        return sys_linux_reboot(arg1, arg2, arg3, arg4);
+    case 175: /* init_module */
+        return sys_linux_init_module(arg1, arg2, arg3);
+    case 176: /* delete_module */
+        return sys_linux_delete_module(arg1, arg2);
+    case 313: /* finit_module */
+        return sys_linux_finit_module(arg1, arg2, arg3);
+    case 317: /* seccomp */
+        return sys_linux_seccomp(arg1, arg2, arg3);
+    case 321: /* bpf */
+        return sys_linux_bpf(arg1, arg2, arg3);
+    case 323: /* userfaultfd */
+        return sys_linux_userfaultfd(arg1);
+    case 440: /* process_madvise */
+        return sys_linux_process_madvise(arg1, arg2, arg3, arg4, arg5);
+    case 441: /* epoll_pwait2 */
+        return sys_linux_epoll_pwait2(arg1, arg2, arg3, arg4, arg5);
+    case 449: /* futex_waitv */
+        return sys_linux_futex_waitv(arg1, arg2, arg3, arg4, arg5);
+    case 451: /* cachestat */
+        return sys_linux_cachestat(arg1, arg2, arg3, arg4);
+    case 457: /* statmount */
+        return sys_linux_statmount(arg1, arg2, arg3, arg4);
+    case 458: /* listmount */
+        return sys_linux_listmount(arg1, arg2, arg3, arg4);
+    case 222: /* timer_create */
+        return sys_linux_timer_create(arg1, arg2, arg3);
+    case 223: /* timer_settime */
+        return sys_linux_timer_settime(arg1, arg2, arg3, arg4);
+    case 224: /* timer_gettime */
+        return sys_linux_timer_gettime(arg1, arg2);
+    case 226: /* timer_delete */
+        return sys_linux_timer_delete(arg1);
+    case 227: /* clock_settime */
+        return sys_linux_clock_settime(arg1, arg2);
+    case 251: /* ioprio_set */
+        return sys_linux_ioprio_set(arg1, arg2, arg3);
+    case 252: /* ioprio_get */
+        return sys_linux_ioprio_get(arg1, arg2);
+    case 300: /* fanotify_init */
+        return sys_linux_fanotify_init(arg1, arg2);
+    case 301: /* fanotify_mark */
+        return sys_linux_fanotify_mark(arg1, arg2, arg3, arg4, arg5);
+    case 303: /* name_to_handle_at */
+        return sys_linux_name_to_handle_at(arg1, arg2, arg3, arg4, arg5);
+    case 304: /* open_by_handle_at */
+        return sys_linux_open_by_handle_at(arg1, arg2, arg3);
+    case 308: /* setns */
+        return sys_linux_setns(arg1, arg2);
+    case 309: /* getcpu */
+        return sys_linux_getcpu(arg1, arg2, arg3);
+    case 310: /* process_vm_readv */
+        return sys_linux_process_vm_readv(arg1, arg2, arg3, arg4, arg5,
+                                          (long)g_bfree_user_syscall_r9);
+    case 311: /* process_vm_writev */
+        return sys_linux_process_vm_writev(arg1, arg2, arg3, arg4, arg5,
+                                           (long)g_bfree_user_syscall_r9);
+    case 435: /* clone3 */
+        return sys_linux_clone3(arg1, arg2);
+    case 447: /* memfd_secret */
+        return sys_linux_memfd_secret(arg1);
+    case 424: /* pidfd_send_signal */
+        return sys_linux_pidfd_send_signal(arg1, arg2, arg3, arg4);
+    case 434: /* pidfd_open */
+        return sys_linux_pidfd_open(arg1, arg2);
+    case 438: /* pidfd_getfd */
+        return sys_linux_pidfd_getfd(arg1, arg2, arg3);
+    case 253: /* inotify_init */
+        return sys_linux_inotify_init1(0);
+    case 294: /* inotify_init1 */
+        return sys_linux_inotify_init1(arg1);
+    case 254: /* inotify_add_watch */
+        return sys_linux_inotify_add_watch(arg1, arg2, arg3);
+    case 255: /* inotify_rm_watch */
+        return sys_linux_inotify_rm_watch(arg1, arg2);
+    case 190: /* fsetxattr */
+        return sys_linux_fsetxattr(arg1, arg2, arg3, arg4, arg5);
+    case 193: /* fgetxattr */
+        return sys_linux_fgetxattr(arg1, arg2, arg3, arg4);
+    case 196: /* flistxattr */
+        return sys_linux_flistxattr(arg1, arg2, arg3);
+    case 199: /* fremovexattr */
+        return sys_linux_fremovexattr(arg1, arg2);
+    case 436: /* close_range */
+        return sys_linux_close_range(arg1, arg2, arg3);
+    case 437: /* openat2 */
+        return sys_linux_openat2(arg1, arg2, arg3, arg4);
     default:
         return BFREE_LINUX_SYSCALL_UNHANDLED;
     }
@@ -13647,7 +20677,7 @@ static long bfree_dispatch_app_role_syscall(long num, long arg1, long arg2, long
         if (arg2 > 0 && arg2 <= 4096 && bfree_user_ptr_mapped(arg1)) {
             return sys_debug_serial_write(arg1, arg2);
         }
-        return 0; /* Linux sched_yield */
+        return bfree_gthr_yield(); /* Linux sched_yield */
     }
     /* Linux x86_64: 26=msync, 9=mmap. Do not steal 26 for legacy B-Free mmap. */
     if (num == 1001) {
@@ -13680,6 +20710,12 @@ static long bfree_dispatch_app_role_syscall(long num, long arg1, long arg2, long
 }
 
 long knl_syscall_handler(long num, long arg1, long arg2, long arg3, long arg4, long arg5) {
+    if (g_bfree_post_exec_syscalls > 0) {
+        uart_puts("[ELF] post-exec syscall nr=");
+        uart_puthex64((uint64_t)(unsigned long)num);
+        uart_puts("\n");
+        --g_bfree_post_exec_syscalls;
+    }
     if (bfree_security_get_role() == BFREE_ROLE_APP) {
         return bfree_dispatch_app_role_syscall(num, arg1, arg2, arg3, arg4, arg5);
     } else if (!bfree_syscall_allowed(num)) {
@@ -13817,7 +20853,13 @@ static void bfree_inet_sock_release(int resolved)
     g_inet_socks[iidx].connected = 0;
     g_inet_socks[iidx].bound = 0;
     g_inet_socks[iidx].accept_rd = -1;
+    g_inet_socks[iidx].accept_wr = -1;
     g_inet_socks[iidx].pipe_magic = -1;
+    g_inet_socks[iidx].so_error = 0;
+    g_inet_socks[iidx].is_v6 = 0;
+    bfree_sock_accept_q_reset(g_inet_socks[iidx].q_rd, g_inet_socks[iidx].q_wr,
+                              &g_inet_socks[iidx].q_len,
+                              &g_inet_socks[iidx].listen_backlog);
 }
 
 /* Count pipe-end refs across the live fd table and the inactive coop snap.
@@ -13877,6 +20919,8 @@ static void bfree_guest_pipe_reclaim_dead_slots(void)
         wr_refs = bfree_guest_pipe_count_magic(wr_magic);
         /* socketpair / connected AF_UNIX keep magics in sock structs, not the fd table. */
         for (u = 0; u < BFREE_UNIX_SLOTS; ++u) {
+            int q;
+
             if (!g_unix_socks[u].used) {
                 continue;
             }
@@ -13890,9 +20934,39 @@ static void bfree_guest_pipe_reclaim_dead_slots(void)
             } else if (g_unix_socks[u].accept_rd == rd_magic) {
                 ++rd_refs;
             }
+            /* Pending backlog entries hold both ends until accept(). */
+            for (q = 0; q < g_unix_socks[u].q_len; ++q) {
+                if (g_unix_socks[u].q_rd[q] == rd_magic) {
+                    ++rd_refs;
+                } else if (g_unix_socks[u].q_rd[q] == wr_magic) {
+                    ++wr_refs;
+                }
+                if (g_unix_socks[u].q_wr[q] == wr_magic) {
+                    ++wr_refs;
+                } else if (g_unix_socks[u].q_wr[q] == rd_magic) {
+                    ++rd_refs;
+                }
+            }
         }
         for (u = 0; u < BFREE_INET_SLOTS; ++u) {
-            if (!g_inet_socks[u].used || g_inet_socks[u].pipe_magic < 0) {
+            int q;
+
+            if (!g_inet_socks[u].used) {
+                continue;
+            }
+            for (q = 0; q < g_inet_socks[u].q_len; ++q) {
+                if (g_inet_socks[u].q_rd[q] == rd_magic) {
+                    ++rd_refs;
+                } else if (g_inet_socks[u].q_rd[q] == wr_magic) {
+                    ++wr_refs;
+                }
+                if (g_inet_socks[u].q_wr[q] == wr_magic) {
+                    ++wr_refs;
+                } else if (g_inet_socks[u].q_wr[q] == rd_magic) {
+                    ++rd_refs;
+                }
+            }
+            if (g_inet_socks[u].pipe_magic < 0) {
                 continue;
             }
             if (g_inet_socks[u].pipe_magic == wr_magic) {
