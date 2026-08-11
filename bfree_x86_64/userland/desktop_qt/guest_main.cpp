@@ -325,7 +325,7 @@ static int guest_desk_start_row0_y(void)
 
 /* Phase C: /persist listing via raw syscalls (avoid QDir — corrupts dispatcher). */
 enum { G_PERSIST_MAX = 24, G_PERSIST_NAME = 32, G_TERM_MAX = 40, G_TERM_COLS = 64,
-       G_TERM_LINE_MAX = 56 };
+       G_TERM_LINE_MAX = 120, G_TERM_CAPTURE_MAX = 1024 };
 static char g_persist_names[G_PERSIST_MAX][G_PERSIST_NAME];
 static int g_persist_nnames = 0;
 static char g_persist_preview[120];
@@ -647,29 +647,38 @@ static void guest_term_push_ls_persist(void)
 
 /* Forward — defined below. */
 static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1);
+static int guest_terminal_busybox_sh_c(const char *line);
 
-static int guest_term_is_busybox_alias(const char *cmd)
+static void guest_term_push_capture(const char *buf, long total)
 {
-    static const char *const aliases[] = {
-        "pwd", "mkdir", "rm", "cp", "mv", "touch", "ps", "free", "head", "tail",
-        "grep", "egrep", "fgrep", "wc", "true", "false", "sleep", "printf",
-        "whoami", "id", "env", "seq", "yes", "find", "sort", "tr", "cut", "ln",
-        "dirname", "basename", "md5sum", "stat", "uptime", "kill", "killall",
-        "nproc", "realpath", "dd", "uniq", "more", "test", "[", "which", "df",
-        "du", "date", "hostname", nullptr
-    };
-    for (int i = 0; aliases[i]; ++i) {
-        if (guest_term_cmd_eq(cmd, aliases[i]) || guest_term_streq(cmd, aliases[i]))
-            return 1;
+    int start = 0;
+    long i;
+
+    if (!buf || total <= 0)
+        return;
+    for (i = 0; i <= total; ++i) {
+        if (i == total || buf[i] == '\n' || buf[i] == '\r') {
+            if (i > start) {
+                char line[G_TERM_COLS];
+                int j = 0;
+                int k;
+                for (k = start; k < i && j + 1 < G_TERM_COLS; ++k)
+                    line[j++] = buf[k];
+                line[j] = '\0';
+                if (j > 0)
+                    guest_term_push(line);
+            }
+            if (i < total && buf[i] == '\r' && i + 1 < total && buf[i + 1] == '\n')
+                ++i;
+            start = (int)i + 1;
+        }
     }
-    return 0;
 }
 
 static void guest_term_exec_line(const char *raw)
 {
     char shown[G_TERM_COLS];
     char cmd[32];
-    char arg[80];
     const char *p = raw ? raw : "";
     int i = 0;
     int sp = 0;
@@ -691,14 +700,13 @@ static void guest_term_exec_line(const char *raw)
 
     if (guest_term_cmd_eq(cmd, "help") || guest_term_streq(cmd, "?")) {
         guest_term_push("--- builtins ---");
-        guest_term_push(" help echo ls cat uname clear");
-        guest_term_push(" survive  kill guest ABI (core lives)");
-        guest_term_push("--- busybox aliases ---");
-        guest_term_push(" pwd mkdir rm cp mv touch ps free");
-        guest_term_push(" head tail grep wc find sort kill");
-        guest_term_push(" whoami id env uptime df date");
-        guest_term_push(" busybox <applet> [arg...]");
-        guest_term_push("example: busybox ls /persist");
+        guest_term_push(" help echo ls clear survive");
+        guest_term_push("--- shell (busybox ash) ---");
+        guest_term_push(" any other line runs: sh -c \"...\"");
+        guest_term_push(" pipes/redirects OK: ls | wc");
+        guest_term_push(" vi awk sed tar grep find mount ping");
+        guest_term_push(" ps top df du chmod ln test");
+        guest_term_push("example: echo hello > /tmp/x");
         guest_serial_puts("[desktop_qt] Terminal help\n");
         return;
     }
@@ -712,10 +720,11 @@ static void guest_term_exec_line(const char *raw)
         guest_persist_scan_once();
         guest_term_push_ls_persist();
         if (*p) {
-            if (guest_term_take_word(&p, arg, (int)sizeof(arg)))
-                (void)guest_terminal_busybox_oneshot("ls", arg);
+            (void)guest_terminal_busybox_sh_c(raw);
+            guest_serial_puts("[desktop_qt] Terminal ls sh -c\n");
+        } else {
+            guest_serial_puts("[desktop_qt] Terminal ls\n");
         }
-        guest_serial_puts("[desktop_qt] Terminal ls\n");
         return;
     }
     if (guest_term_cmd_eq(cmd, "echo")) {
@@ -727,48 +736,6 @@ static void guest_term_exec_line(const char *raw)
         guest_serial_puts("[desktop_qt] Terminal echo\n");
         return;
     }
-    if (guest_term_cmd_eq(cmd, "uname")) {
-        if (!*p)
-            (void)guest_terminal_busybox_oneshot("uname", "-a");
-        else if (guest_term_take_word(&p, arg, (int)sizeof(arg)))
-            (void)guest_terminal_busybox_oneshot("uname", arg);
-        return;
-    }
-    if (guest_term_cmd_eq(cmd, "cat")) {
-        if (guest_term_take_word(&p, arg, (int)sizeof(arg))) {
-            /* Prefer /persist/name when bare filename. */
-            char path[96];
-            int pi = 0;
-            if (arg[0] != '/') {
-                static const char pref[] = "/persist/";
-                for (pi = 0; pref[pi] && pi + 1 < (int)sizeof(path); ++pi)
-                    path[pi] = pref[pi];
-                for (i = 0; arg[i] && pi + 1 < (int)sizeof(path); ++i)
-                    path[pi++] = arg[i];
-                path[pi] = '\0';
-                if (guest_terminal_busybox_oneshot("cat", path) != 0)
-                    guest_term_push("(cat failed)");
-            } else if (guest_terminal_busybox_oneshot("cat", arg) != 0) {
-                guest_term_push("(cat failed)");
-            }
-        } else {
-            guest_term_push("usage: cat <file>");
-            guest_term_push(" e.g. cat desk.txt");
-        }
-        return;
-    }
-    if (guest_term_cmd_eq(cmd, "busybox") || guest_term_cmd_eq(cmd, "bb")) {
-        char applet[32];
-        if (!guest_term_take_word(&p, applet, (int)sizeof(applet))) {
-            guest_term_push("usage: busybox <applet> [arg]");
-            return;
-        }
-        if (*p)
-            (void)guest_terminal_busybox_oneshot(applet, p);
-        else
-            (void)guest_terminal_busybox_oneshot(applet, nullptr);
-        return;
-    }
     if (guest_term_cmd_eq(cmd, "survive") || guest_term_cmd_eq(cmd, "die")) {
         guest_term_push("SURVIVE: killing guest ABI (core tick continues)");
         guest_serial_puts("[desktop_qt] SURVIVE demo: killing guest ABI (term)\n");
@@ -776,34 +743,9 @@ static void guest_term_exec_line(const char *raw)
         return;
     }
 
-    /* Pass through common BusyBox applets (oneshot; multi-arg as remainder). */
-    if (guest_term_is_busybox_alias(cmd)) {
-        if (*p) {
-            guest_term_skip_ws(&p);
-            (void)guest_terminal_busybox_oneshot(cmd, p);
-        } else {
-            (void)guest_terminal_busybox_oneshot(cmd, nullptr);
-        }
-        guest_serial_puts("[desktop_qt] Terminal busybox alias\n");
-        return;
-    }
-
-    /* Unknown built-in — do not silently run BusyBox (empty/confusing). */
-    {
-        char msg[G_TERM_COLS];
-        int m = 0;
-        static const char pref[] = "unknown: ";
-        static const char suf[] = "  (type help)";
-        for (i = 0; pref[i] && m + 1 < G_TERM_COLS; ++i)
-            msg[m++] = pref[i];
-        for (i = 0; cmd[i] && m + 1 < G_TERM_COLS; ++i)
-            msg[m++] = cmd[i];
-        for (i = 0; suf[i] && m + 1 < G_TERM_COLS; ++i)
-            msg[m++] = suf[i];
-        msg[m] = '\0';
-        guest_term_push(msg);
-        guest_serial_puts("[desktop_qt] Terminal unknown cmd\n");
-    }
+    /* Everything else: full BusyBox ash one-shot (pipes, redirects, all applets). */
+    (void)guest_terminal_busybox_sh_c(raw);
+    guest_serial_puts("[desktop_qt] Terminal sh -c\n");
 }
 
 /* FB Terminal → busybox.elf one-shot (vfork+exec).
@@ -811,39 +753,26 @@ static void guest_term_exec_line(const char *raw)
  * dup2's it; parent must not reopen+O_TRUNC after wait). Pipe capture fails
  * when Qt exhausts the 16 guest pipe slots. outfd/sav1 are static (vfork+-O2).
  * Exec heals stdin only so the stdout redirect survives private-AS transfer. */
-static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1)
+static int guest_terminal_busybox_run_argv(char *const *argv, const char *logtag)
 {
     static char bb_path[] = "/busybox.elf";
-    static char bb_applet[32];
-    static char bb_arg1[64];
-    static char *bb_argv[4];
-    static char outbuf[192];
+    static char outbuf[G_TERM_CAPTURE_MAX];
     static char out_path[] = "/tmp/bb.out";
     static long outfd;
     static long sav1;
     long pid;
     long nfd;
     long n;
-    int i;
-    int argc = 0;
+    long total = 0;
 
-    if (!applet || !applet[0])
+    if (!argv || !argv[0] || !argv[0][0])
         return -1;
-    for (i = 0; applet[i] && i + 1 < (int)sizeof(bb_applet); ++i)
-        bb_applet[i] = applet[i];
-    bb_applet[i] = '\0';
-    bb_argv[argc++] = bb_applet;
-    if (arg1 && arg1[0]) {
-        for (i = 0; arg1[i] && i + 1 < (int)sizeof(bb_arg1); ++i)
-            bb_arg1[i] = arg1[i];
-        bb_arg1[i] = '\0';
-        bb_argv[argc++] = bb_arg1;
-    }
-    bb_argv[argc] = nullptr;
 
-    guest_serial_puts("[desktop_qt] Terminal busybox spawn ");
-    guest_serial_puts(bb_applet);
-    guest_serial_puts("\n");
+    if (logtag && logtag[0]) {
+        guest_serial_puts("[desktop_qt] Terminal busybox spawn ");
+        guest_serial_puts(logtag);
+        guest_serial_puts("\n");
+    }
 
     sav1 = guest_sys1(32 /* dup */, 1);
     if (sav1 < 0) {
@@ -877,7 +806,7 @@ static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1)
         }
         /* Leave outfd open for parent; do not close it (shared table). */
         (void)guest_sys2(33 /* dup2 */, outfd, 1);
-        (void)guest_sys3(59 /* execve */, (long)bb_path, (long)bb_argv, 0);
+        (void)guest_sys3(59 /* execve */, (long)bb_path, (long)argv, 0);
         {
             static const char fail[] = "[bbexecfail]\n";
             (void)guest_sys2(24, (long)fail, (long)(sizeof(fail) - 1));
@@ -894,8 +823,14 @@ static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1)
 
     (void)guest_sys3(8 /* lseek */, outfd, 0, 0 /* SEEK_SET */);
     outbuf[0] = '\0';
-    n = guest_sys3(0 /* read */, outfd, (long)outbuf, (long)(sizeof(outbuf) - 1));
-    if (n > 0) {
+    while (total < (long)(sizeof(outbuf) - 1)) {
+        n = guest_sys3(0 /* read */, outfd, (long)(outbuf + total),
+                       (long)(sizeof(outbuf) - 1 - (size_t)total));
+        if (n <= 0)
+            break;
+        total += n;
+    }
+    if (total > 0) {
         guest_serial_puts("[desktop_qt] Terminal busybox held-fd ok\n");
     } else {
         guest_serial_puts("[desktop_qt] Terminal busybox held-fd miss\n");
@@ -907,9 +842,16 @@ static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1)
             if (rfd < 0) {
                 guest_serial_puts("[desktop_qt] Terminal busybox reopen fail\n");
             } else {
-                n = guest_sys3(0 /* read */, rfd, (long)outbuf, (long)(sizeof(outbuf) - 1));
+                total = 0;
+                while (total < (long)(sizeof(outbuf) - 1)) {
+                    n = guest_sys3(0 /* read */, rfd, (long)(outbuf + total),
+                                   (long)(sizeof(outbuf) - 1 - (size_t)total));
+                    if (n <= 0)
+                        break;
+                    total += n;
+                }
                 (void)guest_sys1(3, rfd);
-                if (n > 0)
+                if (total > 0)
                     guest_serial_puts("[desktop_qt] Terminal busybox reopen ok\n");
             }
         }
@@ -918,23 +860,68 @@ static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1)
         (void)guest_sys1(3, outfd);
         outfd = -1;
     }
-    if (n < 0)
-        n = 0;
-    while (n > 0 && (outbuf[n - 1] == '\n' || outbuf[n - 1] == '\r'))
-        --n;
-    outbuf[n] = '\0';
+    if (total < 0)
+        total = 0;
+    while (total > 0 && (outbuf[total - 1] == '\n' || outbuf[total - 1] == '\r'))
+        --total;
+    outbuf[total] = '\0';
 
-    if (n <= 0) {
+    if (total <= 0) {
         guest_serial_puts("[desktop_qt] Terminal busybox empty cap\n");
         guest_term_push("(empty capture)");
         return -1;
     }
-    guest_term_push(outbuf);
+    guest_term_push_capture(outbuf, total);
     guest_serial_puts("[desktop_qt] Terminal busybox ok\n");
-    guest_serial_puts("[desktop_qt] Terminal busybox out=");
-    guest_serial_puts(outbuf);
-    guest_serial_puts("\n");
     return 0;
+}
+
+static int guest_terminal_busybox_oneshot(const char *applet, const char *arg1)
+{
+    static char bb_applet[32];
+    static char bb_arg1[64];
+    static char *bb_argv[4];
+    int i;
+    int argc = 0;
+
+    if (!applet || !applet[0])
+        return -1;
+    for (i = 0; applet[i] && i + 1 < (int)sizeof(bb_applet); ++i)
+        bb_applet[i] = applet[i];
+    bb_applet[i] = '\0';
+    bb_argv[argc++] = bb_applet;
+    if (arg1 && arg1[0]) {
+        for (i = 0; arg1[i] && i + 1 < (int)sizeof(bb_arg1); ++i)
+            bb_arg1[i] = arg1[i];
+        bb_arg1[i] = '\0';
+        bb_argv[argc++] = bb_arg1;
+    }
+    bb_argv[argc] = nullptr;
+    return guest_terminal_busybox_run_argv(bb_argv, bb_applet);
+}
+
+static int guest_terminal_busybox_sh_c(const char *line)
+{
+    static char bb_sh[] = "sh";
+    static char bb_cflag[] = "-c";
+    static char bb_cmd[G_TERM_LINE_MAX];
+    static char *bb_argv[4];
+    const char *p = line;
+    int i;
+
+    if (!line)
+        return -1;
+    guest_term_skip_ws(&p);
+    if (!*p)
+        return -1;
+    for (i = 0; p[i] && i + 1 < (int)sizeof(bb_cmd); ++i)
+        bb_cmd[i] = p[i];
+    bb_cmd[i] = '\0';
+    bb_argv[0] = bb_sh;
+    bb_argv[1] = bb_cflag;
+    bb_argv[2] = bb_cmd;
+    bb_argv[3] = nullptr;
+    return guest_terminal_busybox_run_argv(bb_argv, "sh -c");
 }
 
 /* FB Terminal: arm line editor immediately (no vfork on open/raise).
@@ -964,8 +951,8 @@ static void guest_terminal_ensure_session(void)
     (void)guest_sys1(3, fd);
     guest_serial_puts("[desktop_qt] Terminal ran echo TERM_OK\n");
 
-    guest_term_push("B-Free Terminal");
-    guest_term_push("type help then Enter");
+    guest_term_push("B-Free Terminal (BusyBox ash)");
+    guest_term_push("type help — most commands via sh -c");
     guest_term_push_prompt();
     g_term_bb_demo_pending = 1;
     guest_serial_puts("[desktop_qt] Terminal session ready\n");
