@@ -493,6 +493,7 @@ static volatile int g_guest_need_resched;
 #define BFREE_GTHR_RUNNABLE 2
 #define BFREE_GTHR_WAIT_POLL  3
 #define BFREE_GTHR_WAIT_FUTEX 4
+#define BFREE_GTHR_WAIT_SIGWAIT 5
 
 typedef struct {
     int used;
@@ -504,6 +505,9 @@ typedef struct {
     volatile int *futex_uaddr;
     int futex_val;
     uintptr_t clear_child_tid;
+    uint64_t sigwait_want;
+    uint64_t sigwait_deadline_us; /* 0 = infinite */
+    long sigwait_uinfo;
 } bfree_gthr_t;
 
 static bfree_gthr_t g_gthr[BFREE_GUEST_MAX_THREADS];
@@ -583,6 +587,89 @@ static int bfree_gthr_futex_ready(const bfree_gthr_t *t)
     return *(volatile int *)t->futex_uaddr != t->futex_val;
 }
 
+static int bfree_gthr_sigwait_pick(uint64_t want, long uinfo)
+{
+    uint64_t hit = g_guest_sig_pending & want;
+    int sig;
+
+    if (hit == 0ULL) {
+        return 0;
+    }
+    for (sig = 1; sig < BFREE_NSIG; ++sig) {
+        uint64_t bit = 1ULL << (unsigned)(sig - 1);
+
+        if ((hit & bit) == 0ULL) {
+            continue;
+        }
+        g_guest_sig_pending &= ~bit;
+        if (uinfo != 0 && bfree_user_vaddr_mapped((uint64_t)(uintptr_t)uinfo)) {
+            int *si = (int *)(uintptr_t)uinfo;
+
+            si[0] = sig;
+            si[1] = 0;
+            si[2] = 0;
+        }
+        return sig;
+    }
+    return 0;
+}
+
+static int bfree_gthr_sigwait_ready(const bfree_gthr_t *t)
+{
+    if (t->state != BFREE_GTHR_WAIT_SIGWAIT) {
+        return 0;
+    }
+    if ((g_guest_sig_pending & t->sigwait_want) != 0ULL) {
+        return 1;
+    }
+    if (t->sigwait_deadline_us != 0ULL &&
+        knl_get_current_time() >= t->sigwait_deadline_us) {
+        return 1;
+    }
+    return 0;
+}
+
+static void bfree_gthr_sigwait_complete(bfree_gthr_t *t)
+{
+    int sig;
+
+    if (t->state != BFREE_GTHR_WAIT_SIGWAIT) {
+        return;
+    }
+    sig = bfree_gthr_sigwait_pick(t->sigwait_want, t->sigwait_uinfo);
+    if (sig > 0) {
+        t->rax = (uint64_t)(long)sig;
+    } else {
+        t->rax = (uint64_t)(long)-110; /* ETIMEDOUT */
+    }
+    t->sigwait_want = 0;
+    t->sigwait_deadline_us = 0;
+    t->sigwait_uinfo = 0;
+    t->state = BFREE_GTHR_RUNNABLE;
+}
+
+static void bfree_gthr_wake_sigwait(int sig)
+{
+    int i;
+    uint64_t bit;
+
+    if (sig <= 0 || sig >= BFREE_NSIG) {
+        return;
+    }
+    bit = 1ULL << (unsigned)(sig - 1);
+    for (i = 0; i < BFREE_GUEST_MAX_THREADS; ++i) {
+        bfree_gthr_t *t = &g_gthr[i];
+
+        if (!t->used || t->state != BFREE_GTHR_WAIT_SIGWAIT) {
+            continue;
+        }
+        if ((t->sigwait_want & bit) == 0ULL) {
+            continue;
+        }
+        bfree_gthr_sigwait_complete(t);
+    }
+}
+
 static int bfree_gthr_find_runnable(int except)
 {
     int i;
@@ -599,7 +686,8 @@ static int bfree_gthr_find_runnable(int except)
         if (i == except || !g_gthr[i].used) {
             continue;
         }
-        if (bfree_gthr_poll_ready(&g_gthr[i]) || bfree_gthr_futex_ready(&g_gthr[i])) {
+        if (bfree_gthr_poll_ready(&g_gthr[i]) || bfree_gthr_futex_ready(&g_gthr[i]) ||
+            bfree_gthr_sigwait_ready(&g_gthr[i])) {
             return i;
         }
     }
@@ -627,6 +715,11 @@ static long bfree_gthr_publish_switch(int to_idx)
             return 0;
         }
         t->rax = 0;
+    } else if (t->state == BFREE_GTHR_WAIT_SIGWAIT) {
+        if (!bfree_gthr_sigwait_ready(t)) {
+            return 0;
+        }
+        bfree_gthr_sigwait_complete(t);
     }
 
     g_gthr_cur = to_idx;
@@ -707,6 +800,29 @@ static long bfree_gthr_park_futex(volatile int *uaddr, int val)
     g_gthr[g_gthr_cur].state = BFREE_GTHR_WAIT_FUTEX;
     g_gthr[g_gthr_cur].futex_uaddr = uaddr;
     g_gthr[g_gthr_cur].futex_val = val;
+    g_gthr[g_gthr_cur].poll_fds = 0;
+    sw = bfree_gthr_publish_switch(other);
+    return sw != 0 ? sw : 0;
+}
+
+static long bfree_gthr_park_sigwait(uint64_t want, uint64_t deadline_us, long uinfo)
+{
+    int other;
+    long sw;
+
+    if (!bfree_gthr_mt()) {
+        return 0;
+    }
+    other = bfree_gthr_find_runnable(g_gthr_cur);
+    if (other < 0) {
+        return 0;
+    }
+    bfree_gthr_save_current();
+    g_gthr[g_gthr_cur].state = BFREE_GTHR_WAIT_SIGWAIT;
+    g_gthr[g_gthr_cur].sigwait_want = want;
+    g_gthr[g_gthr_cur].sigwait_deadline_us = deadline_us;
+    g_gthr[g_gthr_cur].sigwait_uinfo = uinfo;
+    g_gthr[g_gthr_cur].futex_uaddr = 0;
     g_gthr[g_gthr_cur].poll_fds = 0;
     sw = bfree_gthr_publish_switch(other);
     return sw != 0 ? sw : 0;
@@ -831,6 +947,9 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
         parent->clear_child_tid = 0;
         parent->poll_fds = 0;
         parent->futex_uaddr = 0;
+        parent->sigwait_want = 0;
+        parent->sigwait_deadline_us = 0;
+        parent->sigwait_uinfo = 0;
         g_guest_thread_slots_used = 1;
     } else {
         bfree_gthr_save_current();
@@ -872,6 +991,9 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
     child->clear_child_tid = 0;
     child->poll_fds = 0;
     child->futex_uaddr = 0;
+    child->sigwait_want = 0;
+    child->sigwait_deadline_us = 0;
+    child->sigwait_uinfo = 0;
 
     if ((flags & 0x00080000UL) != 0UL && tls != 0) { /* CLONE_SETTLS */
         if (!bfree_user_ptr_mapped(tls)) {
@@ -2673,7 +2795,7 @@ static long sys_linux_mincore(long addr, long length, long vec)
     return 0;
 }
 
-/* Linux 25: mremap — grow/shrink anonymous guest heap mapping (no move). */
+/* Linux 25: mremap — grow/shrink; MAYMOVE copies to a fresh anon mapping. */
 static long sys_linux_mremap(long old_addr, long old_size, long new_size, long flags,
                              long new_addr)
 {
@@ -2681,18 +2803,34 @@ static long sys_linux_mremap(long old_addr, long old_size, long new_size, long f
     if (old_size <= 0 || new_size <= 0) {
         return -22;
     }
-    /* MREMAP_MAYMOVE unsupported; refuse move requests. */
-    if ((flags & 1L) != 0) { /* MREMAP_MAYMOVE */
-        return -38; /* ENOSYS — force musl/glibc fallback */
-    }
     if (new_size == old_size) {
         return old_addr;
+    }
+    if ((flags & 1L) != 0) { /* MREMAP_MAYMOVE */
+        long mapped;
+        size_t ncopy;
+        size_t i;
+        uint8_t *src;
+        uint8_t *dst;
+
+        mapped = sys_mmap_anonymous_heap(0, new_size, MAP_ANONYMOUS | MAP_PRIVATE);
+        if (mapped < 0) {
+            return mapped;
+        }
+        ncopy = (size_t)((new_size < old_size) ? new_size : old_size);
+        src = (uint8_t *)(uintptr_t)(uint64_t)old_addr;
+        dst = (uint8_t *)(uintptr_t)(uint64_t)mapped;
+        for (i = 0; i < ncopy; ++i) {
+            dst[i] = src[i];
+        }
+        (void)sys_munmap(old_addr, old_size);
+        return mapped;
     }
     if (new_size < old_size) {
         (void)sys_munmap(old_addr + new_size, old_size - new_size);
         return old_addr;
     }
-    /* Expand in place only when the extension is free — else ENOSYS. */
+    /* Expand in place only when the extension is free — else ENOMEM. */
     {
         long ext = sys_mmap_anonymous_heap(old_addr + old_size, new_size - old_size,
                                            MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE);
@@ -2983,9 +3121,22 @@ long sys_futex(long uaddr, long op, long val, long timeout_ptr, long uaddr2, lon
             __asm__ volatile("cli" ::: "memory");
             bfree_futex_disarm_slot(slot);
         }
-        /* Single-thread guest: clear-on-WAIT fallback (Qt workaround). */
+        /* Compat2: never clear *uaddr on untimed WAIT (generic musl/pthread).
+         * Single-thread: spin/yield already done; return 0 if value changed,
+         * else EAGAIN so callers can retry (no silent unlock). */
         if (!bfree_gthr_mt()) {
-            *(int *)(uintptr_t)uaddr = 0;
+            if (*(volatile int *)(uintptr_t)uaddr != (int)val) {
+                if (g_guest_futex_log_count < 8U) {
+                    ++g_guest_futex_log_count;
+                    uart_puts("[FUTEX] wait\n");
+                }
+                return 0;
+            }
+            if (g_guest_futex_log_count < 8U) {
+                ++g_guest_futex_log_count;
+                uart_puts("[FUTEX] wait EAGAIN\n");
+            }
+            return -11; /* EAGAIN — still locked */
         }
         if (g_guest_futex_log_count < 8U) {
             ++g_guest_futex_log_count;
@@ -3518,6 +3669,30 @@ static int bfree_guest_shared_mmap_track(int vfile_idx, uint64_t va, size_t map_
     return -1; /* table full — mapping still usable as PRIVATE-like copy */
 }
 
+/* Stamp VMM_PTE_SHARED (bit 10) on live MAP_SHARED pages so fork keeps RW. */
+static void bfree_guest_shared_mmap_stamp_ptes(uint64_t va, size_t map_len)
+{
+    page_table_t *pt;
+    size_t off;
+
+    if (map_len == 0 || !knl_current_task || !knl_current_task->page_table_base) {
+        return;
+    }
+    pt = (page_table_t *)knl_current_task->page_table_base;
+    va &= ~(PAGE_SIZE - 1ULL);
+    map_len = (map_len + PAGE_SIZE - 1ULL) & ~(PAGE_SIZE - 1ULL);
+    for (off = 0; off < map_len; off += (size_t)PAGE_SIZE) {
+        uint64_t page_va = va + (uint64_t)off;
+        uint64_t phys = 0;
+
+        if (vmm_user_virt_to_phys(pt, page_va, &phys) != 0) {
+            continue;
+        }
+        (void)vmm_map_page(pt, page_va, phys, 0x007ULL | (1ULL << 10));
+    }
+    __asm__ volatile("mov %0, %%cr3" :: "r"(pt) : "memory");
+}
+
 /* Slice 2: find a live MAP_SHARED track overlapping the same vfile file range. */
 static bfree_guest_shared_mmap_t *bfree_guest_shared_mmap_find_overlap(int vfile_idx,
                                                                       size_t file_off,
@@ -3586,7 +3761,7 @@ static int bfree_guest_shared_mmap_alias_pages(uint64_t new_va, size_t new_file_
             continue;
         }
         (void)vmm_unmap_page(pt, dst_va);
-        if (vmm_map_page(pt, dst_va, phys, 0x007ULL) != 0) {
+        if (vmm_map_page(pt, dst_va, phys, 0x007ULL | (1ULL << 10)) != 0) {
             return -1;
         }
         aliased = 1;
@@ -3824,6 +3999,10 @@ static int bfree_guest_fd_publish(int target)
         start = target;
     }
     for (i = start; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+        /* RLIMIT_NOFILE: fd number must be < soft limit (Linux: max_fd+1). */
+        if ((uint64_t)i >= g_rlim_nofile_cur) {
+            return -24; /* EMFILE */
+        }
         if (g_guest_fd_target[i] < 0 && g_guest_fd_dup_save[i] < 0) {
             g_guest_fd_target[i] = target;
             g_guest_fd_cloexec[i] = 0;
@@ -3919,6 +4098,8 @@ static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, 
                                                (size_t)length, donor) == 0) {
             (void)bfree_guest_shared_mmap_track(vidx, (uint64_t)(uintptr_t)mapped,
                                                 (size_t)length, off);
+            bfree_guest_shared_mmap_stamp_ptes((uint64_t)(uintptr_t)mapped,
+                                               (size_t)length);
             return mapped;
         }
     }
@@ -3933,6 +4114,8 @@ static long bfree_guest_mmap_vfile(long addr, long length, long flags, long fd, 
     if (shared && length > 0) {
         (void)bfree_guest_shared_mmap_track(vidx, (uint64_t)(uintptr_t)mapped,
                                             (size_t)length, off);
+        bfree_guest_shared_mmap_stamp_ptes((uint64_t)(uintptr_t)mapped,
+                                           (size_t)length);
     }
     return mapped;
 }
@@ -5210,14 +5393,85 @@ static const char g_guest_proc_status[] =
     "VmRSS:\t     1 kB\n"
     "Threads:\t1\n";
 static size_t g_guest_proc_status_off;
-static const char g_guest_proc_mounts[] =
+static const char g_guest_proc_mounts_base[] =
     "rootfs / rootfs rw 0 0\n"
     "proc /proc proc rw,relatime 0 0\n"
     "tmpfs /tmp tmpfs rw,relatime 0 0\n"
     "vfile /persist vfile rw,relatime 0 0\n"
     "vfile /home vfile rw,relatime 0 0\n"
     "vfile /var vfile rw,relatime 0 0\n";
+#define BFREE_GUEST_MOUNT_SLOTS 8
+#define BFREE_PROC_MOUNTS_CAP 1536
+static char g_guest_proc_mounts_buf[BFREE_PROC_MOUNTS_CAP];
+static size_t g_guest_proc_mounts_len;
 static size_t g_guest_proc_mounts_off;
+static int g_guest_proc_mounts_ready;
+static struct {
+    int used;
+    char source[48];
+    char target[96];
+    char fstype[24];
+} g_guest_dyn_mounts[BFREE_GUEST_MOUNT_SLOTS];
+
+static void bfree_guest_proc_mounts_append(char *dst, size_t *npos, size_t cap,
+                                           const char *s)
+{
+    size_t i = *npos;
+
+    if (!s) {
+        return;
+    }
+    while (*s != '\0' && i + 1U < cap) {
+        dst[i++] = *s++;
+    }
+    *npos = i;
+}
+
+static void bfree_guest_proc_mounts_rebuild(void)
+{
+    size_t n = 0;
+    int i;
+
+    bfree_guest_proc_mounts_append(g_guest_proc_mounts_buf, &n,
+                                   BFREE_PROC_MOUNTS_CAP, g_guest_proc_mounts_base);
+    for (i = 0; i < BFREE_GUEST_MOUNT_SLOTS; ++i) {
+        if (!g_guest_dyn_mounts[i].used) {
+            continue;
+        }
+        bfree_guest_proc_mounts_append(g_guest_proc_mounts_buf, &n,
+                                       BFREE_PROC_MOUNTS_CAP,
+                                       g_guest_dyn_mounts[i].source[0]
+                                           ? g_guest_dyn_mounts[i].source
+                                           : "none");
+        bfree_guest_proc_mounts_append(g_guest_proc_mounts_buf, &n,
+                                       BFREE_PROC_MOUNTS_CAP, " ");
+        bfree_guest_proc_mounts_append(g_guest_proc_mounts_buf, &n,
+                                       BFREE_PROC_MOUNTS_CAP,
+                                       g_guest_dyn_mounts[i].target);
+        bfree_guest_proc_mounts_append(g_guest_proc_mounts_buf, &n,
+                                       BFREE_PROC_MOUNTS_CAP, " ");
+        bfree_guest_proc_mounts_append(g_guest_proc_mounts_buf, &n,
+                                       BFREE_PROC_MOUNTS_CAP,
+                                       g_guest_dyn_mounts[i].fstype[0]
+                                           ? g_guest_dyn_mounts[i].fstype
+                                           : "none");
+        bfree_guest_proc_mounts_append(g_guest_proc_mounts_buf, &n,
+                                       BFREE_PROC_MOUNTS_CAP, " rw,relatime 0 0\n");
+    }
+    if (n >= BFREE_PROC_MOUNTS_CAP) {
+        n = BFREE_PROC_MOUNTS_CAP - 1U;
+    }
+    g_guest_proc_mounts_buf[n] = '\0';
+    g_guest_proc_mounts_len = n;
+    g_guest_proc_mounts_ready = 1;
+}
+
+static void bfree_guest_proc_mounts_ensure(void)
+{
+    if (!g_guest_proc_mounts_ready) {
+        bfree_guest_proc_mounts_rebuild();
+    }
+}
 /* Synthetic PID 2 so ps shows more than one task without a live fork child. */
 static const char g_guest_proc_pid2_stat[] =
     "2 (kworker) S 0 2 2 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 1 0 0 "
@@ -5826,8 +6080,9 @@ static long sys_linux_read(long fd, long buf, long count)
             sizeof(g_guest_proc_status) - 1U, &g_guest_proc_status_off);
     }
     if (fd == (long)BFREE_GUEST_PROC_MOUNTS_FD) {
-        return bfree_guest_read_blob(buf, count, g_guest_proc_mounts,
-            sizeof(g_guest_proc_mounts) - 1U, &g_guest_proc_mounts_off);
+        bfree_guest_proc_mounts_ensure();
+        return bfree_guest_read_blob(buf, count, g_guest_proc_mounts_buf,
+            g_guest_proc_mounts_len, &g_guest_proc_mounts_off);
     }
     if (fd == (long)BFREE_GUEST_PROC_PID2STAT_FD) {
         return bfree_guest_read_blob(buf, count, g_guest_proc_pid2_stat,
@@ -7280,6 +7535,9 @@ static long sys_linux_fcntl(long fd, long cmd, long arg)
             minfd = 3;
         }
         for (i = minfd; i < BFREE_GUEST_FD_TABLE_SIZE; ++i) {
+            if ((uint64_t)i >= g_rlim_nofile_cur) {
+                return -24; /* EMFILE: RLIMIT_NOFILE */
+            }
             if (g_guest_fd_target[i] < 0 && g_guest_fd_dup_save[i] < 0) {
                 g_guest_fd_target[i] = resolved;
                 g_guest_fd_dup_save[i] = resolved;
@@ -7518,7 +7776,52 @@ static long sys_linux_fcntl(long fd, long cmd, long arg)
                 return 0;
             }
             if (conflict >= 0) {
-                return -11; /* EAGAIN */
+                int blocking = (cmd == BFREE_LINUX_F_SETLKW || cmd == 14 ||
+                                cmd == 38);
+                if (!blocking) {
+                    return -11; /* EAGAIN: F_SETLK / OFD_SETLK */
+                }
+                /* F_SETLKW: park like blocking pipe read (coop/gthr/EINTR). */
+                while (conflict >= 0) {
+                    if (g_guest_fork_active && g_coop_side == 1) {
+                        return bfree_coop_yield_to_parent();
+                    }
+                    if (g_guest_fork_active && g_coop_side == 0 &&
+                        g_coop_child_blocked) {
+                        return bfree_coop_yield_to_child();
+                    }
+                    {
+                        long sw = bfree_gthr_yield();
+                        if (sw != 0) {
+                            return sw;
+                        }
+                    }
+                    {
+                        int er = bfree_guest_sig_take_eintr();
+                        if (er < 0) {
+                            return er;
+                        }
+                    }
+                    __asm__ volatile("sti; pause; cli" ::: "memory");
+                    conflict = -1;
+                    mine = -1;
+                    for (i = 0; i < BFREE_GUEST_FLOCK_SLOTS; ++i) {
+                        if (!g_guest_flocks[i].used ||
+                            g_guest_flocks[i].vnode != vnode) {
+                            continue;
+                        }
+                        if (g_guest_flocks[i].owner_pid == self_pid) {
+                            mine = i;
+                            continue;
+                        }
+                        if (g_guest_flocks[i].type == BFREE_LINUX_F_WRLCK ||
+                            l_type == BFREE_LINUX_F_WRLCK ||
+                            !(l_type == BFREE_LINUX_F_RDLCK &&
+                              g_guest_flocks[i].type == BFREE_LINUX_F_RDLCK)) {
+                            conflict = i;
+                        }
+                    }
+                }
             }
             if (mine < 0) {
                 for (i = 0; i < BFREE_GUEST_FLOCK_SLOTS; ++i) {
@@ -8280,8 +8583,9 @@ static long bfree_linux_stat_for_path(const char *path, long statbuf)
             (int64_t)(sizeof(g_guest_proc_cpustat) - 1U));
     }
     if (strcmp(path, "/proc/mounts") == 0 || strcmp(path, "/proc/self/mounts") == 0) {
+        bfree_guest_proc_mounts_ensure();
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
-            (int64_t)(sizeof(g_guest_proc_mounts) - 1U));
+            (int64_t)g_guest_proc_mounts_len);
     }
     if (path[0] == '/' && path[1] == 'p' && path[2] == 'r' && path[3] == 'o' &&
         path[4] == 'c' && (path[5] == '/' || path[5] == '\0')) {
@@ -8550,8 +8854,9 @@ static long sys_linux_fstat(long fd, long statbuf)
             (int64_t)(sizeof(g_guest_proc_cpustat) - 1U));
     }
     if (fd == (long)BFREE_GUEST_PROC_MOUNTS_FD) {
+        bfree_guest_proc_mounts_ensure();
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
-            (int64_t)(sizeof(g_guest_proc_mounts) - 1U));
+            (int64_t)g_guest_proc_mounts_len);
     }
     if (fd == (long)BFREE_GUEST_PROC_PID2STAT_FD) {
         return bfree_linux_stat_fill(statbuf, BFREE_LINUX_S_IFREG | 0444U,
@@ -9042,8 +9347,9 @@ static long sys_linux_lseek(long fd, long offset, long whence)
         offp = &g_guest_proc_cpustat_off;
         total = sizeof(g_guest_proc_cpustat) - 1U;
     } else if (fd == (long)BFREE_GUEST_PROC_MOUNTS_FD) {
+        bfree_guest_proc_mounts_ensure();
         offp = &g_guest_proc_mounts_off;
-        total = sizeof(g_guest_proc_mounts) - 1U;
+        total = g_guest_proc_mounts_len;
     } else if (fd == (long)BFREE_GUEST_PROC_PID2STAT_FD) {
         offp = &g_guest_proc_pid2_stat_off;
         total = sizeof(g_guest_proc_pid2_stat) - 1U;
@@ -11145,6 +11451,8 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
             img = "libc_test_math2.elf";
         } else if (bfree_guest_basename_eq(path, "libc_test_math3.elf")) {
             img = "libc_test_math3.elf";
+        } else if (bfree_guest_basename_eq(path, "libc_test_math4.elf")) {
+            img = "libc_test_math4.elf";
         } else if (bfree_guest_basename_eq(path, "libc_test_regression.elf")) {
             img = "libc_test_regression.elf";
         } else if (bfree_guest_basename_eq(path, "abi_hole_finder.elf")) {
@@ -12904,18 +13212,39 @@ static long sys_linux_ppoll(long fds_ptr, long nfds, long timeout_ptr, long sigm
     struct timespec *ts = (struct timespec *)(uintptr_t)timeout_ptr;
     uint64_t deadline_us = 0;
     int finite = 0;
+    uint64_t saved_mask = 0;
+    int mask_applied = 0;
+    long ready;
 
-    (void)sigmask_ptr;
+    if (sigmask_ptr != 0) {
+        if (!bfree_user_ptr_mapped(sigmask_ptr)) {
+            return -14;
+        }
+        saved_mask = g_guest_sig_mask;
+        g_guest_sig_mask = *(uint64_t *)(uintptr_t)sigmask_ptr;
+        g_guest_sig_mask &= ~((1ULL << 8) | (1ULL << 18));
+        mask_applied = 1;
+    }
     if (timeout_ptr != 0) {
         if (!bfree_user_ptr_mapped(timeout_ptr)) {
+            if (mask_applied) {
+                g_guest_sig_mask = saved_mask;
+            }
             return -14;
         }
         if (ts->tv_sec < 0 || ts->tv_nsec < 0) {
+            if (mask_applied) {
+                g_guest_sig_mask = saved_mask;
+            }
             return -22;
         }
         timeout_ms = (long)(ts->tv_sec * 1000LL + ts->tv_nsec / 1000000LL);
         if (timeout_ms == 0) {
-            return sys_linux_poll_common(fds_ptr, nfds);
+            ready = sys_linux_poll_common(fds_ptr, nfds);
+            if (mask_applied) {
+                g_guest_sig_mask = saved_mask;
+            }
+            return ready;
         }
         finite = 1;
         deadline_us = knl_get_current_time()
@@ -12923,27 +13252,34 @@ static long sys_linux_ppoll(long fds_ptr, long nfds, long timeout_ptr, long sigm
             + (uint64_t)ts->tv_nsec / 1000ULL;
     }
     for (;;) {
-        long ready = sys_linux_poll_common(fds_ptr, nfds);
+        ready = sys_linux_poll_common(fds_ptr, nfds);
 
         if (ready > 0) {
-            return ready;
+            break;
         }
         if (timeout_ms == 0) {
-            return 0;
+            ready = 0;
+            break;
         }
         if (finite && knl_get_current_time() >= deadline_us) {
-            return 0;
+            ready = 0;
+            break;
         }
         bfree_guest_alarm_poll();
         {
             long sw = bfree_gthr_park_poll(fds_ptr, nfds);
 
             if (sw != 0) {
-                return sw;
+                ready = sw;
+                break;
             }
         }
         __asm__ volatile("sti; hlt" ::: "memory");
     }
+    if (mask_applied) {
+        g_guest_sig_mask = saved_mask;
+    }
+    return ready;
 }
 
 static char g_guest_prctl_name[16] = "bfree";
@@ -13099,17 +13435,16 @@ static long sys_linux_clock_nanosleep(long clockid, long flags, long req_ptr,
     return 0;
 }
 
-/* Linux 165/166: the guest filesystem is synthesized, so mounts are recorded
- * only as the "last mount" hint and otherwise accepted verbatim. */
-static char g_guest_last_mount_target[96];
-
+/* Linux 165/166: record mounts into /proc/mounts (base + dynamic slots). */
 static long sys_linux_mount(long source, long target, long fstype, long flags,
                             long data)
 {
     char path[96];
+    char src[48];
+    char fs[24];
+    int i;
+    int free_slot = -1;
 
-    (void)source;
-    (void)fstype;
     (void)flags;
     (void)data;
     if (target == 0) {
@@ -13121,16 +13456,52 @@ static long sys_linux_mount(long source, long target, long fstype, long flags,
     if (path[0] == '\0') {
         return -22;
     }
-    bfree_copy_cstr(g_guest_last_mount_target,
-                    sizeof(g_guest_last_mount_target), path);
+    src[0] = '\0';
+    fs[0] = '\0';
+    if (source != 0) {
+        if (copy_user_cstr(source, src, sizeof(src)) != 0) {
+            return -14;
+        }
+    }
+    if (fstype != 0) {
+        if (copy_user_cstr(fstype, fs, sizeof(fs)) != 0) {
+            return -14;
+        }
+    }
+    for (i = 0; i < BFREE_GUEST_MOUNT_SLOTS; ++i) {
+        if (g_guest_dyn_mounts[i].used) {
+            if (g_guest_dyn_mounts[i].target[0] != '\0' &&
+                strcmp(g_guest_dyn_mounts[i].target, path) == 0) {
+                free_slot = i; /* remount / update */
+                break;
+            }
+        } else if (free_slot < 0) {
+            free_slot = i;
+        }
+    }
+    if (free_slot < 0) {
+        return -28; /* ENOSPC */
+    }
+    g_guest_dyn_mounts[free_slot].used = 1;
+    bfree_copy_cstr(g_guest_dyn_mounts[free_slot].target,
+                    sizeof(g_guest_dyn_mounts[free_slot].target), path);
+    bfree_copy_cstr(g_guest_dyn_mounts[free_slot].source,
+                    sizeof(g_guest_dyn_mounts[free_slot].source),
+                    src[0] ? src : "none");
+    bfree_copy_cstr(g_guest_dyn_mounts[free_slot].fstype,
+                    sizeof(g_guest_dyn_mounts[free_slot].fstype),
+                    fs[0] ? fs : "none");
+    bfree_guest_proc_mounts_rebuild();
     return 0;
 }
 
 static long sys_linux_umount2(long target, long flags)
 {
     char path[96];
+    int i;
+    int found = 0;
 
-    (void)flags; /* MNT_FORCE/DETACH/EXPIRE all behave the same here */
+    (void)flags;
     if (target == 0) {
         return -22;
     }
@@ -13140,6 +13511,21 @@ static long sys_linux_umount2(long target, long flags)
     if (path[0] == '\0') {
         return -22;
     }
+    for (i = 0; i < BFREE_GUEST_MOUNT_SLOTS; ++i) {
+        if (g_guest_dyn_mounts[i].used &&
+            strcmp(g_guest_dyn_mounts[i].target, path) == 0) {
+            g_guest_dyn_mounts[i].used = 0;
+            g_guest_dyn_mounts[i].target[0] = '\0';
+            g_guest_dyn_mounts[i].source[0] = '\0';
+            g_guest_dyn_mounts[i].fstype[0] = '\0';
+            found = 1;
+        }
+    }
+    if (!found) {
+        /* Base mounts stay; soft no-op like prior stub (avoid breaking ash). */
+        return 0;
+    }
+    bfree_guest_proc_mounts_rebuild();
     return 0;
 }
 
@@ -15714,6 +16100,7 @@ static void bfree_guest_sig_raise(int sig)
         return;
     }
     g_guest_sig_pending |= (1ULL << (unsigned)(sig - 1));
+    bfree_gthr_wake_sigwait(sig);
 }
 
 /* --- signalfd / splice (LTP G) --- */
@@ -18561,13 +18948,37 @@ static long sys_linux_flock(long fd, long op)
         return 0;
     }
     if (exclusive || shared) {
-        if (g_guest_flock_holder[vidx] != 0 &&
-            g_guest_flock_holder[vidx] != (int)fd + 1 &&
-            g_guest_flock_holder[vidx] != resolved + 1) {
-            return nonblock ? -11 : -11; /* EAGAIN */
+        /* LOCK_NB → EAGAIN; blocking waits like pipe read (coop/gthr/EINTR). */
+        for (;;) {
+            if (g_guest_flock_holder[vidx] == 0 ||
+                g_guest_flock_holder[vidx] == (int)fd + 1 ||
+                g_guest_flock_holder[vidx] == resolved + 1) {
+                g_guest_flock_holder[vidx] = (int)fd + 1;
+                return 0;
+            }
+            if (nonblock) {
+                return -11; /* EAGAIN */
+            }
+            if (g_guest_fork_active && g_coop_side == 1) {
+                return bfree_coop_yield_to_parent();
+            }
+            if (g_guest_fork_active && g_coop_side == 0 && g_coop_child_blocked) {
+                return bfree_coop_yield_to_child();
+            }
+            {
+                long sw = bfree_gthr_yield();
+                if (sw != 0) {
+                    return sw;
+                }
+            }
+            {
+                int er = bfree_guest_sig_take_eintr();
+                if (er < 0) {
+                    return er;
+                }
+            }
+            __asm__ volatile("sti; pause; cli" ::: "memory");
         }
-        g_guest_flock_holder[vidx] = (int)fd + 1;
-        return 0;
     }
     return -22;
 }
@@ -19173,7 +19584,28 @@ static long sys_linux_chown(long dirfd, long path_ptr, long uid, long gid)
 }
 /* sys_linux_flock: real impl below */
 static long sys_linux_flock(long fd, long op);
-static long sys_linux_fsync(long fd) { (void)fd; return 0; }
+static long sys_linux_fsync(long fd)
+{
+    int resolved;
+    bfree_guest_ofd_t *ofd;
+    int target;
+    int vidx = -1;
+
+    resolved = bfree_guest_fd_resolve((int)fd);
+    if (resolved < 0) {
+        return 0;
+    }
+    ofd = bfree_guest_ofd_from_fd(resolved);
+    target = ofd ? ofd->target : resolved;
+    if (target >= 0 && target < BFREE_GUEST_VFILE_SLOTS && g_guest_vfiles[target].used) {
+        vidx = target;
+    }
+    if (vidx >= 0) {
+        bfree_guest_shared_mmap_sync_vfile(vidx);
+        bfree_persist_maybe_flush(&g_guest_vfiles[vidx]);
+    }
+    return 0;
+}
 /* sys_linux_alarm / getitimer / setitimer: real impls above */
 static long sys_linux_alarm(long sec);
 static long sys_linux_getitimer(long which, long curr);
@@ -19306,8 +19738,14 @@ static long sys_linux_rt_sigpending_real(long set, long sigsetsize)
 
 static long sys_linux_rt_sigtimedwait(long uset, long uinfo, long uts, long sigsetsize)
 {
+    typedef struct {
+        long tv_sec;
+        long tv_nsec;
+    } bfree_ts_t;
     uint64_t want;
-    int spins;
+    uint64_t deadline_us = 0;
+    int finite = 0;
+    int sig;
 
     if (sigsetsize < (long)sizeof(uint64_t)) {
         return -22;
@@ -19317,51 +19755,54 @@ static long sys_linux_rt_sigtimedwait(long uset, long uinfo, long uts, long sigs
     }
     want = *(const uint64_t *)(uintptr_t)uset;
 
-    for (spins = 0; spins < 100000; ++spins) {
-        uint64_t hit = g_guest_sig_pending & want;
-        int sig;
+    if (uts != 0) {
+        bfree_ts_t ts;
 
-        if (hit != 0ULL) {
-            for (sig = 1; sig < BFREE_NSIG; ++sig) {
-                uint64_t bit = 1ULL << (unsigned)(sig - 1);
-                if ((hit & bit) != 0ULL) {
-                    g_guest_sig_pending &= ~bit;
-                    if (uinfo != 0 &&
-                        bfree_user_range_mapped((uint64_t)(uintptr_t)uinfo, 32)) {
-                        int *si = (int *)(uintptr_t)uinfo;
-                        si[0] = sig; /* si_signo */
-                        si[1] = 0;   /* si_errno */
-                        si[2] = 0;   /* si_code */
-                    }
-                    return (long)sig;
-                }
-            }
+        if (!bfree_user_range_mapped((uint64_t)(uintptr_t)uts, sizeof(ts))) {
+            return -14;
         }
-        if (uts != 0) {
-            typedef struct {
-                long tv_sec;
-                long tv_nsec;
-            } bfree_ts_t;
-            bfree_ts_t ts;
+        ts = *(const bfree_ts_t *)(uintptr_t)uts;
+        if (ts.tv_sec == 0 && ts.tv_nsec == 0) {
+            sig = bfree_gthr_sigwait_pick(want, uinfo);
+            return sig > 0 ? (long)sig : -11; /* EAGAIN */
+        }
+        finite = 1;
+        deadline_us = knl_get_current_time()
+            + ((uint64_t)ts.tv_sec * 1000000ULL)
+            + ((uint64_t)ts.tv_nsec / 1000ULL);
+    }
 
-            if (!bfree_user_range_mapped((uint64_t)(uintptr_t)uts, sizeof(ts))) {
-                return -14;
-            }
-            ts = *(const bfree_ts_t *)(uintptr_t)uts;
-            if (ts.tv_sec == 0 && ts.tv_nsec == 0) {
-                return -11; /* EAGAIN */
-            }
-            (void)sys_linux_nanosleep(uts, 0);
-            /* One more pending check after sleep, then timeout. */
-            hit = g_guest_sig_pending & want;
-            if (hit != 0ULL) {
-                continue;
-            }
+    sig = bfree_gthr_sigwait_pick(want, uinfo);
+    if (sig > 0) {
+        return (long)sig;
+    }
+
+    /* Coop: park so another guest thread can raise() into our want set. */
+    if (bfree_gthr_mt()) {
+        long sw = bfree_gthr_park_sigwait(want, finite ? deadline_us : 0ULL, uinfo);
+
+        if (sw != 0) {
+            return sw;
+        }
+    }
+
+    for (;;) {
+        sig = bfree_gthr_sigwait_pick(want, uinfo);
+        if (sig > 0) {
+            return (long)sig;
+        }
+        if (finite && knl_get_current_time() >= deadline_us) {
             return -110; /* ETIMEDOUT */
         }
-        __asm__ volatile("sti; hlt" ::: "memory");
+        if (bfree_gthr_mt()) {
+            long sw = bfree_gthr_park_sigwait(want, finite ? deadline_us : 0ULL, uinfo);
+
+            if (sw != 0) {
+                return sw;
+            }
+        }
+        __asm__ volatile("sti; pause" ::: "memory");
     }
-    return -4; /* EINTR fallback */
 }
 
 static long sys_linux_rt_sigqueueinfo(long pid, long sig, long uinfo)
@@ -19950,6 +20391,11 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_capget(arg1, arg2);
     case 126: /* capset */
         return sys_linux_capset(arg1, arg2);
+    case 122: /* setfsuid */
+    case 123: /* setfsgid */
+        return arg1; /* Linux returns previous fsuid/fsgid; soft echo */
+    case 325: /* mlock2 */
+        return 0;
     case 272: /* unshare */
         return 0;
     case 105: /* setuid */

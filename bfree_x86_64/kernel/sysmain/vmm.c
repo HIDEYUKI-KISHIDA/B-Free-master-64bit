@@ -41,6 +41,8 @@ static int vmm_pte_direct(uint64_t pt_phys)
 
 /* Software-available PTE bit: page is write-protected for lazy COW after fork. */
 #define VMM_PTE_COW (1ULL << 9)
+/* Software bit: MAP_SHARED — stay RW across fork (no private COW break). */
+#define VMM_PTE_SHARED (1ULL << 10)
 
 #define VMM_COW_REFCNT_SLOTS 256
 
@@ -731,7 +733,7 @@ int vmm_unmap_page(page_table_t *pt, uint64_t vaddr) {
 
         if (vmm_pte_load(pt_phys, pt_index, &pte, embedded) == 0 &&
             (pte & 0x001ULL) != 0ULL && (pte & 0x004ULL) != 0ULL &&
-            (pte & VMM_PTE_COW) != 0ULL) {
+            ((pte & VMM_PTE_COW) != 0ULL || (pte & VMM_PTE_SHARED) != 0ULL)) {
             vmm_cow_ref_dec(pte & 0x000FFFFFFFFFF000ULL);
         }
         if (vmm_pte_store(pt_phys, pt_index, zero, embedded) != 0) {
@@ -995,6 +997,14 @@ void vmm_destroy_user_mappings(page_table_t *pt)
                 bfree_shell_page_pinned(paddr)) {
                 continue;
             }
+            /* Tree2/Compat1: COW or SHARED shared phys — drop one ref. */
+            if ((pte & VMM_PTE_COW) != 0ULL || (pte & VMM_PTE_SHARED) != 0ULL) {
+                uart_puts("[COW] exit drop phys=");
+                uart_puthex64(paddr);
+                uart_puts("\n");
+                vmm_cow_ref_dec(paddr);
+                continue;
+            }
             pmm_free((void *)(uintptr_t)paddr);
         }
     }
@@ -1096,6 +1106,14 @@ void vmm_destroy_user_mappings_keep(page_table_t *pt, page_table_t *keep)
                 bfree_shell_page_pinned(paddr)) {
                 continue;
             }
+            /* COW/SHARED: always drop child ref even when parent keeps the phys. */
+            if ((pte & VMM_PTE_COW) != 0ULL || (pte & VMM_PTE_SHARED) != 0ULL) {
+                uart_puts("[COW] exit drop phys=");
+                uart_puthex64(paddr);
+                uart_puts("\n");
+                vmm_cow_ref_dec(paddr);
+                continue;
+            }
             slot = (paddr >> 12) & (uint64_t)(KEEP_HASH - 1);
             for (probe = 0; probe < 32ULL; ++probe) {
                 uint64_t i = (slot + probe) & (uint64_t)(KEEP_HASH - 1);
@@ -1169,6 +1187,41 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
             paddr = pte & 0x000FFFFFFFFFF000ULL;
             va = (pd_index * 0x200000ULL) + (pt_index * PAGE_SIZE);
             if (paddr == va && (pte & 0x004ULL) == 0ULL) {
+                continue;
+            }
+
+            /* Compat1: MAP_SHARED stays RW+shared across fork (no private COW). */
+            if ((pte & VMM_PTE_SHARED) != 0ULL && (pte & 0x007ULL) == 0x007ULL) {
+                uint64_t sh_flags = 0x007ULL | VMM_PTE_SHARED | (pte & VMM_PTE_NX);
+                if (vmm_map_page(src, va, paddr, sh_flags) != 0)
+                    return -1;
+                if (vmm_map_page(dst, va, paddr, sh_flags) != 0)
+                    return -1;
+                vmm_cow_share_phys(paddr);
+                vmm_drop_identity_alias(dst, paddr);
+                uart_puts("[SHARED] fork keep va=");
+                uart_puthex64(va);
+                uart_puts("\n");
+                continue;
+            }
+
+            /*
+             * Already RO+COW (e.g. parent after a prior fork whose child exited
+             * without breaking this page): must re-share with COW bit intact.
+             * Falling through to eager copy produced child RO pages *without*
+             * VMM_PTE_COW → TLS write PF (fcntl / fork-thrice).
+             */
+            if ((pte & VMM_PTE_COW) != 0ULL && (pte & 0x001ULL) != 0ULL &&
+                (pte & 0x004ULL) != 0ULL) {
+                uint64_t cow_flags = 0x005ULL | VMM_PTE_COW | (pte & VMM_PTE_NX);
+
+                if (vmm_map_page(src, va, paddr, cow_flags) != 0)
+                    return -1;
+                if (vmm_map_page(dst, va, paddr, cow_flags) != 0)
+                    return -1;
+                /* Parent already holds one ref; add the new child sharer. */
+                vmm_cow_ref_inc(paddr);
+                vmm_drop_identity_alias(dst, paddr);
                 continue;
             }
 

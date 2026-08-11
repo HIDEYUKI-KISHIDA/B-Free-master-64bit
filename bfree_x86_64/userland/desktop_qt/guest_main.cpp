@@ -253,6 +253,8 @@ static int g_prod_post_activate_sg = 0; /* Max1: allow setVisible + SG pulse aft
 static int g_prod_post_activate_done = 0; /* one-shot arm at first loop tick */
 static int g_prod_fb_chrome_force = 0; /* one-shot FB chrome after blank SG flush */
 static QQuickRectangle *g_host_wall = nullptr;
+static QQuickRectangle *g_host_start = nullptr;
+static int g_prod_host_tree_unlocked = 0; /* post-activate: host chrome SG paint live */
 static QQuickRectangle *g_host_bar = nullptr;
 static QQuickItem *g_qml_term_item = nullptr;
 static int g_qml_term_ok = 0;
@@ -3288,7 +3290,7 @@ static void guest_prod_sg_soft_pulse_no_ur(void)
     (void)g_prod_sg_win;
 }
 
-/* Clear1: H2b-style dense SG + UpdateRequest after activate (unexpose first). */
+/* Tree1: H2b dense SG after activate — Terminal + host wallpaper/bar/start. */
 static void guest_prod_post_activate_dense_sg(void)
 {
     if (!g_prod_sg_win)
@@ -3302,7 +3304,7 @@ static void guest_prod_post_activate_dense_sg(void)
         wd->receivedExpose = false;
     }
     guest_serial_puts("[desktop_qt] post-act dense unexpose ok\n");
-    /* Terminal show while window unexposed (H2b sibling-show pattern). */
+        /* Terminal show while window unexposed (H2b sibling-show pattern). */
     if (g_qml_term_ok && g_qml_term_item) {
         guest_serial_puts("[desktop_qt] post-act term setVisible enter\n");
         g_qml_term_item->setFlag(QQuickItem::ItemHasContents, false);
@@ -3310,6 +3312,10 @@ static void guest_prod_post_activate_dense_sg(void)
         g_qml_term_item->setFlag(QQuickItem::ItemHasContents, true);
         guest_serial_puts("[desktop_qt] post-act term setVisible ok\n");
     }
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+    /* Do not create/show Controls here — new QQuickButton + setVisible PF@0
+     * during unexpose (2026-08-11). Show after dense UR below. */
+#endif
     guest_serial_puts("[desktop_qt] post-act dense reexpose enter\n");
     bfree_guest_ensure_drawhelpers();
     bfree_qpa_set_update_delivery(0);
@@ -3320,10 +3326,25 @@ static void guest_prod_post_activate_dense_sg(void)
     }
     guest_serial_puts("[desktop_qt] post-act dense reexpose flags ok\n");
     bfree_guest_set_prefer_fallback_alloc(1);
+    /* Product host chrome: dirty while delivery OFF, then one UR. */
+    guest_serial_puts("[desktop_qt] post-act host-tree paint enter\n");
+    if (g_host_wall)
+        g_host_wall->update();
+    if (g_host_bar)
+        g_host_bar->update();
+    if (g_host_start)
+        g_host_start->update();
     if (g_qml_term_item)
         g_qml_term_item->update();
-    if (QQuickItem *ci = g_prod_sg_win->contentItem())
+    if (QQuickItem *ci = g_prod_sg_win->contentItem()) {
+        const auto kids = ci->childItems();
+        for (QQuickItem *k : kids) {
+            if (k && k->isVisible() && k->flags().testFlag(QQuickItem::ItemHasContents))
+                k->update();
+        }
         ci->update();
+    }
+    guest_serial_puts("[desktop_qt] post-act host-tree paint ok\n");
     g_prod_sg_win->requestUpdate();
     guest_serial_puts("[desktop_qt] post-act dense UR enter\n");
     bfree_qpa_set_update_delivery(1);
@@ -3331,8 +3352,27 @@ static void guest_prod_post_activate_dense_sg(void)
     guest_serial_puts("[desktop_qt] post-act dense UR ok\n");
     bfree_guest_set_prefer_fallback_alloc(0);
     g_prod_sg_pulse_hold = 0;
+    g_prod_host_tree_unlocked = 1;
+    /* Leave UpdateRequest delivery ON — product tree live after arm. */
     guest_prod_sg_repair_blank_fb();
     guest_serial_puts("[desktop_qt] post-act dense SG ok\n");
+    guest_serial_puts("[desktop_qt] product host-tree unlock ok\n");
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+    /* After UR delivery ON — last chance for Gate1 Button show. */
+    if (g_controls_button_probe && g_controls_button_probe->parentItem() &&
+        !g_controls_button_probe->isVisible()) {
+        guest_serial_puts("[desktop_qt] Controls Button shell visible enter\n");
+        if (!QQuickTheme::instance()) {
+            auto *theme = new QQuickTheme;
+            theme->setFont(QQuickTheme::System, QGuiApplication::font());
+            QQuickThemePrivate::instance.reset(theme);
+        }
+        g_controls_button_probe->setHoverEnabled(false);
+        g_controls_button_probe->setFlag(QQuickItem::ItemHasContents, false);
+        g_controls_button_probe->setVisible(true);
+        guest_serial_puts("[desktop_qt] Controls Button shell visible ok\n");
+    }
+#endif
 }
 
 static void guest_qml_terminal_show_post_activate(void)
@@ -3350,7 +3390,7 @@ static void guest_qml_terminal_show_post_activate(void)
     guest_serial_puts("[desktop_qt] product post-activate Terminal show ok\n");
 }
 
-/* Max1: Terminal leaf setVisible after event loop (dense host-wall SG still deferred). */
+/* Tree1: unlock product host chrome SG after event-loop arm. */
 static void guest_prod_post_activate_arm_once(void)
 {
     if (g_prod_post_activate_done)
@@ -4388,6 +4428,23 @@ static void guest_product_host_visual_fill(QQuickWindow *qw)
     wall->setFlag(QQuickItem::ItemHasContents, true);
     wall->setVisible(true);
     g_host_wall = wall;
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+    /* Gate1 Button exists by soft-present time. Parent as contentItem sibling
+     * (same moment as wall/bar) — late parent to wall/row PF'd @0x60/0x61. */
+    if (g_controls_button_probe && !g_controls_button_probe->parentItem()) {
+        guest_serial_puts("[desktop_qt] Controls Button product host=host-fill-ci\n");
+        guest_serial_puts("[desktop_qt] Controls Button shell parent enter\n");
+        g_controls_button_probe->setVisible(false);
+        g_controls_button_probe->setParentItem(ci);
+        guest_serial_puts("[desktop_qt] Controls Button shell parent ok\n");
+        g_controls_button_probe->setX(16);
+        g_controls_button_probe->setY(72);
+        g_controls_button_probe->setZ(50);
+        /* setVisible(true) here PF@CR2=0x8 (paint/style); parent host is green. */
+        guest_serial_puts("[desktop_qt] Controls Button shell visible deferred (PF@0x8)\n");
+    }
+    /* Stand-in parent deferred — second Controls parent after show PF'd @0x8. */
+#endif
     /* Taskbar strip */
     auto *bar = new QQuickRectangle();
     bar->setObjectName(QStringLiteral("HostShellTaskbar"));
@@ -4414,6 +4471,7 @@ static void guest_product_host_visual_fill(QQuickWindow *qw)
     start->setColor(QColor(0x1a, 0x30, 0x60));
     start->setFlag(QQuickItem::ItemHasContents, true);
     start->setVisible(true);
+    g_host_start = start;
     qw->setColor(QColor(BFREE_DESK_WALL_RGB));
     guest_serial_puts("[desktop_qt] product host visual wallpaper+bar ok\n");
     /* Host tray band (DesktopShell taskbar right): Net / Notif / Clock / Quick. */
@@ -4562,6 +4620,86 @@ static void guest_product_sg_soft_present_one_leaf(QQuickWindow *qw)
     guest_prod_sg_repair_blank_fb();
     guest_serial_puts("[desktop_qt] product SG soft present done (leaf sustained; host shell auth)\n");
 }
+
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+static int g_controls_shell_parented = 0;
+
+/* Theme harden + parent + show (non-product attach / known-safe hosts). */
+static void guest_controls_shell_parent_show(QQuickItem *root)
+{
+    if (g_controls_shell_parented || !root)
+        return;
+    if (!QQuickTheme::instance()) {
+        auto *theme = new QQuickTheme;
+        theme->setFont(QQuickTheme::System, QGuiApplication::font());
+        QQuickThemePrivate::instance.reset(theme);
+        guest_serial_puts("[desktop_qt] Controls QQuickTheme seeded\n");
+    }
+    if (g_controls_button_probe) {
+        guest_serial_puts("[desktop_qt] Controls Button shell parent enter\n");
+        g_controls_button_probe->setVisible(false);
+        guest_serial_puts("[desktop_qt] Controls Button setVisible(false) ok\n");
+        g_controls_button_probe->setHoverEnabled(false);
+        guest_serial_puts("[desktop_qt] Controls Button setHoverEnabled(false) ok\n");
+        g_controls_button_probe->setLocale(QLocale::c());
+        guest_serial_puts("[desktop_qt] Controls Button setLocale ok\n");
+        g_controls_button_probe->setFont(QGuiApplication::font());
+        guest_serial_puts("[desktop_qt] Controls Button setFont ok\n");
+        g_controls_button_probe->setParentItem(root);
+        guest_serial_puts("[desktop_qt] Controls Button shell parent ok\n");
+        g_controls_button_probe->setX(16);
+        g_controls_button_probe->setY(72);
+        g_controls_button_probe->setVisible(true);
+        guest_serial_puts("[desktop_qt] Controls Button shell visible ok\n");
+        g_controls_shell_parented = 1;
+    }
+    if (g_qml_controls_button_standin) {
+        guest_serial_puts("[desktop_qt] QML Controls.Button shell parent enter\n");
+        g_qml_controls_button_standin->setVisible(false);
+        g_qml_controls_button_standin->setHoverEnabled(false);
+        g_qml_controls_button_standin->setLocale(QLocale::c());
+        g_qml_controls_button_standin->setFont(QGuiApplication::font());
+        g_qml_controls_button_standin->setParentItem(root);
+        g_qml_controls_button_standin->setX(120);
+        g_qml_controls_button_standin->setY(72);
+        guest_serial_puts("[desktop_qt] QML Controls.Button shell parent ok\n");
+        g_qml_controls_button_standin->setVisible(true);
+        guest_serial_puts("[desktop_qt] QML Controls.Button shell visible ok\n");
+        g_controls_shell_parented = 1;
+    } else if (g_qml_controls_button_root) {
+        guest_serial_puts("[desktop_qt] QML Controls.Button shell parent deferred (leaf non-Item)\n");
+    }
+}
+
+/* Product SG host: match hybrid Controls (no Theme/font) — Theme harden PF'd @0. */
+static void guest_controls_shell_parent_show_light(QQuickItem *root)
+{
+    if (g_controls_shell_parented || !root)
+        return;
+    if (g_controls_button_probe) {
+        guest_serial_puts("[desktop_qt] Controls Button shell parent enter\n");
+        g_controls_button_probe->setVisible(false);
+        g_controls_button_probe->setParentItem(root);
+        guest_serial_puts("[desktop_qt] Controls Button shell parent ok\n");
+        g_controls_button_probe->setX(16);
+        g_controls_button_probe->setY(72);
+        g_controls_button_probe->setVisible(true);
+        guest_serial_puts("[desktop_qt] Controls Button shell visible ok\n");
+        g_controls_shell_parented = 1;
+    }
+    if (g_qml_controls_button_standin) {
+        guest_serial_puts("[desktop_qt] QML Controls.Button shell parent enter\n");
+        g_qml_controls_button_standin->setVisible(false);
+        g_qml_controls_button_standin->setParentItem(root);
+        g_qml_controls_button_standin->setX(120);
+        g_qml_controls_button_standin->setY(72);
+        guest_serial_puts("[desktop_qt] QML Controls.Button shell parent ok\n");
+        g_qml_controls_button_standin->setVisible(true);
+        guest_serial_puts("[desktop_qt] QML Controls.Button shell visible ok\n");
+        g_controls_shell_parented = 1;
+    }
+}
+#endif
 
 static void guest_gate1_window_controls_probe(void)
 {
@@ -4895,27 +5033,7 @@ static void guest_attach_desktop_shell(QQuickWindow *win)
         /* Parent change runs QQuickControl::resolveFont → QQuickTheme::font.
          * Without a theme instance, guest falls into platformTheme()->font() (PF@0x58).
          * Seeded theme advanced PF to 0x94; next: hide before parent to skip shortcut. */
-        if (!QQuickTheme::instance()) {
-            auto *theme = new QQuickTheme;
-            theme->setFont(QQuickTheme::System, QGuiApplication::font());
-            QQuickThemePrivate::instance.reset(theme);
-            guest_serial_puts("[desktop_qt] Controls QQuickTheme seeded\n");
-        }
-        if (g_controls_button_probe && root) {
-            guest_serial_puts("[desktop_qt] Controls Button shell parent enter\n");
-            g_controls_button_probe->setVisible(false);
-            guest_serial_puts("[desktop_qt] Controls Button setVisible(false) ok\n");
-            g_controls_button_probe->setHoverEnabled(false);
-            guest_serial_puts("[desktop_qt] Controls Button setHoverEnabled(false) ok\n");
-            g_controls_button_probe->setLocale(QLocale::c());
-            guest_serial_puts("[desktop_qt] Controls Button setLocale ok\n");
-            g_controls_button_probe->setFont(QGuiApplication::font());
-            guest_serial_puts("[desktop_qt] Controls Button setFont ok\n");
-            g_controls_button_probe->setParentItem(root);
-            guest_serial_puts("[desktop_qt] Controls Button shell parent ok\n");
-            g_controls_button_probe->setX(16);
-            g_controls_button_probe->setY(72);
-        }
+        guest_controls_shell_parent_show(root);
         if (g_qml_controls_button_root) {
             if (auto *asItem = qobject_cast<QQuickItem *>(g_qml_controls_button_root)) {
                 const auto kids = asItem->childItems();
@@ -4943,20 +5061,7 @@ static void guest_attach_desktop_shell(QQuickWindow *win)
             g_layouts_row_probe->setY(200);
             guest_serial_puts("[desktop_qt] Layouts RowLayout shell parent ok\n");
         }
-        /* QML leaf is QObject — parent pre-created C++ stand-in (same Theme harden). */
-        if (g_qml_controls_button_standin && root) {
-            guest_serial_puts("[desktop_qt] QML Controls.Button shell parent enter\n");
-            g_qml_controls_button_standin->setVisible(false);
-            g_qml_controls_button_standin->setHoverEnabled(false);
-            g_qml_controls_button_standin->setLocale(QLocale::c());
-            g_qml_controls_button_standin->setFont(QGuiApplication::font());
-            g_qml_controls_button_standin->setParentItem(root);
-            g_qml_controls_button_standin->setX(120);
-            g_qml_controls_button_standin->setY(72);
-            guest_serial_puts("[desktop_qt] QML Controls.Button shell parent ok\n");
-        } else if (g_qml_controls_button_root) {
-            guest_serial_puts("[desktop_qt] QML Controls.Button shell parent deferred (leaf non-Item)\n");
-        }
+        /* Button/stand-in already handled by guest_controls_shell_parent_show. */
         if (g_controls_checkbox_probe && root) {
             guest_serial_puts("[desktop_qt] Controls CheckBox shell parent enter\n");
             g_controls_checkbox_probe->setVisible(false);
@@ -5779,6 +5884,18 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
         guest_serial_puts("[desktop_qt] product SG pixel authority ok\n");
         /* Soft-present already flushed; skip another pulse here (activate +
          * blanket sendPostedEvents historically PF'd before event loop). */
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+        /* Prefer host-fill-ci parent (done during visual fill). Avoid late
+         * RowLayout/wall parent (PF@0x60/0x61). */
+        if (g_controls_button_probe && g_controls_button_probe->parentItem()) {
+            guest_serial_puts("[desktop_qt] Controls Button product parent already ok\n");
+        } else if (g_ds_subset_row) {
+            guest_serial_puts("[desktop_qt] Controls Button product host=hybrid-row\n");
+            guest_controls_shell_parent_show_light(static_cast<QQuickItem *>(g_ds_subset_row));
+        } else if (g_controls_button_probe || g_qml_controls_button_standin) {
+            guest_serial_puts("[desktop_qt] Controls Button product parent deferred (no host)\n");
+        }
+#endif
     } else {
         guest_show_shell_window();
         if (g_shell_window) {
@@ -5786,6 +5903,10 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
             guest_serial_puts("[desktop_qt] shell input activate ok\n");
             guest_serial_puts("[desktop_qt] step5 input armed\n");
         }
+#if defined(BFREE_GUEST_LINK_CONTROLS)
+        /* Attach may have run before Gate1 historically; ensure parent+show. */
+        guest_controls_shell_parent_show(g_desktop_shell_item);
+#endif
     }
     /* Parent QML Item if stage2 produced one (else C++ Rectangle already attached). */
     if (QQuickItem *qi = qobject_cast<QQuickItem *>(g_qml_root)) {

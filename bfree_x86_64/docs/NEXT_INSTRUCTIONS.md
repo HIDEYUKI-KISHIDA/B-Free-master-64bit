@@ -52,12 +52,11 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-08-10（**Clear 1→2→3 完了**）
-- **Clear1（dense UR ON）:** post-activate **H2b プロトコル**（unexpose → term setVisible → reexpose → delivery ON で UR）→ `RESULT=GREEN qml-mainline-1-4-clear1` / PF=0（`post-act dense UR ok` + `post-act term setVisible ok`）
-- **Clear2（COW refcnt/free）:** 共有 phys に refcnt；COW break / munmap で `[COW] ref free`；**`mmap06_cow_refcnt` TPASS**；**`LTP_CURATED_RESULT: PASS n=241`**
-- **Clear3（TCP loss/rexmit）:** host が初回 PONG を drop → guest `tx_wait_rx` + pump `[TCP] rexmit` → RTT1 回復；`RESULT=GREEN f2-e1000-tcp-clear3`
-- **Deep1–3:** 前回どおり（setX/UR off、lazy COW break、2nd conn）
-- **① Desktop ENOSYS:** 維持（unique=0）
+- **Updated:** 2026-08-11（**NEXT 両方順**: Controls visible → mount/proc）
+- **1 Controls `setVisible(true)`:** host-fill で parent → post-act dense UR **後**に Theme+`ItemHasContents=false`+show → **visible ok**（FILL+PARENT+VIS+LOOP PF=0）
+- **2 mount↔`/proc/mounts`:** 動的スロット反映；BusyBox に umount 無しのため **p8test** で mount+umount2 検証 → **`P8_MOUNTS_OK` PASS**
+- **RLIMIT_NOFILE / flock / COW:** 前回どおり維持
+- **soft-rel:** 据え置き
 - **Next:** スマホ指示待ち
 
 ---

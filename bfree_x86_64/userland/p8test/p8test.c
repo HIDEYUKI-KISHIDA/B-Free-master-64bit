@@ -36,6 +36,9 @@ typedef unsigned long uintptr_t;
 #define __NR_getpid 39
 #define __NR_mremap 25
 #define __NR_membarrier 324
+#define __NR_mount 165
+#define __NR_umount2 166
+#define __NR_mkdir 83
 #define MAP_SHARED 1
 #define SIGCHLD 17
 #define MREMAP_MAYMOVE 1
@@ -698,6 +701,69 @@ static int test_persist_vfile(void)
     return 0;
 }
 
+static int buf_has(const char *buf, long n, const char *needle)
+{
+    long i;
+    long j;
+    long nl = 0;
+
+    while (needle[nl]) {
+        ++nl;
+    }
+    if (nl == 0 || n < nl) {
+        return 0;
+    }
+    for (i = 0; i <= n - nl; ++i) {
+        for (j = 0; j < nl; ++j) {
+            if (buf[i + j] != needle[j]) {
+                break;
+            }
+        }
+        if (j == nl) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int test_mounts(void)
+{
+    char buf[512];
+    long fd;
+    long n;
+    long rc;
+
+    (void)sys3(__NR_mkdir, (long)"/mnt", 0755, 0);
+    (void)sys3(__NR_mkdir, (long)"/mnt/p8m", 0755, 0);
+    rc = sys6(__NR_mount, (long)"none", (long)"/mnt/p8m", (long)"tmpfs", 0, 0, 0);
+    if (rc != 0) {
+        return -1;
+    }
+    fd = sys3(__NR_open, (long)"/proc/mounts", O_RDONLY, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    n = sys3(__NR_read, fd, (long)buf, (long)(sizeof(buf) - 1));
+    (void)sys3(__NR_close, fd, 0, 0);
+    if (n <= 0 || !buf_has(buf, n, "/mnt/p8m")) {
+        return -1;
+    }
+    rc = sys3(__NR_umount2, (long)"/mnt/p8m", 0, 0);
+    if (rc != 0) {
+        return -1;
+    }
+    fd = sys3(__NR_open, (long)"/proc/mounts", O_RDONLY, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    n = sys3(__NR_read, fd, (long)buf, (long)(sizeof(buf) - 1));
+    (void)sys3(__NR_close, fd, 0, 0);
+    if (n < 0 || buf_has(buf, n, "/mnt/p8m")) {
+        return -1;
+    }
+    return 0;
+}
+
 void p8_main(void)
 {
     int fail = 0;
@@ -718,6 +784,12 @@ void p8_main(void)
         put("P8_FLOCK_OK\n");
     } else {
         put("P8_FLOCK_FAIL\n");
+        fail = 1;
+    }
+    if (test_mounts() == 0) {
+        put("P8_MOUNTS_OK\n");
+    } else {
+        put("P8_MOUNTS_FAIL\n");
         fail = 1;
     }
     if (test_sigmask() == 0) {
