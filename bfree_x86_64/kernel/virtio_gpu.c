@@ -371,7 +371,7 @@ static int vgpu_device_init(const bfree_gpu_device_info_t *device)
     vgpu_common_write32(0x00, 1);
     vgpu_common_write32(0x04, 0);
     vgpu_common_write32(0x08, 1);
-    vgpu_common_write32(0x0C, 1U << VIRTIO_F_VERSION_1);
+    vgpu_common_write32(0x0C, 1U << 0); /* accept minimal features */
     vgpu_common_write8(0x14, VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_FEATURES_OK);
 
     if (vgpu_queue_init() != 0) {
