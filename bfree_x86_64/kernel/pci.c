@@ -161,9 +161,9 @@ static void pci_handle_display_controller(uint16_t vendor_id,
         }
         fbdev_refresh_backend_info();
         {
-            extern void fb_clear_screen(uint32_t rgb24);
-            fb_clear_screen(0xFF7A8FA8u);
-            uart_puts("[PCI] FB cleared after DISPI sync\n");
+            extern void fb_clear_vram_all(uint32_t rgb24);
+            fb_clear_vram_all(0xFF7A8FA8u);
+            uart_puts("[PCI] FB VRAM cleared after DISPI/MB2 sync\n");
         }
         g_display_controller_selected = 1;
     }

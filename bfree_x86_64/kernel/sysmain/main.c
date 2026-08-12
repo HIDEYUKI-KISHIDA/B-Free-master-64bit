@@ -649,11 +649,11 @@ void knl_main(void) {
                 uart_puthex64((uint64_t)vi.height);
                 uart_puts("\n");
                 uart_puts("[SPLASH] VRAM mapped, drawing brand splash...\n");
-                /* PCI/gpu_backend refreshed pitch via DISPI; clear stale mb2-era pixels
-                 * then one brand frame at the authoritative geometry. */
-                extern void fb_clear_screen(uint32_t rgb24);
+                /* PCI/gpu_backend refreshed pitch via DISPI; clear entire VRAM then
+                 * one brand frame at the authoritative geometry. */
+                extern void fb_clear_vram_all(uint32_t rgb24);
                 extern void fb_draw_splash(void);
-                fb_clear_screen(0xFFFFFFu);
+                fb_clear_vram_all(0xFF7A8FA8u);
                 fb_draw_splash();
                 uart_puts("[BOOT] Framebuffer splash drawn.\n");
                 uart_puts("[BOOT] Brand splash anim done -> ring3 init.\n");

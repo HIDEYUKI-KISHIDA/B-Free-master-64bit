@@ -1728,6 +1728,20 @@ static int guest_clamp_mouse(int v, int lo, int hi)
     return v;
 }
 
+static int guest_mouse_max_x(void)
+{
+    if (guest_fb_ready() && guest_fb_w() > 0u)
+        return (int)guest_fb_w() - 1;
+    return 1023;
+}
+
+static int guest_mouse_max_y(void)
+{
+    if (guest_fb_ready() && guest_fb_h() > 0u)
+        return (int)guest_fb_h() - 1;
+    return 767;
+}
+
 static void guest_desk_mark_dirty(void)
 {
     g_desk_dirty = 1;
@@ -3101,7 +3115,8 @@ static void guest_paint_fb_desktopshell(void)
         return;
     }
     g_prod_fb_chrome_force = 0;
-    if (g_desk_paint_count == 0) {
+    if (g_desk_paint_count == 0
+        || (g_fb_only_pixel_auth && g_desk_paint_count < 5)) {
         guest_splash_disable();
         if (g_prod_sg_win)
             guest_fb_sync_qwindow(g_prod_sg_win);
@@ -3110,7 +3125,8 @@ static void guest_paint_fb_desktopshell(void)
         auto *fb0 = reinterpret_cast<unsigned char *>(
             static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
         guest_fb_erase_splash_remnants(fb0, guest_fb_pitch());
-        guest_serial_puts("[desktop_qt] splash remnants erased (FB-only auth)\n");
+        if (g_desk_paint_count == 0)
+            guest_serial_puts("[desktop_qt] splash remnants erased (FB-only auth)\n");
     }
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     const unsigned pitch = guest_fb_pitch();
@@ -3994,8 +4010,8 @@ static void guest_wm_end(void)
 
 static void guest_desk_on_click(int mx, int my)
 {
-    mx = guest_clamp_mouse(mx, 0, 1023);
-    my = guest_clamp_mouse(my, 0, 767);
+    mx = guest_clamp_mouse(mx, 0, guest_mouse_max_x());
+    my = guest_clamp_mouse(my, 0, guest_mouse_max_y());
     g_desk_mx = mx;
     g_desk_my = my;
     if (g_desk_asleep) {
@@ -4148,8 +4164,8 @@ static void guest_qpa_mouse_bridge(int mx, int my, unsigned buttons, unsigned pr
                                   int etype, int changed)
 {
     (void)changed;
-    mx = guest_clamp_mouse(mx, 0, 1023);
-    my = guest_clamp_mouse(my, 0, 767);
+    mx = guest_clamp_mouse(mx, 0, guest_mouse_max_x());
+    my = guest_clamp_mouse(my, 0, guest_mouse_max_y());
     const int moved = (mx != g_desk_mx || my != g_desk_my);
     g_desk_mx = mx;
     g_desk_my = my;
@@ -4191,8 +4207,8 @@ static void guest_desk_pump_input(void)
         if (g_poll_raw.type == 3) {
             if (g_desk_qpa_input)
                 continue; /* QPA bridge already owns mouse */
-            const int mx = g_poll_raw.mouse_x < 0 ? 0 : (g_poll_raw.mouse_x > 1023 ? 1023 : g_poll_raw.mouse_x);
-            const int my = g_poll_raw.mouse_y < 0 ? 0 : (g_poll_raw.mouse_y > 767 ? 767 : g_poll_raw.mouse_y);
+            const int mx = guest_clamp_mouse(g_poll_raw.mouse_x, 0, guest_mouse_max_x());
+            const int my = guest_clamp_mouse(g_poll_raw.mouse_y, 0, guest_mouse_max_y());
             const uint32_t btn = g_poll_raw.mouse_btn;
             if ((btn & 1u) && !(g_desk_prev_btn & 1u))
                 guest_desk_on_click(mx, my);
@@ -4254,8 +4270,10 @@ static QObject *guest_product_load_child_url(QQmlEngine *eng, const char *urlUtf
     guest_serial_puts("\n");
     QQmlComponent c(eng, QUrl(QString::fromUtf8(urlUtf8)),
                     QQmlComponent::PreferSynchronous);
+    bfree_qpa_set_update_delivery(0);
     for (int spin = 0; c.isLoading() && spin < 64; ++spin)
         QCoreApplication::processEvents();
+    bfree_qpa_set_update_delivery(0);
     guest_serial_puts("[desktop_qt] product child IR status=");
     guest_serial_hex_u64((uint64_t)(unsigned)c.status());
     guest_serial_puts(" tag=");
@@ -6098,13 +6116,6 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
         guest_serial_puts(" pitch=0x");
         guest_serial_hex_u64(guest_fb_pitch());
         guest_serial_puts("\n");
-        /* Keep spinner moving while heap/QGui come up (stage banners alone are too sparse). */
-        for (int i = 0; i < 10; ++i) {
-            for (volatile unsigned d = 0; d < 400000u; ++d)
-                __asm__ volatile("pause");
-            guest_splash_advance();
-            guest_serial_puts("[desktop_qt] splash frame ok\n");
-        }
         guest_splash_disable();
         {
             auto *fb = reinterpret_cast<unsigned char *>(

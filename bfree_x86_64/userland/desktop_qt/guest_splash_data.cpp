@@ -6132,17 +6132,12 @@ extern "C" int guest_splash_arm(void)
     g_splash_fb_pitch = fbinfo.pitch;
     g_splash_fb_w = fbinfo.width;
     g_splash_fb_h = fbinfo.height;
-    /* Canonicalize: row bytes may exceed width*bpp/8 (VBE padding). */
-    if (g_splash_fb_pitch >= 4u && (g_splash_fb_pitch % 4u) == 0u) {
-        const unsigned row_px = g_splash_fb_pitch / 4u;
-        if (row_px > g_splash_fb_w)
-            g_splash_fb_w = row_px;
-    }
+    /* Logical width comes from the kernel — never derive from pitch/4 (padding). */
     g_splash_fb_ready = 1;
 
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     splash_fill_white(fb, g_splash_fb_pitch, g_splash_fb_w, g_splash_fb_h);
-    guest_splash_show(0);
+    /* Skip animated splash — partial logo frames layered with desktop paint. */
     return 1;
 }
 
