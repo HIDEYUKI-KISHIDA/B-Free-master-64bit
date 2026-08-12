@@ -1326,7 +1326,7 @@ static void guest_paint_fb_direct(void)
     /* Defaults match QPA probe path when ioctl is unavailable mid-session. */
     const unsigned width = guest_fb_w();
     const unsigned height = guest_fb_h();
-    const unsigned pitch = width * 4;
+    const unsigned pitch = guest_fb_pitch();
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     guest_serial_puts("[desktop_qt] paint FB direct\n");
     for (unsigned y = 0; y < height; ++y) {
@@ -1671,6 +1671,28 @@ static int g_desk_dirty = 1;
 static int g_desk_layer_dirty = 1;
 static unsigned char g_desk_bg_cache[1920u * 1080u * 4u];
 static int g_desk_bg_cache_ok = 0;
+
+/* Tight row copy — FB pitch may exceed width*4 (VBE padding); never memcpy pitch*height blindly. */
+static void guest_fb_save_bg_cache(const unsigned char *fb, unsigned pitch)
+{
+    const unsigned w = guest_fb_w();
+    const unsigned h = guest_fb_h();
+    const unsigned row_bytes = w * 4u;
+    const unsigned copy_h = h < 1080u ? h : 1080u;
+    for (unsigned y = 0; y < copy_h; ++y)
+        memcpy(g_desk_bg_cache + (size_t)y * row_bytes, fb + (size_t)y * pitch, row_bytes);
+    g_desk_bg_cache_ok = 1;
+}
+
+static void guest_fb_restore_bg_cache(unsigned char *fb, unsigned pitch)
+{
+    const unsigned w = guest_fb_w();
+    const unsigned h = guest_fb_h();
+    const unsigned row_bytes = w * 4u;
+    const unsigned copy_h = h < 1080u ? h : 1080u;
+    for (unsigned y = 0; y < copy_h; ++y)
+        memcpy(fb + (size_t)y * pitch, g_desk_bg_cache + (size_t)y * row_bytes, row_bytes);
+}
 static int g_prod_badge_hidden = 0;
 static int g_host_tree_auth = 0; /* Themes/Widgets/Wabi via qrc URL on product Window */
 static int g_host_themes_ok = 0;
@@ -3050,7 +3072,7 @@ static void guest_paint_fb_desktopshell(void)
     const int tbH = g_desk_tb_h;
     const int win_only = (g_desk_layer_dirty == 2 && g_desk_bg_cache_ok != 0);
     if (win_only) {
-        memcpy(fb, g_desk_bg_cache, sizeof(g_desk_bg_cache));
+        guest_fb_restore_bg_cache(fb, pitch);
     } else {
     /* G1: SG owns wallpaper + icon tiles + taskbar strip — do not FB overwrite. */
     if (!g_sg_desktop_auth) {
@@ -3202,11 +3224,11 @@ static void guest_paint_fb_desktopshell(void)
         fb_draw_text(fb, pitch, 100, (int)guest_fb_h() - tbH + 20, "Search", 0xFF557090u, 1);
         char clockBuf[16];
         guest_desk_clock_text(clockBuf, (int)sizeof(clockBuf));
-        fb_draw_text(fb, pitch, 896, (int)guest_fb_h() - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
+        fb_draw_text(fb, pitch, (int)guest_fb_w() - 128, (int)guest_fb_h() - tbH + 20, clockBuf,
+                     0xFFE2E8F0u, 1);
     }
 
-    memcpy(g_desk_bg_cache, fb, sizeof(g_desk_bg_cache));
-    g_desk_bg_cache_ok = 1;
+    guest_fb_save_bg_cache(fb, pitch);
     } /* !win_only chrome */
 
     guest_paint_fb_windows(fb, pitch);
@@ -3300,7 +3322,9 @@ static int guest_fb_blank_or_white(void)
 {
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     const unsigned pitch = guest_fb_pitch();
-    const uint32_t c = *reinterpret_cast<uint32_t *>(fb + 384u * pitch + 512u * 4u);
+    const unsigned cy = guest_fb_h() / 2u;
+    const unsigned cx = guest_fb_w() / 2u;
+    const uint32_t c = *reinterpret_cast<uint32_t *>(fb + (size_t)cy * pitch + (size_t)cx * 4u);
     const unsigned r = (c >> 16) & 0xffu;
     const unsigned g = (c >> 8) & 0xffu;
     const unsigned b = c & 0xffu;
