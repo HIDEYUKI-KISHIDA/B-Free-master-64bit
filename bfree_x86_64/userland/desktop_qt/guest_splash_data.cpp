@@ -6058,6 +6058,7 @@ static const unsigned g_splash_sp_h[] = {
 
 static unsigned g_splash_frame = 0;
 static int g_splash_fb_ready = 0;
+static int g_splash_paint_disabled = 0;
 static unsigned g_splash_fb_pitch = 1920u * 4u;
 static unsigned g_splash_fb_w = 1920u;
 static unsigned g_splash_fb_h = 1080u;
@@ -6131,6 +6132,12 @@ extern "C" int guest_splash_arm(void)
     g_splash_fb_pitch = fbinfo.pitch;
     g_splash_fb_w = fbinfo.width;
     g_splash_fb_h = fbinfo.height;
+    /* Canonicalize: row bytes may exceed width*bpp/8 (VBE padding). */
+    if (g_splash_fb_pitch >= 4u && (g_splash_fb_pitch % 4u) == 0u) {
+        const unsigned row_px = g_splash_fb_pitch / 4u;
+        if (row_px > g_splash_fb_w)
+            g_splash_fb_w = row_px;
+    }
     g_splash_fb_ready = 1;
 
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
@@ -6139,9 +6146,14 @@ extern "C" int guest_splash_arm(void)
     return 1;
 }
 
+extern "C" void guest_splash_disable(void)
+{
+    g_splash_paint_disabled = 1;
+}
+
 extern "C" void guest_splash_show(unsigned frame)
 {
-    if (!g_splash_fb_ready)
+    if (!g_splash_fb_ready || g_splash_paint_disabled)
         return;
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     const unsigned pitch = g_splash_fb_pitch;
@@ -6173,7 +6185,7 @@ extern "C" void guest_splash_show(unsigned frame)
 
 extern "C" void guest_splash_advance(void)
 {
-    if (!g_splash_fb_ready)
+    if (!g_splash_fb_ready || g_splash_paint_disabled)
         return;
     g_splash_frame = (g_splash_frame + 1u) % (g_splash_nframes ? g_splash_nframes : 1u);
     guest_splash_show(g_splash_frame);

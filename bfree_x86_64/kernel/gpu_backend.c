@@ -244,15 +244,14 @@ static int mmio_gpu_backend_init(const bfree_gpu_device_info_t *device, tk2gpu_f
         fbinfo->pitch  = xres * ((bpp + 7U) / 8U);
         fbinfo->phys_addr = device->vram_base != 0 ? (uint64_t)device->vram_base : (uint64_t)fallback_info.vram_phys;
 
-        /* G3: VIRT_HEIGHT を 2*yres に設定してダブルバッファ領域を確保 */
+        /* Single-buffer scanout: VIRT_HEIGHT=2*yres caused the display to show a
+         * different VRAM band than guest mmap (layered / wrong-scale artifacts). */
         outw16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_VIRT_HEIGHT);
-        outw16(VBE_DISPI_IOPORT_DATA,  (uint16_t)(yres * 2U));
-        /* Y_OFFSET を 0 にリセット (フロントバッファを表示) */
+        outw16(VBE_DISPI_IOPORT_DATA,  yres);
         outw16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_Y_OFFSET);
         outw16(VBE_DISPI_IOPORT_DATA,  0);
 
-        /* sizeはダブルバッファ分を確保 (pitch * yres * 2) */
-        fbinfo->size = (uint64_t)fbinfo->pitch * (uint64_t)(yres * 2U);
+        fbinfo->size = (uint64_t)fbinfo->pitch * (uint64_t)yres;
         return 0;
     }
 

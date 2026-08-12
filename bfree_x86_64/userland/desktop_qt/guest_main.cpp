@@ -2512,6 +2512,8 @@ static void guest_sg_pulse_present(QQuickWindow *win)
 {
     int pulse;
 
+    if (g_fb_only_pixel_auth)
+        return;
     if (!win)
         return;
     bfree_guest_ensure_drawhelpers();
@@ -2578,6 +2580,8 @@ static int guest_w32_force_drain_bar(QQuickWindow *win)
 {
     int pulse;
 
+    if (g_fb_only_pixel_auth)
+        return 0;
     if (!win || !g_w31_chrome.bar)
         return 0;
     guest_serial_puts("[desktop_qt] W3.2 SG bar force-expose begin\n");
@@ -2959,11 +2963,31 @@ static void guest_fb_fill_desktop_bg(unsigned char *fb, unsigned pitch, int desk
 }
 
 /* Erase kernel splash / partial SG flush before first FB desktop paint. */
+static void guest_fb_clear_entire(unsigned char *fb, unsigned pitch, unsigned fh, uint32_t argb)
+{
+    const unsigned row_px = pitch / 4u;
+    for (unsigned y = 0; y < fh; ++y) {
+        auto *row = reinterpret_cast<uint32_t *>(fb + (size_t)y * pitch);
+        for (unsigned x = 0; x < row_px; ++x)
+            row[x] = argb;
+    }
+}
+
 static void guest_fb_erase_splash_remnants(unsigned char *fb, unsigned pitch)
 {
     const int tbH = g_desk_tb_h;
+    guest_fb_clear_entire(fb, pitch, guest_fb_h(), 0xFF7A8FA8u);
     guest_fb_fill_desktop_bg(fb, pitch, (int)guest_fb_h() - tbH, BFREE_DESK_WALL_ARGB);
     fb_fill_rect(fb, pitch, 0, (int)guest_fb_h() - tbH, (int)guest_fb_w(), tbH, 0xFF0D1B2Au);
+}
+
+/* Force every QWindow to match FB0 pixel grid (QML defaults are often ~800x600). */
+static void guest_fb_sync_qwindow(QWindow *win)
+{
+    if (!win)
+        return;
+    win->setPosition(0, 0);
+    win->resize((int)guest_fb_w(), (int)guest_fb_h());
 }
 
 static void guest_paint_fb_one_window(unsigned char *fb, unsigned pitch, int wi);
@@ -3078,6 +3102,11 @@ static void guest_paint_fb_desktopshell(void)
     }
     g_prod_fb_chrome_force = 0;
     if (g_desk_paint_count == 0) {
+        guest_splash_disable();
+        if (g_prod_sg_win)
+            guest_fb_sync_qwindow(g_prod_sg_win);
+        if (g_shell_window)
+            guest_fb_sync_qwindow(g_shell_window);
         auto *fb0 = reinterpret_cast<unsigned char *>(
             static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
         guest_fb_erase_splash_remnants(fb0, guest_fb_pitch());
@@ -4755,6 +4784,7 @@ static void guest_product_sg_soft_present_one_leaf(QQuickWindow *qw)
     /* Product path: H2b flush + H3 Clock (ungated from HOLE_PROBE). */
     guest_product_h2_sg_flush(qw);
     guest_product_h3_kde_ir();
+    guest_fb_sync_qwindow(qw);
     /* Hide debug PROD SG badge after probe — not part of host DesktopShell. */
     if (g_ds_product_content_badge) {
         g_ds_product_content_badge->setVisible(false);
@@ -5322,6 +5352,7 @@ static void guest_attach_desktop_shell(QQuickWindow *win)
 
     g_desktop_shell_item = root;
     win->setColor(QColor(0x7a, 0x8f, 0xa8));
+    guest_fb_sync_qwindow(win);
     guest_serial_puts("[desktop_qt] DesktopShellGuest attached\n");
 
     guest_w3_build_window_layer(content);
@@ -5376,8 +5407,7 @@ static void guest_show_shell_window(void)
     guest_desk_mark_dirty();
     guest_desk_flush_paint();
     g_shell_window = new QWindow();
-    g_shell_window->resize((int)guest_fb_w(), (int)guest_fb_h());
-    g_shell_window->setPosition(0, 0);
+    guest_fb_sync_qwindow(g_shell_window);
     g_shell_window->create();
     g_shell_window->setVisible(true);
     guest_serial_puts("[desktop_qt] QWindow visible ok\n");
@@ -5795,10 +5825,7 @@ static void guest_ctor_qml_phase(void)
                     guest_serial_puts("[desktop_qt] DesktopShell Window QML beginCreate ok\n");
                     guest_serial_puts("[desktop_qt] DesktopShell Window QML root is QWindow\n");
                     guest_serial_puts("[desktop_qt] DesktopShell product Window\n");
-                    if (qw->width() <= 0)
-                        qw->resize((int)guest_fb_w(), qw->height() > 0 ? qw->height() : (int)guest_fb_h());
-                    if (qw->height() <= 0)
-                        qw->resize(qw->width() > 0 ? qw->width() : (int)guest_fb_w(), (int)guest_fb_h());
+                    guest_fb_sync_qwindow(qw);
                     /* Window content visualization — contentItem path (Gate1-proven).
                      * Avoid setParentItem on IR Item tree (PF@0x238); badge on contentItem. */
                     if (QQuickItem *ci = qw->contentItem()) {
@@ -6025,10 +6052,10 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
         g_splash_armed = 1;
         guest_serial_puts("[desktop_qt] splash show ok\n");
         guest_serial_puts("[desktop_qt] FB ");
-        guest_serial_hex_u64(guest_fb_w());
+        guest_serial_putu(guest_fb_w());
         guest_serial_puts("x");
-        guest_serial_hex_u64(guest_fb_h());
-        guest_serial_puts(" pitch=");
+        guest_serial_putu(guest_fb_h());
+        guest_serial_puts(" pitch=0x");
         guest_serial_hex_u64(guest_fb_pitch());
         guest_serial_puts("\n");
         /* Keep spinner moving while heap/QGui come up (stage banners alone are too sparse). */
@@ -6150,6 +6177,9 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
         }
         /* Display insurance: one FB chrome frame so brand-splash white cannot stick
          * if SG clear/composite is incomplete (headless center-sample can miss it). */
+        guest_splash_disable();
+        if (g_prod_sg_win)
+            guest_fb_sync_qwindow(g_prod_sg_win);
         g_prod_fb_chrome_force = 1;
         guest_paint_fb_desktopshell();
         guest_serial_puts("[desktop_qt] product FB chrome underlay ok\n");
