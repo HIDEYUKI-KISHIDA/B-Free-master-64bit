@@ -1,6 +1,7 @@
 #include "gpu_backend.h"
 #include "cache.h"
 #include "vbe_gop.h"
+#include "virtio_gpu.h"
 
 #define PCI_VENDOR_QEMU_LEGACY 0x1234
 #define PCI_DEVICE_QEMU_STD_VGA 0x1111
@@ -17,9 +18,13 @@
 #define VBE_DISPI_INDEX_XRES        0x1
 #define VBE_DISPI_INDEX_YRES        0x2
 #define VBE_DISPI_INDEX_BPP         0x3
+#define VBE_DISPI_INDEX_ENABLE      0x4
+#define VBE_DISPI_INDEX_VIRT_WIDTH  0x6
 #define VBE_DISPI_INDEX_VIRT_HEIGHT 0x7
 #define VBE_DISPI_INDEX_X_OFFSET    0x8
 #define VBE_DISPI_INDEX_Y_OFFSET    0x9
+#define VBE_DISPI_ENABLED           0x01
+#define VBE_DISPI_LFB_ENABLED       0x40
 
 /* 標準VGA 入力ステータスレジスタ1 (VBlank検出用) */
 #define VGA_INPUT_STATUS_1          0x3DA
@@ -75,10 +80,34 @@ static uint8_t inb8(uint16_t port)
     return value;
 }
 
+extern void uart_puts(const char *);
+extern void uart_puthex64(uint64_t);
+
 static uint16_t vbe_dispi_read(uint16_t index)
 {
     outw16(VBE_DISPI_IOPORT_INDEX, index);
     return inw16(VBE_DISPI_IOPORT_DATA);
+}
+
+static void vbe_dispi_write(uint16_t index, uint16_t value)
+{
+    outw16(VBE_DISPI_IOPORT_INDEX, index);
+    outw16(VBE_DISPI_IOPORT_DATA, value);
+}
+
+/* Force Bochs DISPI scanout to match Multiboot2 / vbe_gop geometry. */
+static void bochs_dispi_apply_mode(uint16_t width, uint16_t height, uint16_t bpp)
+{
+    vbe_dispi_write(VBE_DISPI_INDEX_ENABLE, 0);
+    vbe_dispi_write(VBE_DISPI_INDEX_XRES, width);
+    vbe_dispi_write(VBE_DISPI_INDEX_YRES, height);
+    vbe_dispi_write(VBE_DISPI_INDEX_BPP, bpp);
+    vbe_dispi_write(VBE_DISPI_INDEX_VIRT_WIDTH, width);
+    vbe_dispi_write(VBE_DISPI_INDEX_VIRT_HEIGHT, height);
+    vbe_dispi_write(VBE_DISPI_INDEX_X_OFFSET, 0);
+    vbe_dispi_write(VBE_DISPI_INDEX_Y_OFFSET, 0);
+    vbe_dispi_write(VBE_DISPI_INDEX_ENABLE,
+                    (uint16_t)(VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED));
 }
 
 static int is_bochs_qemu_vga_device(const bfree_gpu_device_info_t *device)
@@ -215,6 +244,9 @@ static int mmio_gpu_backend_init(const bfree_gpu_device_info_t *device, tk2gpu_f
     vbe_get_info(&fallback_info);
 
     if (device->vendor_id == PCI_VENDOR_VIRTIO && device->device_id == PCI_DEVICE_VIRTIO_VGA) {
+        if (virtio_gpu_activate(device, fbinfo) == 0) {
+            return 0;
+        }
         fbinfo->width = fallback_info.width;
         fbinfo->height = fallback_info.height;
         fbinfo->bpp = fallback_info.bpp;
@@ -229,26 +261,62 @@ static int mmio_gpu_backend_init(const bfree_gpu_device_info_t *device, tk2gpu_f
         uint16_t yres = vbe_dispi_read(VBE_DISPI_INDEX_YRES);
         uint16_t bpp = vbe_dispi_read(VBE_DISPI_INDEX_BPP);
         uint16_t dispi_id = vbe_dispi_read(VBE_DISPI_INDEX_ID);
+        uint16_t want_w = (uint16_t)fallback_info.width;
+        uint16_t want_h = (uint16_t)fallback_info.height;
+        uint16_t want_bpp = (uint16_t)(fallback_info.bpp ? fallback_info.bpp : 32U);
+        uint32_t want_pitch = fallback_info.pitch;
 
-        if (dispi_id == 0 || xres == 0 || yres == 0 || bpp == 0) {
+        if (dispi_id == 0) {
             return -1;
+        }
+        if (xres == 0 || yres == 0 || bpp == 0) {
+            if (want_w == 0 || want_h == 0) {
+                return -1;
+            }
+            xres = want_w;
+            yres = want_h;
+            bpp = want_bpp;
+        }
+        if (want_w != 0 && want_h != 0
+            && (xres != want_w || yres != want_h || bpp != want_bpp)) {
+            uart_puts("[GPU] DISPI/MB2 mismatch dispi=");
+            uart_puthex64((uint64_t)xres);
+            uart_puts("x");
+            uart_puthex64((uint64_t)yres);
+            uart_puts(" mb2=");
+            uart_puthex64((uint64_t)want_w);
+            uart_puts("x");
+            uart_puthex64((uint64_t)want_h);
+            uart_puts(" -> reprogram\n");
+            bochs_dispi_apply_mode(want_w, want_h, want_bpp);
+            xres = want_w;
+            yres = want_h;
+            bpp = want_bpp;
+        } else {
+            /* Single-buffer scanout even when dimensions already match. */
+            vbe_dispi_write(VBE_DISPI_INDEX_VIRT_WIDTH, xres);
+            vbe_dispi_write(VBE_DISPI_INDEX_VIRT_HEIGHT, yres);
+            vbe_dispi_write(VBE_DISPI_INDEX_X_OFFSET, 0);
+            vbe_dispi_write(VBE_DISPI_INDEX_Y_OFFSET, 0);
         }
 
         fbinfo->width  = xres;
         fbinfo->height = yres;
         fbinfo->bpp    = bpp;
-        fbinfo->pitch  = xres * ((bpp + 7U) / 8U);
-        fbinfo->phys_addr = device->vram_base != 0 ? (uint64_t)device->vram_base : (uint64_t)fallback_info.vram_phys;
-
-        /* G3: VIRT_HEIGHT を 2*yres に設定してダブルバッファ領域を確保 */
-        outw16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_VIRT_HEIGHT);
-        outw16(VBE_DISPI_IOPORT_DATA,  (uint16_t)(yres * 2U));
-        /* Y_OFFSET を 0 にリセット (フロントバッファを表示) */
-        outw16(VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_Y_OFFSET);
-        outw16(VBE_DISPI_IOPORT_DATA,  0);
-
-        /* sizeはダブルバッファ分を確保 (pitch * yres * 2) */
-        fbinfo->size = (uint64_t)fbinfo->pitch * (uint64_t)(yres * 2U);
+        if (want_pitch != 0U
+            && want_pitch >= (uint32_t)xres * ((uint32_t)(bpp + 7U) / 8U)) {
+            fbinfo->pitch = want_pitch;
+        } else {
+            fbinfo->pitch = (uint32_t)xres * ((uint32_t)(bpp + 7U) / 8U);
+        }
+        fbinfo->phys_addr = device->vram_base != 0
+            ? (uint64_t)device->vram_base
+            : (uint64_t)fallback_info.vram_phys;
+        if (fallback_info.vram_size != 0) {
+            fbinfo->size = (uint64_t)fallback_info.vram_size;
+        } else {
+            fbinfo->size = (uint64_t)fbinfo->pitch * (uint64_t)yres;
+        }
         return 0;
     }
 
@@ -510,7 +578,14 @@ int gpu_backend_ioctl(int cmd, void *arg)
         return TK2GPU_ENOSYS;
 
     case TK2GPU_IOCTL_SUBMIT_CMD:
-        /* Phase 3: VirtIO-GPUコマンド送信の実装ポイント */
+        if (virtio_gpu_active()) {
+            tk2gpu_command_t *cmd = (tk2gpu_command_t *)arg;
+            (void)cmd;
+            if (virtio_gpu_resource_flush(0, 0, 0, g_gpu_backend_state.fbinfo.width,
+                                          g_gpu_backend_state.fbinfo.height) == 0) {
+                return TK2GPU_OK;
+            }
+        }
         return TK2GPU_ENOSYS;
     case TK2GPU_IOCTL_GET_BACKEND:
         if (!arg) {

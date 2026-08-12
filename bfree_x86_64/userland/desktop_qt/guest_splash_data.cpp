@@ -6058,9 +6058,10 @@ static const unsigned g_splash_sp_h[] = {
 
 static unsigned g_splash_frame = 0;
 static int g_splash_fb_ready = 0;
-static unsigned g_splash_fb_pitch = 4096u;
-static unsigned g_splash_fb_w = 1024u;
-static unsigned g_splash_fb_h = 768u;
+static int g_splash_paint_disabled = 0;
+static unsigned g_splash_fb_pitch = 1920u * 4u;
+static unsigned g_splash_fb_w = 1920u;
+static unsigned g_splash_fb_h = 1080u;
 
 typedef struct {
     void *addr;
@@ -6131,17 +6132,23 @@ extern "C" int guest_splash_arm(void)
     g_splash_fb_pitch = fbinfo.pitch;
     g_splash_fb_w = fbinfo.width;
     g_splash_fb_h = fbinfo.height;
+    /* Logical width comes from the kernel — never derive from pitch/4 (padding). */
     g_splash_fb_ready = 1;
 
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     splash_fill_white(fb, g_splash_fb_pitch, g_splash_fb_w, g_splash_fb_h);
-    guest_splash_show(0);
+    /* Skip animated splash — partial logo frames layered with desktop paint. */
     return 1;
+}
+
+extern "C" void guest_splash_disable(void)
+{
+    g_splash_paint_disabled = 1;
 }
 
 extern "C" void guest_splash_show(unsigned frame)
 {
-    if (!g_splash_fb_ready)
+    if (!g_splash_fb_ready || g_splash_paint_disabled)
         return;
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     const unsigned pitch = g_splash_fb_pitch;
@@ -6173,8 +6180,28 @@ extern "C" void guest_splash_show(unsigned frame)
 
 extern "C" void guest_splash_advance(void)
 {
-    if (!g_splash_fb_ready)
+    if (!g_splash_fb_ready || g_splash_paint_disabled)
         return;
     g_splash_frame = (g_splash_frame + 1u) % (g_splash_nframes ? g_splash_nframes : 1u);
     guest_splash_show(g_splash_frame);
+}
+
+extern "C" unsigned guest_fb_w(void)
+{
+    return g_splash_fb_w;
+}
+
+extern "C" unsigned guest_fb_h(void)
+{
+    return g_splash_fb_h;
+}
+
+extern "C" unsigned guest_fb_pitch(void)
+{
+    return g_splash_fb_pitch;
+}
+
+extern "C" int guest_fb_ready(void)
+{
+    return g_splash_fb_ready;
 }

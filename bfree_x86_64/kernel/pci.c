@@ -143,6 +143,9 @@ static void pci_handle_display_controller(uint16_t vendor_id,
     gpu_device.device_id = device_id;
     gpu_device.class_code = class_code;
     gpu_device.subclass = subclass;
+    gpu_device.pci_bus = (uint8_t)bus;
+    gpu_device.pci_dev = dev;
+    gpu_device.pci_func = func;
     gpu_device.mmio_base = (uintptr_t)mmio_base;
     gpu_device.vram_base = vram_base;
     gpu_device.mmio_size = (uint32_t)bar0_size;
@@ -157,6 +160,11 @@ static void pci_handle_display_controller(uint16_t vendor_id,
             uart_puts("[PCI] display backend=framebuffer (fallback)\n");
         }
         fbdev_refresh_backend_info();
+        {
+            extern void fb_clear_vram_all(uint32_t rgb24);
+            fb_clear_vram_all(0xFF7A8FA8u);
+            uart_puts("[PCI] FB VRAM cleared after DISPI/MB2 sync\n");
+        }
         g_display_controller_selected = 1;
     }
 

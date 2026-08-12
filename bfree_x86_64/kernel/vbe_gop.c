@@ -28,9 +28,9 @@ typedef struct {
 static struct vbe_info g_vbe_info = {
     .vram_phys = 0xE0000000, // QEMU stdvga BAR0 デフォルト値
     .vram_size = 8 * 1024 * 1024,
-    .width     = 1024,
-    .height    = 768,
-    .pitch     = 1024 * 4,
+    .width     = 1920,
+    .height    = 1080,
+    .pitch     = 1920 * 4,
     .bpp       = 32,
 };
 
@@ -75,6 +75,12 @@ void vbe_init_from_mb2(const uint8_t *mb2_info_ptr)
 void vbe_get_info(struct vbe_info *info) {
     if (!info) return;
     *info = g_vbe_info;
+}
+
+void vbe_set_info(const struct vbe_info *info)
+{
+    if (!info) return;
+    g_vbe_info = *info;
 }
 
 // 本来はUEFI/BIOSから情報取得する処理を実装

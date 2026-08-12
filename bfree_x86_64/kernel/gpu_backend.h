@@ -72,6 +72,9 @@ typedef struct {
     uint16_t device_id;
     uint8_t class_code;
     uint8_t subclass;
+    uint8_t pci_bus;
+    uint8_t pci_dev;
+    uint8_t pci_func;
     uintptr_t mmio_base;
     uintptr_t vram_base;
     uint32_t mmio_size;
