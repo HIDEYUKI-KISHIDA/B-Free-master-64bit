@@ -160,6 +160,11 @@ static void pci_handle_display_controller(uint16_t vendor_id,
             uart_puts("[PCI] display backend=framebuffer (fallback)\n");
         }
         fbdev_refresh_backend_info();
+        {
+            extern void fb_clear_screen(uint32_t rgb24);
+            fb_clear_screen(0xFF7A8FA8u);
+            uart_puts("[PCI] FB cleared after DISPI sync\n");
+        }
         g_display_controller_selected = 1;
     }
 

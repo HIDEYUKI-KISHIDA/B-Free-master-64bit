@@ -3418,7 +3418,12 @@ static void guest_desk_flush_paint(void)
     if (!g_desk_dirty)
         return;
     g_desk_dirty = 0;
-    if (g_prod_sg_sustained && g_prod_sg_win && !g_fb_only_pixel_auth) {
+    if (g_fb_only_pixel_auth) {
+        guest_paint_fb_desktopshell();
+        g_desk_layer_dirty = 0;
+        return;
+    }
+    if (g_prod_sg_sustained && g_prod_sg_win) {
         /* Interactive pixels stay FB; Max1 only unlocks one-shot Terminal setVisible. */
         g_prod_fb_chrome_force = 1;
         guest_paint_fb_desktopshell();
@@ -3431,6 +3436,24 @@ static void guest_desk_flush_paint(void)
     guest_sg_chrome_pulse_if_needed();
     guest_paint_fb_desktopshell();
     g_desk_layer_dirty = 0;
+}
+
+/* Wipe partial QPA/SG/splash layers; repaint full-screen FB lookalike. */
+static void guest_fb_repaint_underlay(void)
+{
+    if (!guest_fb_ready())
+        return;
+    bfree_qpa_set_update_delivery(0);
+    guest_splash_disable();
+    auto *fb = reinterpret_cast<unsigned char *>(
+        static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
+    guest_fb_clear_entire(fb, guest_fb_pitch(), guest_fb_h(), 0xFF7A8FA8u);
+    if (g_prod_sg_win)
+        guest_fb_sync_qwindow(g_prod_sg_win);
+    if (g_shell_window)
+        guest_fb_sync_qwindow(g_shell_window);
+    guest_desk_mark_dirty();
+    guest_desk_flush_paint();
 }
 
 static void guest_desk_prepare_app(int idx)
@@ -5664,6 +5687,7 @@ __attribute__((noinline)) static void guest_ctor_qgui_application(void)
 static void guest_ctor_qml_phase(void) __attribute__((noinline));
 static void guest_ctor_qml_phase(void)
 {
+    bfree_qpa_set_update_delivery(0);
     guest_reset_qt_resource_registry();
     bfree_guest_serial_step_raw('Q');
     guest_serial_puts("[desktop_qt] QML phase start (qrc fallback, hybrid after)\n");
@@ -6110,6 +6134,9 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     if (BFREE_GUEST_STAGE_MAX <= 3u)
         guest_stage_halt(3);
 
+    guest_fb_repaint_underlay();
+    guest_serial_puts("[desktop_qt] post-QGui FB underlay ok\n");
+
     qInstallMessageHandler(guest_qt_message_handler);
     guest_serial_puts("[desktop_qt] qt log hook installed\n");
     guest_serial_puts("[desktop_qt] QGuiApplication OK\n");
@@ -6136,6 +6163,8 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
             __asm__ volatile("pause" ::: "memory");
         }
     }
+    guest_fb_repaint_underlay();
+    guest_serial_puts("[desktop_qt] post-QML FB underlay ok\n");
     guest_stage_ok(5);
     if (g_prod_sg_sustained) {
         guest_serial_puts("[desktop_qt] skip hybrid shell window (product SG auth)\n");
@@ -6247,6 +6276,8 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
             if (g_term_pty_mode)
                 guest_terminal_pty_poll();
             ++pump_ticks;
+            if (pump_ticks <= 120u)
+                guest_desk_mark_dirty();
             if (!pe_logged) {
                 pe_logged = 1;
                 guest_serial_puts("[desktop_qt] processEvents skip (step5 pump-first)\n");
