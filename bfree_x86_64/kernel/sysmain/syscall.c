@@ -440,6 +440,7 @@ static long bfree_guest_exit_from_fork_signal(int sig);
 static void bfree_guest_flocks_drop_pid(int pid);
 static int bfree_user_stack_poke_bytes(uint64_t user_vaddr, const char *bytes, uint64_t len);
 static int bfree_user_stack_peek_bytes(uint64_t user_vaddr, char *bytes, uint64_t len);
+static int bfree_user_stack_page_phys(uint64_t vaddr, uint64_t *out_phys);
 static long sys_linux_poll_common(long fds_ptr, long nfds);
 static long bfree_gthr_park_poll(long fds_ptr, long nfds);
 static long bfree_gthr_park_futex(volatile int *uaddr, int val);
@@ -2670,6 +2671,71 @@ static void bfree_restore_user_fsbase(void)
         return;
     }
     bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, fsbase);
+}
+
+#define BFREE_EARLY_TCB_BYTES 256ULL
+
+/*
+ * musl __pthread_self reads the self pointer from %fs:0 before __init_tls.
+ * If that word is zero, errno/TLS helpers dereference NULL+0x28 → CR2=0x28.
+ * Match tools/guest_link_compat.cpp: zeroed early TCB below RSP + self word.
+ */
+static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_fsbase)
+{
+    uint64_t tcb;
+    uint64_t off;
+    uint64_t probe;
+    uint64_t self_word;
+    uint8_t zbuf[64];
+
+    if (!out_fsbase || user_rsp < BFREE_EARLY_TCB_BYTES + PAGE_SIZE) {
+        return -1;
+    }
+    tcb = (user_rsp - BFREE_EARLY_TCB_BYTES) & ~0xFULL;
+    if (bfree_user_stack_page_phys(tcb, &probe) != 0) {
+        return -1;
+    }
+    for (off = 0; off < BFREE_EARLY_TCB_BYTES; off += sizeof(zbuf)) {
+        uint64_t chunk = BFREE_EARLY_TCB_BYTES - off;
+        if (chunk > sizeof(zbuf)) {
+            chunk = sizeof(zbuf);
+        }
+        memset(zbuf, 0, sizeof(zbuf));
+        if (bfree_user_stack_poke_bytes(tcb + off, (const char *)zbuf, chunk) != 0) {
+            return -1;
+        }
+    }
+    self_word = tcb;
+    if (bfree_user_stack_poke_bytes(tcb, (const char *)&self_word, sizeof(self_word)) != 0) {
+        return -1;
+    }
+    *out_fsbase = tcb;
+    return 0;
+}
+
+static void bfree_user_exec_install_fsbase(uint64_t user_rsp, int bootstrap_tls)
+{
+    uint64_t early_fs = 0;
+
+    if (bootstrap_tls && bfree_user_exec_bootstrap_early_tls(user_rsp, &early_fs) == 0) {
+        if (knl_current_task != 0) {
+            knl_current_task->user_fsbase = early_fs;
+        }
+        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, early_fs);
+        uart_puts("[TLS] exec early fsbase=");
+        uart_puthex64(early_fs);
+        uart_puts("\n");
+        return;
+    }
+    if (knl_current_task != 0) {
+        knl_current_task->user_fsbase = 0;
+    }
+    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, 0);
+    if (bootstrap_tls) {
+        uart_puts("[TLS] exec early bootstrap failed rsp=");
+        uart_puthex64(user_rsp);
+        uart_puts("\n");
+    }
 }
 
 // Linux 158: arch_prctl — musl __init_tls sets %fs via ARCH_SET_FS.
@@ -11642,10 +11708,7 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
 
     (void)path;
     bfree_enable_user_fpu();
-    if (knl_current_task != 0) {
-        knl_current_task->user_fsbase = 0;
-    }
-    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, 0);
+    bfree_user_exec_install_fsbase(user_rsp, bfree_guest_basename_eq(exec_img, "busybox.elf") ? 1 : 0);
     g_bfree_sysret_exec_rsp = user_rsp;
     g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
     g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
@@ -11866,10 +11929,8 @@ long sys_exec_initrd(long user_path_ptr)
 
     bfree_enable_user_fpu();
 
-    if (knl_current_task != 0) {
-        knl_current_task->user_fsbase = 0;
-    }
-    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, 0);
+    bfree_user_exec_install_fsbase(user_rsp,
+        bfree_guest_basename_eq(g_bfree_exec_initrd_kpath, "busybox.elf") ? 1 : 0);
 
     g_bfree_sysret_exec_rsp = user_rsp;
     g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
@@ -20707,8 +20768,7 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
                             stack_top, 3, k_sh_argv, 4, k_sh_env, &elf,
                             &user_rsp) == 0) {
                         bfree_enable_user_fpu();
-                        knl_current_task->user_fsbase = 0;
-                        bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, 0);
+                        bfree_user_exec_install_fsbase(user_rsp, 1);
                         g_bfree_sysret_exec_rsp = user_rsp;
                         g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
                         g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
@@ -20731,8 +20791,7 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
                     bfree_user_exec_prepare_musl_stack_argv(stack_top, 3, k_sh_argv,
                         4, k_sh_env, &elf, &user_rsp) == 0) {
                     bfree_enable_user_fpu();
-                    knl_current_task->user_fsbase = 0;
-                    bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, 0);
+                    bfree_user_exec_install_fsbase(user_rsp, 1);
                     g_bfree_sysret_exec_rsp = user_rsp;
                     g_bfree_exec_transfer_rip = elf.entry;
                     g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
