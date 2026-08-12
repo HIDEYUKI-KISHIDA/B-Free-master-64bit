@@ -18,6 +18,34 @@ host_wayland_tools_ok() {
   [[ -x "$1/libexec/qtwaylandscanner" || -x "$1/bin/qtwaylandscanner" ]] || return 1
 }
 
+find_built_qtwaylandscanner() {
+  local bd="$1"
+  local candidate=""
+  for candidate in \
+    "$bd/libexec/qtwaylandscanner" \
+    "$bd/libexec/qtwaylandscanner/qtwaylandscanner" \
+    "$bd/libexec/qtwaylandscanner/qtwaylandscanner.exe"; do
+    if [[ -x "$candidate" ]]; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  candidate="$(find "$bd" -maxdepth 4 -type f -name qtwaylandscanner -perm -111 2>/dev/null | head -1 || true)"
+  [[ -n "$candidate" && -x "$candidate" ]] || return 1
+  echo "$candidate"
+}
+
+install_qtwaylandscanner_binary() {
+  local bd="$1" prefix="$2"
+  local exe dest_dir
+  exe="$(find_built_qtwaylandscanner "$bd" || true)"
+  [[ -n "$exe" ]] || return 1
+  dest_dir="$prefix/libexec"
+  mkdir -p "$dest_dir"
+  install -m 755 "$exe" "$dest_dir/qtwaylandscanner"
+  echo "[host-qtwayland] installed binary from build tree: $dest_dir/qtwaylandscanner"
+}
+
 if host_wayland_tools_ok "$HOST_QT"; then
   echo "[host-qtwayland] OK: $HOST_QT/lib/cmake/Qt6WaylandScannerTools"
   exit 0
@@ -75,7 +103,13 @@ fi
 
 echo "[host-qtwayland] building qtwaylandscanner (+ install Tools package) ..."
 cmake --build "$BD" --target qtwaylandscanner --parallel "$JOBS"
-cmake --install "$BD" --component Devel 2>/dev/null || cmake --install "$BD"
+# Full install — Devel-only skips the qtwaylandscanner RUNTIME (libexec/) artifact.
+cmake --install "$BD"
+
+if ! host_wayland_tools_ok "$HOST_QT"; then
+  echo "[host-qtwayland] binary missing after install — syncing from build tree ..."
+  install_qtwaylandscanner_binary "$BD" "$HOST_QT" || true
+fi
 
 if ! host_wayland_tools_ok "$HOST_QT"; then
   echo "[host-qtwayland] ERROR: Qt6WaylandScannerTools still missing after install" >&2
