@@ -1355,9 +1355,6 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
                  * abort AS-copy on mismatch.
                  */
                 {
-                    extern uint8_t g_bfree_shell_text_fp[4];
-                    extern int g_bfree_shell_text_fp_valid;
-
                     if (g_bfree_shell_text_fp_valid &&
                         (page_buf[0xEA0] != g_bfree_shell_text_fp[0] ||
                          page_buf[0xEA1] != g_bfree_shell_text_fp[1] ||

@@ -37,13 +37,23 @@ fi
 
 echo "[clone_qt6] init-repository (qtbase, qtdeclarative, qtshadertools)..."
 cd "$QT_SRC"
+QT_MODULES="qtbase,qtdeclarative,qtshadertools"
+if [[ "${BFREE_QT_WAYLAND:-0}" == "1" ]]; then
+  QT_MODULES="${QT_MODULES},qtwayland"
+fi
 if [[ -x ./init-repository ]]; then
-  ./init-repository --module-subset=qtbase,qtdeclarative,qtshadertools
+  ./init-repository --module-subset="$QT_MODULES"
 elif [[ -f init-repository ]]; then
-  perl init-repository --module-subset=qtbase,qtdeclarative,qtshadertools
+  perl init-repository --module-subset="$QT_MODULES"
 else
   echo "[clone_qt6] ERROR: init-repository not found in $QT_SRC"
   exit 1
+fi
+
+if [[ "${BFREE_QT_WAYLAND:-0}" == "1" ]]; then
+  echo "[clone_qt6] qtwayland included (BFREE_QT_WAYLAND=1)"
+else
+  echo "[clone_qt6] tip: compositor path needs qtwayland — run tools/build_guest_qtwayland.sh (auto-fetch) or re-clone with BFREE_QT_WAYLAND=1"
 fi
 
 echo "[clone_qt6] done. Next:"

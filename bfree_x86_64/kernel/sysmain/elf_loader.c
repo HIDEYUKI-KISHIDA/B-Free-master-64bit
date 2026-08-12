@@ -22,11 +22,25 @@ uint64_t g_bfree_elf_watch_phys;
 uint64_t g_bfree_elf_watch_phys2;
 /* Sticky: first shell busybox setvbuf frame — never cleared across child loads. */
 uint64_t g_bfree_shell_text_phys;
+uint8_t g_bfree_shell_text_fp[4];
+int g_bfree_shell_text_fp_valid;
 
 #define BFREE_SHELL_PIN_MAX 384
 static uint64_t g_bfree_shell_pin[BFREE_SHELL_PIN_MAX];
 static int g_bfree_shell_pin_count;
 static int g_bfree_shell_pin_done;
+
+static void bfree_shell_text_fp_note(const uint8_t fp[4])
+{
+    if (g_bfree_shell_text_fp_valid) {
+        return;
+    }
+    g_bfree_shell_text_fp[0] = fp[0];
+    g_bfree_shell_text_fp[1] = fp[1];
+    g_bfree_shell_text_fp[2] = fp[2];
+    g_bfree_shell_text_fp[3] = fp[3];
+    g_bfree_shell_text_fp_valid = 1;
+}
 
 void bfree_shell_pin_page(uint64_t phys)
 {
@@ -735,6 +749,10 @@ static int load_elf_image_inner(const char *filename, void **entry, void *page_t
                             uart_puthex64(phys);
                             uart_puts("\n");
                         }
+                        {
+                            uint8_t fp[4] = {verify_b0, verify_b1, verify_b2, verify_b3};
+                            bfree_shell_text_fp_note(fp);
+                        }
                         g_bfree_elf_watch_phys2 = g_bfree_shell_text_phys;
                     }
                 }
@@ -821,6 +839,7 @@ static int load_elf_image_inner(const char *filename, void **entry, void *page_t
                 uart_puts(" phys=");
                 uart_puthex64(phys2);
                 uart_puts("\n");
+                bfree_shell_text_fp_note(chk2);
             }
             bfree_kernel_phys_io_end();
         }
