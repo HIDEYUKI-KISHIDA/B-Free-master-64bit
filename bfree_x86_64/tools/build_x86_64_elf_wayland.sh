@@ -50,7 +50,8 @@ BD="$PREFIX/build"
 rm -rf "$BD"
 mkdir -p "$PREFIX"
 
-echo "[elf-wayland] meson cross build -> $PREFIX"
+CROSS_STUBS="$ROOT/tools/cross-stubs"
+echo "[elf-wayland] meson cross build -> $PREFIX (stubs=$CROSS_STUBS)"
 meson setup "$BD" "$SRC" \
   --cross-file "$ROOT/tools/meson-cross-x86_64-elf.txt" \
   --prefix="$PREFIX" \
@@ -58,7 +59,8 @@ meson setup "$BD" "$SRC" \
   -Ddocumentation=false \
   -Dtests=false \
   -Dlibraries=true \
-  -Dscanner=true
+  -Dscanner=true \
+  "-Dc_args=-I${CROSS_STUBS}"
 
 ninja -C "$BD"
 ninja -C "$BD" install

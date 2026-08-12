@@ -3,7 +3,7 @@ c = 'x86_64-elf-gcc'
 cpp = 'x86_64-elf-g++'
 ar = 'x86_64-elf-ar'
 strip = 'x86_64-elf-strip'
-pkgconfig = 'pkg-config'
+pkg-config = 'pkg-config'
 
 [properties]
 needs_exe_wrapper = false
