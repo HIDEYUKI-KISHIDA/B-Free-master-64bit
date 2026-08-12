@@ -102,14 +102,23 @@ if grep -q 'Configuring incomplete, errors occurred!' "$BD/configure.log"; then
 fi
 
 echo "[host-qtwayland] building qtwaylandscanner (+ install Tools package) ..."
-cmake --build "$BD" --target qtwaylandscanner --parallel "$JOBS"
-# Full install — Devel-only skips the qtwaylandscanner RUNTIME (libexec/) artifact.
-cmake --install "$BD"
+# sync_headers creates include/.../.syncqt_staging required by WaylandGlobalPrivate install.
+cmake --build "$BD" --target WaylandGlobalPrivate_sync_headers qtwaylandscanner --parallel "$JOBS"
 
-if ! host_wayland_tools_ok "$HOST_QT"; then
-  echo "[host-qtwayland] binary missing after install — syncing from build tree ..."
-  install_qtwaylandscanner_binary "$BD" "$HOST_QT" || true
-fi
+install_host_qtwaylandscanner() {
+  # Prefer target-scoped install (binary + Tools export) over full install (can fail on syncqt).
+  if cmake --install "$BD" --target qtwaylandscanner 2>/dev/null; then
+    return 0
+  fi
+  if cmake --install "$BD" 2>/dev/null; then
+    return 0
+  fi
+  echo "[host-qtwayland] WARNING: cmake --install failed (syncqt_staging etc.) — syncing binary manually" >&2
+  install_qtwaylandscanner_binary "$BD" "$HOST_QT" || return 1
+  cmake --install "$BD" --component Devel 2>/dev/null || true
+}
+
+install_host_qtwaylandscanner || true
 
 if ! host_wayland_tools_ok "$HOST_QT"; then
   echo "[host-qtwayland] ERROR: Qt6WaylandScannerTools still missing after install" >&2
