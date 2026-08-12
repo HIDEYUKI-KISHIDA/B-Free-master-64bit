@@ -134,6 +134,10 @@ install: kernel.elf kernel.bin
 >cp kernel.elf ../iso_root/boot/kernel.elf
 >cp kernel.bin ../iso_root/boot/kernel.bin
 
+.PHONY: compositor-kernel
+compositor-kernel:
+>$(MAKE) BFREE_BOOT_GUI_FIRST=1 BFREE_WAYLAND_INPUT_STRICT=1 all install
+
 %.o: %.c
 >$(CC) $(CFLAGS) -c $< -o $@
 

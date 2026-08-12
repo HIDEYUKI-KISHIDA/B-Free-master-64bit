@@ -5366,9 +5366,13 @@ static void guest_register_plugin_qjpeg(void)
 
 static void guest_register_static_plugins_body(void)
 {
-    /* Image plugins (qgif/qico/qjpeg) register with null rawMetaData on static link → QFactoryLoader PF. */
+#if defined(BFREE_GUEST_WAYLAND_CLIENT)
+    /* Wayland client: Qt Wayland QPA connects to compositor.elf — no bfree FB QPA. */
+    guest_serial_puts("[desktop_qt] plugin wayland (no bfree QPA)\n");
+#else
     guest_register_plugin_bfree();
     guest_serial_puts("[desktop_qt] plugin bfree only\n");
+#endif
 }
 
 static void guest_ctor_qgui_application(void);
@@ -5938,7 +5942,11 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     qInstallMessageHandler(guest_qt_message_handler);
     guest_serial_puts("[desktop_qt] qt log hook installed\n");
     guest_serial_puts("[desktop_qt] QGuiApplication OK\n");
+#if defined(BFREE_GUEST_WAYLAND_CLIENT)
+    guest_serial_puts("[desktop_qt] platform=wayland (compositor client)\n");
+#else
     guest_serial_puts("[desktop_qt] platform=bfree\n");
+#endif
 
     guest_stage_banner(4, "deferred init_array ctors");
     bfree_guest_run_deferred_init_array_ctors();
@@ -6099,8 +6107,12 @@ int main(int argc, char **argv)
     /* Absolute argv[0] avoids QStandardPaths::findExecutable(PATH scan) after getcwd. */
     static char prog[] = "/desktop";
     static char arg_platform[] = "-platform";
-    static char arg_bfree[] = "bfree";
-    static char *qt_argv[] = { prog, arg_platform, arg_bfree, nullptr };
+#if defined(BFREE_GUEST_WAYLAND_CLIENT)
+    static char arg_qpa[] = "wayland";
+#else
+    static char arg_qpa[] = "bfree";
+#endif
+    static char *qt_argv[] = { prog, arg_platform, arg_qpa, nullptr };
     int qt_argc = 3;
     g_qt_argc = qt_argc;
     g_qt_argv = qt_argv;
@@ -6110,7 +6122,11 @@ int main(int argc, char **argv)
     bfree_guest_refresh_libc_auxv();
     bfree_guest_serial_step_c('J');
     guest_serial_puts("[desktop_qt] main entry\n");
+#if defined(BFREE_GUEST_WAYLAND_CLIENT)
+    guest_serial_puts("[desktop_qt] build=compositor-wayland-client staged\n");
+#else
     guest_serial_puts("[desktop_qt] build=mmap96-v349 staged\n");
+#endif
     bfree_guest_serial_step_c('K');
     guest_serial_puts("[desktop_qt] QGuiApplication...\n");
     bfree_guest_serial_step_c('L');

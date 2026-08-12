@@ -127,18 +127,23 @@ bfree_qpa_has_guest_input() {
 
 echo "[B4b-guest] guest Qt: $GUEST_QT"
 bash "$ROOT/tools/patch_qt6core_no_rdrnd.sh" "$GUEST_QT/lib/libQt6Core.a"
-echo "[B4b-guest] building libqbfree (CONFIG+=guestinput, always refresh)..."
-mkdir -p "$BFREE_QPA_BUILD"
-(cd "$BFREE_QPA_BUILD" && make clean 2>/dev/null || true)
-(cd "$BFREE_QPA_BUILD" && "$GUEST_QT/bin/qmake6" ../qpa_bfree.pro CONFIG+=guestinput && make -j"$(nproc 2>/dev/null || echo 4)")
-_qpa="$BFREE_QPA_BUILD/plugins/platforms/libqbfree.a"
-if ! bfree_qpa_has_guest_input "$_qpa"; then
-  echo "[B4b-guest] ERROR: $_qpa missing guest dispatcher (rebuild with CONFIG+=guestinput)" >&2
-  echo "[B4b-guest] hint: grep -a BFreeGuest $_qpa | head" >&2
-  (grep -aoE '.{0,40}BFreeGuest.{0,40}' "$_qpa" 2>/dev/null | head -3) >&2 || true
-  exit 1
+
+GUEST_ELF_CXXFLAGS=""
+if [[ "${BFREE_GUEST_WAYLAND_CLIENT:-0}" == "1" ]]; then
+  GUEST_ELF_CXXFLAGS="-DBFREE_GUEST_WAYLAND_CLIENT=1"
+  echo "[B4b-guest] Wayland client mode (skip libqbfree build)"
+else
+  echo "[B4b-guest] building libqbfree (CONFIG+=guestinput, always refresh)..."
+  mkdir -p "$BFREE_QPA_BUILD"
+  (cd "$BFREE_QPA_BUILD" && make clean 2>/dev/null || true)
+  (cd "$BFREE_QPA_BUILD" && "$GUEST_QT/bin/qmake6" ../qpa_bfree.pro CONFIG+=guestinput && make -j"$(nproc 2>/dev/null || echo 4)")
+  _qpa="$BFREE_QPA_BUILD/plugins/platforms/libqbfree.a"
+  if ! bfree_qpa_has_guest_input "$_qpa"; then
+    echo "[B4b-guest] ERROR: $_qpa missing guest dispatcher (rebuild with CONFIG+=guestinput)" >&2
+    exit 1
+  fi
+  echo "[B4b-guest] libqbfree guestinput OK"
 fi
-echo "[B4b-guest] libqbfree guestinput OK"
 
 echo "[B4b-guest] sync qtdeclarative mkspecs/libs into guest prefix (qmake QT += quick)..."
 BD="$GUEST_QT/build-qtdeclarative"
@@ -181,8 +186,10 @@ make -C "$ROOT/userland/desktop_qt" -f Makefile.bfree guest-elf \
   BFREE_ELF_CXX_INCLUDE="$BFREE_ELF_CXX_INCLUDE" \
   BFREE_ELF_LIBM_DIR="$BFREE_ELF_LIBM_DIR" \
   BFREE_QT_GUEST_BUILD_DIR="$GUEST_QT" \
-  BFREE_QT_BUILD_DIR="${BFREE_QT_BUILD_DIR:-$HOME/out/bfree-qt6-static}"
+  BFREE_QT_BUILD_DIR="${BFREE_QT_BUILD_DIR:-$HOME/out/bfree-qt6-static}" \
+  CXXFLAGS="${GUEST_ELF_CXXFLAGS:-}"
 
+if [[ "${BFREE_GUEST_WAYLAND_CLIENT:-0}" != "1" ]]; then
 if ! bfree_elf_has_static_qpa_plugin "$ROOT/userland/desktop_qt/desktop.elf"; then
   echo "[B4b-guest] ERROR: desktop.elf missing Q_IMPORT_PLUGIN(QPlatformIntegrationPluginBFree)" >&2
   echo "[B4b-guest] hint: Makefile.bfree must regenerate desktop_plugin_import.cpp with bfree QPA" >&2
@@ -199,6 +206,9 @@ if ! bfree_qpa_has_guest_input "$ROOT/userland/desktop_qt/desktop.elf"; then
 fi
 if ! strings "$ROOT/userland/desktop_qt/desktop.elf" 2>/dev/null | grep -q 'init_array: C runner begin'; then
   echo "[B4b-guest] WARN: desktop.elf missing init_array runner string (guest_link_compat.o may be stale)" >&2
+fi
+else
+  echo "[B4b-guest] Wayland client link — skipped bfree QPA plugin checks"
 fi
 
 if python3 "$ROOT/tools/update_guest_phdrs.py" "$ROOT/userland/desktop_qt/desktop.elf"; then
