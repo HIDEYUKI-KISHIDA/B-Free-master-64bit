@@ -341,6 +341,10 @@ static int g_term_linelen = 0;
 static int g_term_session = 0;
 /* Run BusyBox demo after first paint so open never blocks the input loop. */
 static int g_term_bb_demo_pending = 0;
+static GuestPtyShell g_term_pty;
+static int g_term_pty_mode = 0;
+static char g_term_pty_partial[G_TERM_COLS];
+static int g_term_pty_partial_len = 0;
 
 static long guest_sys1(long n, long a);
 static long guest_sys2(long n, long a, long b);
@@ -643,6 +647,61 @@ static void guest_term_push_ls_persist(void)
     }
     if (g_persist_nnames == 0)
         guest_term_push(" (empty)");
+}
+
+static void guest_term_feed_pty(const char *buf, int n)
+{
+    int i;
+
+    if (!buf || n <= 0)
+        return;
+    for (i = 0; i < n; ++i) {
+        char c = buf[i];
+        if (c == '\r')
+            continue;
+        if (c == '\n') {
+            if (g_term_pty_partial_len > 0) {
+                g_term_pty_partial[g_term_pty_partial_len] = '\0';
+                guest_term_push(g_term_pty_partial);
+                g_term_pty_partial_len = 0;
+            } else {
+                guest_term_push("");
+            }
+            continue;
+        }
+        if (g_term_pty_partial_len + 1 < G_TERM_COLS)
+            g_term_pty_partial[g_term_pty_partial_len++] = c;
+    }
+    if (g_term_pty_partial_len > 0) {
+        char live[G_TERM_COLS];
+        int j;
+        g_term_pty_partial[g_term_pty_partial_len] = '\0';
+        for (j = 0; j < g_term_pty_partial_len && j + 1 < G_TERM_COLS; ++j)
+            live[j] = g_term_pty_partial[j];
+        live[j] = '\0';
+        if (g_term_nlines > 0) {
+            int k = 0;
+            while (live[k] && k + 1 < G_TERM_COLS) {
+                g_term_lines[g_term_nlines - 1][k] = live[k];
+                ++k;
+            }
+            g_term_lines[g_term_nlines - 1][k] = '\0';
+        } else {
+            guest_term_push(live);
+        }
+    }
+}
+
+static void guest_terminal_pty_poll(void)
+{
+    char buf[128];
+    int n;
+
+    if (!g_term_pty_mode || !g_term_pty.active)
+        return;
+    n = guest_pty_shell_poll(&g_term_pty, buf, (int)sizeof(buf));
+    if (n > 0)
+        guest_term_feed_pty(buf, n);
 }
 
 /* Forward — defined below. */
@@ -951,10 +1010,19 @@ static void guest_terminal_ensure_session(void)
     (void)guest_sys1(3, fd);
     guest_serial_puts("[desktop_qt] Terminal ran echo TERM_OK\n");
 
-    guest_term_push("B-Free Terminal (BusyBox ash)");
-    guest_term_push("type help — most commands via sh -c");
-    guest_term_push_prompt();
-    g_term_bb_demo_pending = 1;
+    guest_term_push("B-Free Terminal (BusyBox ash session)");
+    if (guest_pty_shell_start(&g_term_pty) == 0) {
+        g_term_pty_mode = 1;
+        g_term_pty_partial_len = 0;
+        g_term_pty_partial[0] = '\0';
+        guest_serial_puts("[desktop_qt] Terminal PTY shell started\n");
+    } else {
+        g_term_pty_mode = 0;
+        guest_term_push("PTY unavailable — line mode (type help)");
+        guest_term_push_prompt();
+        g_term_bb_demo_pending = 1;
+        guest_serial_puts("[desktop_qt] Terminal PTY start fail\n");
+    }
     guest_serial_puts("[desktop_qt] Terminal session ready\n");
     guest_serial_puts("[desktop_qt] Terminal line editor ready\n");
     g_persist_listed = 0;
@@ -962,6 +1030,11 @@ static void guest_terminal_ensure_session(void)
 
 static void guest_terminal_run_pending_demo(void)
 {
+    if (g_term_pty_mode) {
+        guest_terminal_pty_poll();
+        guest_desk_mark_dirty();
+        return;
+    }
     if (!g_term_bb_demo_pending)
         return;
     g_term_bb_demo_pending = 0;
@@ -1000,7 +1073,20 @@ static void guest_terminal_on_key(uint32_t k)
     k = guest_desk_denorm_key(k);
     if (!g_term_session) {
         g_term_session = 1;
-        guest_term_push_prompt();
+        if (!g_term_pty_mode)
+            guest_term_push_prompt();
+    }
+
+    if (g_term_pty_mode && g_term_pty.active) {
+        if (k == 13u || k == 10u)
+            (void)guest_pty_shell_write_byte(&g_term_pty, '\n');
+        else if (k == 8u || k == 127u)
+            (void)guest_pty_shell_write_byte(&g_term_pty, 127);
+        else if (k >= 32u && k < 127u)
+            (void)guest_pty_shell_write_byte(&g_term_pty, (char)k);
+        guest_terminal_pty_poll();
+        guest_desk_mark_dirty();
+        return;
     }
 
     if (k == 13u || k == 10u) {
@@ -3251,6 +3337,9 @@ static void guest_win_close_idx(int wi)
         return;
     guest_serial_puts("[desktop_qt] desk close\n");
     if (g_wins[wi].app_id == 2) {
+        guest_pty_shell_stop(&g_term_pty);
+        g_term_pty_mode = 0;
+        g_term_pty_partial_len = 0;
         g_term_session = 0;
         g_term_bb_demo_pending = 0;
         g_term_nlines = 0;
@@ -5972,6 +6061,8 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
                 guest_desk_flush_paint();
             }
             guest_terminal_run_pending_demo();
+            if (g_term_pty_mode)
+                guest_terminal_pty_poll();
             ++pump_ticks;
             if (!pe_logged) {
                 pe_logged = 1;
