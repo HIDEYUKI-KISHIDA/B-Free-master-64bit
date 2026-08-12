@@ -3165,13 +3165,13 @@ static void guest_paint_fb_desktopshell(void)
     fb_fill_rect(fb, pitch, 8, (int)guest_fb_h() - tbH + 45, 56, 1, startBord);
     fb_fill_rect(fb, pitch, 8, (int)guest_fb_h() - tbH + 6, 1, 40, startBord);
     fb_fill_rect(fb, pitch, 63, (int)guest_fb_h() - tbH + 6, 1, 40, startBord);
-    fb_draw_text(fb, pitch, 16, (int)guest_fb_h() - tbH + 18, "Start", 0xFFC8DCEDu, 1);
+    guest_fb_draw_text_smart(fb, pitch, 16, (int)guest_fb_h() - tbH + 14, "Start", 0xFFC8DCEDu, 2, 1);
 
     /* Search placeholder (opens Start on click). */
     fb_fill_round_rect(fb, pitch, 72, (int)guest_fb_h() - tbH + 10, 220, 32, 10, 0xFF1A2D42u);
     fb_fill_rect(fb, pitch, 72, (int)guest_fb_h() - tbH + 10, 220, 1, 0xFF2A4060u);
-    fb_draw_text(fb, pitch, 84, (int)guest_fb_h() - tbH + 18, "Q", 0xFF88AAC0u, 1);
-    fb_draw_text(fb, pitch, 100, (int)guest_fb_h() - tbH + 20, "Search", 0xFF557090u, 1);
+    guest_fb_draw_text_smart(fb, pitch, 84, (int)guest_fb_h() - tbH + 14, "Q", 0xFF88AAC0u, 2, 1);
+    guest_fb_draw_text_smart(fb, pitch, 100, (int)guest_fb_h() - tbH + 16, "Search", 0xFF557090u, 2, 1);
 
     /* Clock tray + host-like system tray chips (Net / N / *) */
     fb_fill_round_rect(fb, pitch, 760, (int)guest_fb_h() - tbH + 10, 36, 32, 8, 0xFF152538u);
@@ -3183,7 +3183,7 @@ static void guest_paint_fb_desktopshell(void)
     char clockBuf[16];
     guest_desk_clock_text(clockBuf, (int)sizeof(clockBuf));
     fb_fill_round_rect(fb, pitch, 868, (int)guest_fb_h() - tbH + 10, 144, 32, 10, 0xFF152538u);
-    fb_draw_text(fb, pitch, 884, (int)guest_fb_h() - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
+    guest_fb_draw_text_smart(fb, pitch, 884, (int)guest_fb_h() - tbH + 16, clockBuf, 0xFFE2E8F0u, 2, 1);
     } else if (g_sg_desktop_auth) {
         /* Labels on SG chips (Start / Search / clock / task slots). */
         int taskWins[g_win_max];
@@ -5956,6 +5956,13 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     if (guest_splash_arm()) {
         g_splash_armed = 1;
         guest_serial_puts("[desktop_qt] splash show ok\n");
+        guest_serial_puts("[desktop_qt] FB ");
+        guest_serial_hex_u64(guest_fb_w());
+        guest_serial_puts("x");
+        guest_serial_hex_u64(guest_fb_h());
+        guest_serial_puts(" pitch=");
+        guest_serial_hex_u64(guest_fb_pitch());
+        guest_serial_puts("\n");
         /* Keep spinner moving while heap/QGui come up (stage banners alone are too sparse). */
         for (int i = 0; i < 10; ++i) {
             for (volatile unsigned d = 0; d < 400000u; ++d)

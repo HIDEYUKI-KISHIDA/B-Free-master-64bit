@@ -143,6 +143,9 @@ static void pci_handle_display_controller(uint16_t vendor_id,
     gpu_device.device_id = device_id;
     gpu_device.class_code = class_code;
     gpu_device.subclass = subclass;
+    gpu_device.pci_bus = (uint8_t)bus;
+    gpu_device.pci_dev = dev;
+    gpu_device.pci_func = func;
     gpu_device.mmio_base = (uintptr_t)mmio_base;
     gpu_device.vram_base = vram_base;
     gpu_device.mmio_size = (uint32_t)bar0_size;
