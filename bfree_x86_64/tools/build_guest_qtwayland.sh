@@ -19,21 +19,28 @@ fi
 
 fetch_qtwayland() {
   echo "[qtwayland-guest] qtwayland sources missing — fetching into $QT_SRC/qtwayland"
-  if [[ -x "$QT_SRC/init-repository" ]]; then
-    (cd "$QT_SRC" && ./init-repository --module-subset=qtwayland)
-  elif [[ -f "$QT_SRC/init-repository" ]]; then
-    (cd "$QT_SRC" && perl init-repository --module-subset=qtwayland)
-  elif [[ ! -d "$QT_SRC/qtwayland/.git" ]]; then
+  if [[ -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
+    return 0
+  fi
+  # init-repository refuses re-init on existing supermodule trees — always git-clone fallback.
+  if [[ -x "$QT_SRC/init-repository" ]] && [[ ! -d "$QT_SRC/qtwayland/.git" ]]; then
+    (cd "$QT_SRC" && ./init-repository --module-subset=qtwayland) || true
+  elif [[ -f "$QT_SRC/init-repository" ]] && [[ ! -d "$QT_SRC/qtwayland/.git" ]]; then
+    (cd "$QT_SRC" && perl init-repository --module-subset=qtwayland) || true
+  fi
+  if [[ ! -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
+    rm -rf "$QT_SRC/qtwayland"
     git clone --branch "v${QT_TAG}" --depth 1 https://code.qt.io/qt/qtwayland.git \
       "$QT_SRC/qtwayland" 2>/dev/null \
       || git clone --branch "$QT_TAG" --depth 1 https://code.qt.io/qt/qtwayland.git \
-      "$QT_SRC/qtwayland"
+      "$QT_SRC/qtwayland" 2>/dev/null \
+      || git clone --depth 1 https://code.qt.io/qt/qtwayland.git "$QT_SRC/qtwayland"
   fi
   if [[ ! -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
     echo "[qtwayland-guest] fetch failed — still no CMakeLists.txt under $QT_SRC/qtwayland" >&2
     echo "  Try manually:" >&2
-    echo "    cd $QT_SRC && ./init-repository --module-subset=qtwayland" >&2
-    echo "  Or: git clone https://code.qt.io/qt/qtwayland.git $QT_SRC/qtwayland" >&2
+    echo "    git clone https://code.qt.io/qt/qtwayland.git $QT_SRC/qtwayland" >&2
+    echo "    cd $QT_SRC/qtwayland && git checkout v${QT_TAG}  # match qtbase tag" >&2
     exit 1
   fi
 }

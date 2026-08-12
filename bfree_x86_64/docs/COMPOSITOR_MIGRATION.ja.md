@@ -29,6 +29,7 @@ MVP（`-platform bfree` + FB 直書き）は **legacy メニュー**として残
 | `guest_main.cpp` | `BFREE_GUEST_WAYLAND_CLIENT` → `-platform wayland`、bfree QPA 未登録 |
 | `boot/grub/grub.cfg.template` | compositor-first メニュー（committed） |
 | `tools/build_compositor_guest_iso.sh` | フル ISO ビルドオーケストレーション |
+| `tools/build_compositor_guest_elf.sh` | gui_server → compositor.elf（x86_64-elf クロス） |
 | `tools/build_guest_qtwayland.sh` | guest Qt に QtWayland 追加 |
 | `tools/build_guest_desktop_wayland_elf.sh` | Wayland client desktop.elf |
 

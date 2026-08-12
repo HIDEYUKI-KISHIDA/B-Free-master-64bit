@@ -40,12 +40,12 @@ echo "=== 1/6 kernel (BFREE_BOOT_GUI_FIRST=1) ==="
 make -C kernel compositor-kernel
 
 echo "=== 2/6 compositor.elf ==="
-make -C gui_server clean
-make -C gui_server
+bash tools/build_compositor_guest_elf.sh
 COMP="$ROOT/gui_server/compositor.elf"
 [[ -f "$COMP" ]] || COMP="$ROOT/gui_server/build/compositor.elf"
 if [[ ! -f "$COMP" ]]; then
-  echo "[FAIL] compositor.elf not found after gui_server build" >&2
+  echo "[FAIL] compositor.elf not found after guest cross-build" >&2
+  echo "  Host tron_gui_server is NOT bootable on B-Free — need x86_64-elf compositor.elf" >&2
   exit 1
 fi
 mkdir -p iso_root/boot
