@@ -8,6 +8,7 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GUEST_QT="${BFREE_QT_GUEST_BUILD_DIR:-$HOME/out/bfree-qt6-guest-static}"
+HOST_QT="${BFREE_QT_BUILD_DIR:-$HOME/out/bfree-qt6-static}"
 QT_SRC="${BFREE_QT_SRC:-$HOME/src/qt6}"
 QT_TAG="${BFREE_QT_VERSION:-6.8.0}"
 WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
@@ -54,6 +55,11 @@ fetch_qtwayland() {
   fi
 }
 
+if [[ "${1:-}" == "--fetch-only" ]]; then
+  fetch_qtwayland
+  exit 0
+fi
+
 if [[ ! -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
   fetch_qtwayland
 fi
@@ -70,6 +76,9 @@ if [[ -z "$SCANNER_BIN" ]]; then
   exit 1
 fi
 
+# Guest cross-build needs host qtwaylandscanner (Qt6WaylandScannerTools).
+bash "$ROOT/tools/build_host_qtwayland_tools.sh"
+
 # Regenerate CMake package configs (scanner path + libffi) even when libwayland is cached.
 bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER_BIN"
 
@@ -85,14 +94,23 @@ rm -rf "$BD"
 mkdir -p "$BD"
 echo "[qtwayland-guest] configure in $BD"
 echo "  Wayland=$WAYLAND_PREFIX  libffi=$LIBFFI_PREFIX  scanner=$SCANNER_BIN"
+echo "  QT_HOST_PATH=$HOST_QT"
 echo "  QT_ADDITIONAL_PACKAGES_PREFIX_PATH=$QT_ADDITIONAL_PACKAGES_PREFIX_PATH"
 "$GUEST_QT/bin/qt-cmake" "$QT_SRC/qtwayland" \
   -DCMAKE_INSTALL_PREFIX="$GUEST_QT" \
+  -DQT_HOST_PATH="$HOST_QT" \
   -DQT_ADDITIONAL_PACKAGES_PREFIX_PATH="$WAYLAND_PREFIX" \
   -DWaylandScanner_EXECUTABLE="$SCANNER_BIN" \
   -DQT_BUILD_EXAMPLES=OFF \
   -DQT_BUILD_TESTS=OFF \
   -B "$BD" 2>&1 | tee "$BD/configure.log"
+
+if grep -qE 'Qt6WaylandScannerTools|qtwaylandscanner' "$BD/configure.log" && \
+   grep -q 'Failed to find the host tool' "$BD/configure.log"; then
+  echo "[qtwayland-guest] ERROR: host qtwaylandscanner missing under $HOST_QT" >&2
+  echo "  bash $ROOT/tools/build_host_qtwayland_tools.sh" >&2
+  exit 1
+fi
 
 if grep -q 'QtWayland is missing required dependencies' "$BD/configure.log"; then
   echo "[qtwayland-guest] ERROR: QtWayland configure skipped module (missing Wayland deps)" >&2
