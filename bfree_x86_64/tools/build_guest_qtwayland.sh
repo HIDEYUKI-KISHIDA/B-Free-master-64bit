@@ -15,24 +15,8 @@ WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
 LIBFFI_PREFIX="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
 MUSL_SYSROOT="${BFREE_ELF_MUSL_SYSROOT:-$ROOT/out/x86_64-elf-libm/prefix}"
 
-if [[ "${BFREE_SKIP_QTWAYLAND:-0}" == "1" ]]; then
-  echo "[qtwayland-guest] SKIP (BFREE_SKIP_QTWAYLAND=1) — ISO will use bfree QPA desktop fallback"
-  exit 0
-fi
-
-if [[ -f "$GUEST_QT/lib/libQt6WaylandClient.a" ]]; then
-  echo "[qtwayland-guest] already installed: $GUEST_QT/lib/libQt6WaylandClient.a"
-  exit 0
-fi
-
-if [[ ! -f "$GUEST_QT/lib/libQt6Core.a" ]]; then
-  echo "[qtwayland-guest] guest qtbase missing under $GUEST_QT" >&2
-  echo "  bash $ROOT/tools/build_bfree_qt6_guest.sh" >&2
-  exit 1
-fi
-
 fetch_qtwayland() {
-  echo "[qtwayland-guest] qtwayland sources missing — fetching into $QT_SRC/qtwayland"
+  echo "[qtwayland] fetching sources into $QT_SRC/qtwayland"
   if [[ -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
     return 0
   fi
@@ -50,7 +34,7 @@ fetch_qtwayland() {
       || git clone --depth 1 https://code.qt.io/qt/qtwayland.git "$QT_SRC/qtwayland"
   fi
   if [[ ! -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
-    echo "[qtwayland-guest] fetch failed — still no CMakeLists.txt under $QT_SRC/qtwayland" >&2
+    echo "[qtwayland] fetch failed — still no CMakeLists.txt under $QT_SRC/qtwayland" >&2
     exit 1
   fi
 }
@@ -58,6 +42,22 @@ fetch_qtwayland() {
 if [[ "${1:-}" == "--fetch-only" ]]; then
   fetch_qtwayland
   exit 0
+fi
+
+if [[ "${BFREE_SKIP_QTWAYLAND:-0}" == "1" ]]; then
+  echo "[qtwayland-guest] SKIP (BFREE_SKIP_QTWAYLAND=1) — ISO will use bfree QPA desktop fallback"
+  exit 0
+fi
+
+if [[ -f "$GUEST_QT/lib/libQt6WaylandClient.a" ]]; then
+  echo "[qtwayland-guest] already installed: $GUEST_QT/lib/libQt6WaylandClient.a"
+  exit 0
+fi
+
+if [[ ! -f "$GUEST_QT/lib/libQt6Core.a" ]]; then
+  echo "[qtwayland-guest] guest qtbase missing under $GUEST_QT" >&2
+  echo "  bash $ROOT/tools/build_bfree_qt6_guest.sh" >&2
+  exit 1
 fi
 
 if [[ ! -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
@@ -78,6 +78,9 @@ fi
 
 # Guest cross-build needs host qtwaylandscanner (Qt6WaylandScannerTools).
 bash "$ROOT/tools/build_host_qtwayland_tools.sh"
+
+# Guest QtWaylandClient requires Qt6Gui built with wayland feature (cross libwayland at qtbase configure).
+bash "$ROOT/tools/ensure_guest_qtbase_wayland.sh"
 
 # Regenerate CMake package configs (scanner path + libffi) even when libwayland is cached.
 bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER_BIN"
@@ -109,6 +112,12 @@ if grep -qE 'Qt6WaylandScannerTools|qtwaylandscanner' "$BD/configure.log" && \
    grep -q 'Failed to find the host tool' "$BD/configure.log"; then
   echo "[qtwayland-guest] ERROR: host qtwaylandscanner missing under $HOST_QT" >&2
   echo "  bash $ROOT/tools/build_host_qtwayland_tools.sh" >&2
+  exit 1
+fi
+
+if grep -q "Qt Gui has been built without 'wayland' feature" "$BD/configure.log"; then
+  echo "[qtwayland-guest] ERROR: guest Qt6Gui lacks wayland feature" >&2
+  echo "  bash $ROOT/tools/ensure_guest_qtbase_wayland.sh" >&2
   exit 1
 fi
 

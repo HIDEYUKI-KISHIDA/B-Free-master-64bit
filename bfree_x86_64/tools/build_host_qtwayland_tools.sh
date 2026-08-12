@@ -43,18 +43,33 @@ fi
 
 BD="$HOST_QT/build-qtwayland-host"
 echo "[host-qtwayland] native configure in $BD (prefix=$HOST_QT)"
+echo "[host-qtwayland] scanner-only: host qtbase has no Gui wayland feature (build_host_qt_minimal)"
 rm -rf "$BD"
 mkdir -p "$BD"
 
 # Native (host) build — uses system libwayland from apt, not cross libwayland.
+# Disable wayland client/compositor modules: they require QT_FEATURE_wayland in host Qt Gui,
+# which minimal host qtbase intentionally omits. qtwaylandscanner only needs QtCore + wayland-scanner.
 "$HOST_QT/bin/qt-cmake" -G Ninja "$QT_SRC/qtwayland" \
   -DCMAKE_INSTALL_PREFIX="$HOST_QT" \
   -DQT_BUILD_EXAMPLES=OFF \
   -DQT_BUILD_TESTS=OFF \
+  -DFEATURE_wayland_client=OFF \
+  -DFEATURE_wayland_server=OFF \
   -B "$BD" 2>&1 | tee "$BD/configure.log"
+
+if grep -q "Qt Gui has been built without 'wayland' feature" "$BD/configure.log"; then
+  echo "[host-qtwayland] ERROR: configure still enabled wayland client (need FEATURE_wayland_client=OFF)" >&2
+  exit 1
+fi
 
 if grep -q 'QtWayland is missing required dependencies' "$BD/configure.log"; then
   echo "[host-qtwayland] ERROR: native qtwayland configure skipped (need apt libwayland-dev)" >&2
+  exit 1
+fi
+
+if grep -q 'Configuring incomplete, errors occurred!' "$BD/configure.log"; then
+  echo "[host-qtwayland] ERROR: configure failed — see $BD/configure.log" >&2
   exit 1
 fi
 
