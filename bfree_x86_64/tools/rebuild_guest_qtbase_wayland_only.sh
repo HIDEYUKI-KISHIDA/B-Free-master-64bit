@@ -33,7 +33,10 @@ echo "=== Rebuild guest qtbase with Wayland (Gui feature only) ==="
 echo "  prefix:  $PREFIX"
 echo "  wayland: $WAYLAND_PREFIX"
 echo "  host:    $HOST_QT"
-echo "  jobs:    $JOBS"
+echo "  jobs:    $JOBS (WSL tip: keep JOBS=2–4 if RAM is tight)"
+echo ""
+echo "  NOTE: cmake configure can sit quiet 10–30 min after warnings — not stuck."
+echo "  Check progress: bash tools/guest_qtbase_wayland_status.sh"
 
 if [[ -z "${BFREE_AUTO_CONFIRM:-}" ]]; then
   read -r -p "Continue? [y/N] " ans

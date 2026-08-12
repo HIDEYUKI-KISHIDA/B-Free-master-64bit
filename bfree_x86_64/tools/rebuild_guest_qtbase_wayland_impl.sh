@@ -15,7 +15,7 @@ JOBS="${JOBS:-2}"
 export PATH="${HOME}/x86_64-elf-toolchain/bin:/root/x86_64-elf-toolchain/bin:${PATH:-}"
 
 resolve_musl_prefix() {
-  local base="${BFREE_ELF_LIBM_DIR:-$ROOT/out/x86_64-elf-libm}"
+  local base="${BFREE_ELF_LIBM_DIR:-${HOME}/out/x86_64-elf-libm}"
   if [[ -f "$base/prefix/include/stdint.h" ]]; then echo "$base/prefix"
   elif [[ -f "$base/include/stdint.h" ]]; then echo "$base"
   elif [[ -f "$ROOT/out/x86_64-elf-libm/prefix/include/stdint.h" ]]; then echo "$ROOT/out/x86_64-elf-libm/prefix"
