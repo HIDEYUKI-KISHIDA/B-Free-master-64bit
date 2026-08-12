@@ -254,6 +254,8 @@ static int g_prod_sg_pulse_hold = 0; /* skip dense UpdateRequest until event loo
 static int g_prod_post_activate_sg = 0; /* Max1: allow setVisible + SG pulse after loop */
 static int g_prod_post_activate_done = 0; /* one-shot arm at first loop tick */
 static int g_prod_fb_chrome_force = 0; /* one-shot FB chrome after blank SG flush */
+/* QQuickWindow stays for input/QML; every pixel comes from FB lookalike (no QPA SG flush). */
+static const int g_fb_only_pixel_auth = 1;
 static QQuickRectangle *g_host_wall = nullptr;
 static QQuickRectangle *g_host_start = nullptr;
 static int g_prod_host_tree_unlocked = 0; /* post-activate: host chrome SG paint live */
@@ -2956,6 +2958,14 @@ static void guest_fb_fill_desktop_bg(unsigned char *fb, unsigned pitch, int desk
     }
 }
 
+/* Erase kernel splash / partial SG flush before first FB desktop paint. */
+static void guest_fb_erase_splash_remnants(unsigned char *fb, unsigned pitch)
+{
+    const int tbH = g_desk_tb_h;
+    guest_fb_fill_desktop_bg(fb, pitch, (int)guest_fb_h() - tbH, BFREE_DESK_WALL_ARGB);
+    fb_fill_rect(fb, pitch, 0, (int)guest_fb_h() - tbH, (int)guest_fb_w(), tbH, 0xFF0D1B2Au);
+}
+
 static void guest_paint_fb_one_window(unsigned char *fb, unsigned pitch, int wi);
 static void guest_paint_fb_windows(unsigned char *fb, unsigned pitch);
 static void guest_paint_fb_cursor_only(void);
@@ -3058,15 +3068,21 @@ static void guest_paint_fb_start_menu(unsigned char *fb, unsigned pitch)
 
 static void guest_paint_fb_desktopshell(void)
 {
-    /* When SG flush owns the plane, do not paint FB lookalike chrome —
-     * unless repair flagged a blank/white SG frame (brand splash leftover). */
-    if (g_prod_sg_sustained && !g_prod_fb_chrome_force) {
+    /* When SG flush owns the plane, skip FB lookalike — unless FB-only auth
+     * (stable desk) or repair flagged blank/white SG frame (splash leftover). */
+    if (g_prod_sg_sustained && !g_prod_fb_chrome_force && !g_fb_only_pixel_auth) {
         ++g_desk_paint_count;
         if (g_desk_paint_count == 1)
             guest_serial_puts("[desktop_qt] product FB lookalike skip (flush-auth paint)\n");
         return;
     }
     g_prod_fb_chrome_force = 0;
+    if (g_desk_paint_count == 0) {
+        auto *fb0 = reinterpret_cast<unsigned char *>(
+            static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
+        guest_fb_erase_splash_remnants(fb0, guest_fb_pitch());
+        guest_serial_puts("[desktop_qt] splash remnants erased (FB-only auth)\n");
+    }
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     const unsigned pitch = guest_fb_pitch();
     const int tbH = g_desk_tb_h;
@@ -3195,17 +3211,27 @@ static void guest_paint_fb_desktopshell(void)
     guest_fb_draw_text_smart(fb, pitch, 84, (int)guest_fb_h() - tbH + 14, "Q", 0xFF88AAC0u, 2, 1);
     guest_fb_draw_text_smart(fb, pitch, 100, (int)guest_fb_h() - tbH + 16, "Search", 0xFF557090u, 2, 1);
 
-    /* Clock tray + host-like system tray chips (Net / N / *) */
-    fb_fill_round_rect(fb, pitch, 760, (int)guest_fb_h() - tbH + 10, 36, 32, 8, 0xFF152538u);
-    fb_draw_text(fb, pitch, (int)guest_fb_w() - 256, (int)guest_fb_h() - tbH + 20, "Net", 0xFF88AAC0u, 1);
-    fb_fill_round_rect(fb, pitch, 800, (int)guest_fb_h() - tbH + 10, 28, 32, 8, 0xFF152538u);
-    fb_draw_text(fb, pitch, 808, (int)guest_fb_h() - tbH + 20, "N", 0xFF88AAC0u, 1);
-    fb_fill_round_rect(fb, pitch, 832, (int)guest_fb_h() - tbH + 10, 28, 32, 8, 0xFF152538u);
-    fb_draw_text(fb, pitch, 840, (int)guest_fb_h() - tbH + 20, "*", 0xFF88AAC0u, 1);
-    char clockBuf[16];
-    guest_desk_clock_text(clockBuf, (int)sizeof(clockBuf));
-    fb_fill_round_rect(fb, pitch, 868, (int)guest_fb_h() - tbH + 10, 144, 32, 10, 0xFF152538u);
-    guest_fb_draw_text_smart(fb, pitch, 884, (int)guest_fb_h() - tbH + 16, clockBuf, 0xFFE2E8F0u, 2, 1);
+    /* Clock tray + host-like system tray chips (Net / N / *) — right-aligned. */
+    {
+        const int clockW = 144;
+        const int clockX = (int)guest_fb_w() - 8 - clockW;
+        const int chip3X = clockX - 8 - 28;
+        const int chip2X = chip3X - 8 - 28;
+        const int netX = chip2X - 8 - 36;
+        fb_draw_text(fb, pitch, netX, (int)guest_fb_h() - tbH + 20, "Net", 0xFF88AAC0u, 1);
+        fb_fill_round_rect(fb, pitch, chip2X, (int)guest_fb_h() - tbH + 10, 28, 32, 8,
+                           0xFF152538u);
+        fb_draw_text(fb, pitch, chip2X + 8, (int)guest_fb_h() - tbH + 20, "N", 0xFF88AAC0u, 1);
+        fb_fill_round_rect(fb, pitch, chip3X, (int)guest_fb_h() - tbH + 10, 28, 32, 8,
+                           0xFF152538u);
+        fb_draw_text(fb, pitch, chip3X + 8, (int)guest_fb_h() - tbH + 20, "*", 0xFF88AAC0u, 1);
+        char clockBuf[16];
+        guest_desk_clock_text(clockBuf, (int)sizeof(clockBuf));
+        fb_fill_round_rect(fb, pitch, clockX, (int)guest_fb_h() - tbH + 10, clockW, 32, 10,
+                           0xFF152538u);
+        guest_fb_draw_text_smart(fb, pitch, clockX + 16, (int)guest_fb_h() - tbH + 16, clockBuf,
+                                 0xFFE2E8F0u, 2, 1);
+    }
     } else if (g_sg_desktop_auth) {
         /* Labels on SG chips (Start / Search / clock / task slots). */
         int taskWins[g_win_max];
@@ -3284,6 +3310,8 @@ static void guest_paint_fb_desktopshell(void)
 /* Pulse product QQuickWindow through software SG → QPA flush (FB0). */
 static void guest_prod_sg_pulse_flush(void)
 {
+    if (g_fb_only_pixel_auth)
+        return;
     if (!g_prod_sg_win || g_prod_sg_pulse_hold)
         return;
     bfree_guest_ensure_drawhelpers();
@@ -3361,7 +3389,7 @@ static void guest_desk_flush_paint(void)
     if (!g_desk_dirty)
         return;
     g_desk_dirty = 0;
-    if (g_prod_sg_sustained && g_prod_sg_win) {
+    if (g_prod_sg_sustained && g_prod_sg_win && !g_fb_only_pixel_auth) {
         /* Interactive pixels stay FB; Max1 only unlocks one-shot Terminal setVisible. */
         g_prod_fb_chrome_force = 1;
         guest_paint_fb_desktopshell();
@@ -3458,6 +3486,12 @@ static void guest_prod_post_activate_dense_sg(void)
 {
     if (!g_prod_sg_win)
         return;
+    if (g_fb_only_pixel_auth) {
+        guest_serial_puts("[desktop_qt] post-act dense SG skip (FB-only auth)\n");
+        g_desk_dirty = 1;
+        guest_desk_flush_paint();
+        return;
+    }
     guest_serial_puts("[desktop_qt] post-act dense SG enter\n");
     bfree_guest_ensure_drawhelpers();
     g_prod_sg_pulse_hold = 1;
@@ -4435,6 +4469,10 @@ static void guest_product_h1_item_parent(void)
 /* H2 / H2b: soft-present leaf then multi-item SG flush protocol. */
 static void guest_product_h2_sg_flush(QQuickWindow *qw)
 {
+    if (g_fb_only_pixel_auth) {
+        guest_serial_puts("[desktop_qt] H2 SG flush skip (FB-only auth)\n");
+        return;
+    }
     guest_serial_puts("[desktop_qt] H2 SG flush probe enter\n");
     if (!qw) {
         guest_serial_puts("[desktop_qt] H2 SG flush probe skip (no window)\n");
@@ -4733,11 +4771,15 @@ static void guest_product_sg_soft_present_one_leaf(QQuickWindow *qw)
         wd->exposed = true;
         wd->resizeEventPending = false;
     }
-    bfree_qpa_set_update_delivery(1);
-    /* Warm SG once here; arm flush-auth at event-loop entry (post-soft-present PF). */
-    guest_serial_puts("[desktop_qt] product SG FB0 present try\n");
-    guest_prod_sg_pulse_flush();
-    guest_serial_puts("[desktop_qt] product SG FB0 present ok\n");
+    if (!g_fb_only_pixel_auth) {
+        bfree_qpa_set_update_delivery(1);
+        /* Warm SG once here; arm flush-auth at event-loop entry (post-soft-present PF). */
+        guest_serial_puts("[desktop_qt] product SG FB0 present try\n");
+        guest_prod_sg_pulse_flush();
+        guest_serial_puts("[desktop_qt] product SG FB0 present ok\n");
+    } else {
+        guest_serial_puts("[desktop_qt] product SG FB0 present skip (FB-only auth)\n");
+    }
     g_prod_fb0_auth = 1;
     guest_serial_puts("[desktop_qt] product window keep-visible ok\n");
     guest_serial_puts("[desktop_qt] product input authority QML ok\n");
@@ -5290,7 +5332,7 @@ static void guest_attach_desktop_shell(QQuickWindow *win)
     if (root)
         root->update();
     bfree_guest_set_prefer_fallback_alloc(0);
-    if (g_prod_sg_sustained) {
+    if (g_prod_sg_sustained && !g_fb_only_pixel_auth) {
         guest_serial_puts("[desktop_qt] SG product auth retained (skip lookalike)\n");
         if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
             wd->exposed = true;
@@ -5300,6 +5342,8 @@ static void guest_attach_desktop_shell(QQuickWindow *win)
         bfree_qpa_set_update_delivery(1);
         return;
     }
+    if (g_prod_sg_sustained && g_fb_only_pixel_auth)
+        guest_serial_puts("[desktop_qt] SG product input retained (FB lookalike paint)\n");
     guest_serial_puts("[desktop_qt] SG fail->FB (unexposed; lookalike authority)\n");
     if (QWindowPrivate *wd = QWindowPrivate::get(win)) {
         wd->exposed = false;
@@ -6096,9 +6140,14 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     /* Promote SG flush to LIVE authority before event loop. Terminal attaches
      * on first loop tick (setParentItem after activate historically PF'd). */
     if (g_prod_sg_sustained && g_prod_sg_win) {
-        g_prod_sg_flush_auth = 1;
-        guest_serial_puts("[desktop_qt] product SG FB0 flush-auth ok\n");
-        guest_serial_puts("[desktop_qt] product FB lookalike skip (flush-auth)\n");
+        if (g_fb_only_pixel_auth) {
+            guest_serial_puts("[desktop_qt] product FB-only pixel auth ok\n");
+            g_prod_sg_flush_auth = 0;
+        } else {
+            g_prod_sg_flush_auth = 1;
+            guest_serial_puts("[desktop_qt] product SG FB0 flush-auth ok\n");
+            guest_serial_puts("[desktop_qt] product FB lookalike skip (flush-auth)\n");
+        }
         /* Display insurance: one FB chrome frame so brand-splash white cannot stick
          * if SG clear/composite is incomplete (headless center-sample can miss it). */
         g_prod_fb_chrome_force = 1;
@@ -6120,8 +6169,8 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     guest_serial_puts("[desktop_qt] qpa mouse bridge installed\n");
     guest_serial_puts("[desktop_qt] input path=poll-primary (PS/2; usb=off; step5)\n");
     guest_serial_puts("[desktop_qt] step5 input path ready\n");
-    /* Product SG auth: keep UpdateRequest delivery so host Window can present. */
-    if (g_prod_sg_sustained)
+    /* FB-only auth: never deliver SG UpdateRequest to QPA (prevents layered flush). */
+    if (g_prod_sg_sustained && !g_fb_only_pixel_auth)
         bfree_qpa_set_update_delivery(1);
     else
         bfree_qpa_set_update_delivery(0);
