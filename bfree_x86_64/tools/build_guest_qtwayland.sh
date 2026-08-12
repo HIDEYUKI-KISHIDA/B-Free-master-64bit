@@ -11,6 +11,8 @@ GUEST_QT="${BFREE_QT_GUEST_BUILD_DIR:-$HOME/out/bfree-qt6-guest-static}"
 QT_SRC="${BFREE_QT_SRC:-$HOME/src/qt6}"
 QT_TAG="${BFREE_QT_VERSION:-6.8.0}"
 WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
+LIBFFI_PREFIX="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
+MUSL_SYSROOT="${BFREE_ELF_MUSL_SYSROOT:-$ROOT/out/x86_64-elf-libm/prefix}"
 
 if [[ "${BFREE_SKIP_QTWAYLAND:-0}" == "1" ]]; then
   echo "[qtwayland-guest] SKIP (BFREE_SKIP_QTWAYLAND=1) — ISO will use bfree QPA desktop fallback"
@@ -61,30 +63,46 @@ if [[ ! -f "$WAYLAND_PREFIX/lib/pkgconfig/wayland-client.pc" ]]; then
   bash "$ROOT/tools/build_x86_64_elf_wayland.sh"
 fi
 
-if ! command -v wayland-scanner >/dev/null 2>&1; then
+SCANNER_BIN="$(command -v wayland-scanner 2>/dev/null || true)"
+if [[ -z "$SCANNER_BIN" ]]; then
   echo "[qtwayland-guest] host wayland-scanner missing:" >&2
   echo "  sudo apt install wayland-protocols libwayland-dev" >&2
   exit 1
 fi
 
-export PKG_CONFIG_PATH="$WAYLAND_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-export PKG_CONFIG_LIBDIR="$WAYLAND_PREFIX/lib/pkgconfig"
-export PKG_CONFIG_SYSROOT_DIR="$WAYLAND_PREFIX"
+# Regenerate CMake package configs (scanner path + libffi) even when libwayland is cached.
+bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER_BIN"
+
+export PKG_CONFIG_PATH="$WAYLAND_PREFIX/lib/pkgconfig:$LIBFFI_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+unset PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_LIBDIR
+
+FIND_ROOT="$WAYLAND_PREFIX"
+[[ -d "$LIBFFI_PREFIX" ]] && FIND_ROOT="$FIND_ROOT;$LIBFFI_PREFIX"
+[[ -d "$MUSL_SYSROOT/include" ]] && FIND_ROOT="$FIND_ROOT;$MUSL_SYSROOT"
 
 BD="$GUEST_QT/build-qtwayland"
 rm -rf "$BD"
 mkdir -p "$BD"
-echo "[qtwayland-guest] configure in $BD (Wayland=$WAYLAND_PREFIX)"
+echo "[qtwayland-guest] configure in $BD"
+echo "  Wayland=$WAYLAND_PREFIX  libffi=$LIBFFI_PREFIX  scanner=$SCANNER_BIN"
 "$GUEST_QT/bin/qt-cmake" "$QT_SRC/qtwayland" \
   -DCMAKE_INSTALL_PREFIX="$GUEST_QT" \
-  -DCMAKE_PREFIX_PATH="$WAYLAND_PREFIX" \
-  -DWAYLAND_SCANNER_EXECUTABLE="$(command -v wayland-scanner)" \
+  -DCMAKE_PREFIX_PATH="$WAYLAND_PREFIX;$GUEST_QT" \
+  -DCMAKE_FIND_ROOT_PATH="$FIND_ROOT" \
+  -DWayland_DIR="$WAYLAND_PREFIX/lib/cmake/Wayland" \
+  -DWaylandScanner_DIR="$WAYLAND_PREFIX/lib/cmake/WaylandScanner" \
+  -DWaylandScanner_EXECUTABLE="$SCANNER_BIN" \
   -DQT_BUILD_EXAMPLES=OFF \
   -DQT_BUILD_TESTS=OFF \
   -B "$BD" 2>&1 | tee "$BD/configure.log"
 
 if grep -q 'QtWayland is missing required dependencies' "$BD/configure.log"; then
   echo "[qtwayland-guest] ERROR: QtWayland configure skipped module (missing Wayland deps)" >&2
+  echo "  pkg-config:" >&2
+  PKG_CONFIG_PATH="$WAYLAND_PREFIX/lib/pkgconfig:$LIBFFI_PREFIX/lib/pkgconfig" \
+    pkg-config --print-errors --exists wayland-client wayland-server wayland-cursor wayland-egl 2>&1 | tail -5 >&2 || true
+  echo "  cmake configs:" >&2
+  ls -la "$WAYLAND_PREFIX/lib/cmake/Wayland" "$WAYLAND_PREFIX/lib/cmake/WaylandScanner" 2>&1 | tail -5 >&2 || true
   echo "  Ensure: bash $ROOT/tools/build_x86_64_elf_wayland.sh" >&2
   echo "  And:    sudo apt install wayland-protocols libwayland-dev meson ninja-build" >&2
   exit 1

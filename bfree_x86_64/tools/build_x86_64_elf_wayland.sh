@@ -149,4 +149,8 @@ if [[ ! -f "$PREFIX/lib/pkgconfig/wayland-client.pc" ]]; then
   echo "[elf-wayland] ERROR: install missing wayland-client.pc" >&2
   exit 1
 fi
+
+# CMake package configs for guest QtWayland (FindWayland + FindWaylandScanner bypass).
+bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER_BIN"
+
 echo "[elf-wayland] OK: $PREFIX/lib/pkgconfig/wayland-client.pc"
