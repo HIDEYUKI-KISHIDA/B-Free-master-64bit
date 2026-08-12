@@ -22,8 +22,12 @@ ifneq (,$(wildcard $(GS)/crt0.S))
 EXTRA_SRCS += crt0.S
 endif
 
-OBJS := $(SRCS:%=$(GS)/%.o) $(EXTRA_SRCS:%=$(GS)/%.o)
+ALL_SRCS := $(SRCS) $(EXTRA_SRCS)
+OBJS := $(patsubst %.c,$(GS)/%.o,$(filter %.c,$(ALL_SRCS)))
+OBJS += $(patsubst %.S,$(GS)/%.o,$(filter %.S,$(ALL_SRCS)))
 TARGET := $(GS)/compositor.elf
+
+$(foreach s,$(ALL_SRCS),$(if $(wildcard $(GS)/$(s)),,$(error missing $(GS)/$(s))))
 
 MUSL_INC := $(BFREE_ELF_LIBM_DIR)/prefix/include
 CFLAGS := -O2 -Wall -Wextra -g \

@@ -10,6 +10,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GUEST_QT="${BFREE_QT_GUEST_BUILD_DIR:-$HOME/out/bfree-qt6-guest-static}"
 QT_SRC="${BFREE_QT_SRC:-$HOME/src/qt6}"
 QT_TAG="${BFREE_QT_VERSION:-6.8.0}"
+WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
+
+if [[ -f "$GUEST_QT/lib/libQt6WaylandClient.a" ]]; then
+  echo "[qtwayland-guest] already installed: $GUEST_QT/lib/libQt6WaylandClient.a"
+  exit 0
+fi
 
 if [[ ! -f "$GUEST_QT/lib/libQt6Core.a" ]]; then
   echo "[qtwayland-guest] guest qtbase missing under $GUEST_QT" >&2
@@ -22,7 +28,6 @@ fetch_qtwayland() {
   if [[ -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
     return 0
   fi
-  # init-repository refuses re-init on existing supermodule trees — always git-clone fallback.
   if [[ -x "$QT_SRC/init-repository" ]] && [[ ! -d "$QT_SRC/qtwayland/.git" ]]; then
     (cd "$QT_SRC" && ./init-repository --module-subset=qtwayland) || true
   elif [[ -f "$QT_SRC/init-repository" ]] && [[ ! -d "$QT_SRC/qtwayland/.git" ]]; then
@@ -38,9 +43,6 @@ fetch_qtwayland() {
   fi
   if [[ ! -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
     echo "[qtwayland-guest] fetch failed — still no CMakeLists.txt under $QT_SRC/qtwayland" >&2
-    echo "  Try manually:" >&2
-    echo "    git clone https://code.qt.io/qt/qtwayland.git $QT_SRC/qtwayland" >&2
-    echo "    cd $QT_SRC/qtwayland && git checkout v${QT_TAG}  # match qtbase tag" >&2
     exit 1
   fi
 }
@@ -49,14 +51,51 @@ if [[ ! -f "$QT_SRC/qtwayland/CMakeLists.txt" ]]; then
   fetch_qtwayland
 fi
 
+if [[ ! -f "$WAYLAND_PREFIX/lib/pkgconfig/wayland-client.pc" ]]; then
+  echo "[qtwayland-guest] cross libwayland missing — building ..."
+  bash "$ROOT/tools/build_x86_64_elf_wayland.sh"
+fi
+
+if ! command -v wayland-scanner >/dev/null 2>&1; then
+  echo "[qtwayland-guest] host wayland-scanner missing:" >&2
+  echo "  sudo apt install wayland-protocols libwayland-dev" >&2
+  exit 1
+fi
+
+export PKG_CONFIG_PATH="$WAYLAND_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export PKG_CONFIG_LIBDIR="$WAYLAND_PREFIX/lib/pkgconfig"
+export PKG_CONFIG_SYSROOT_DIR="$WAYLAND_PREFIX"
+
 BD="$GUEST_QT/build-qtwayland"
+rm -rf "$BD"
 mkdir -p "$BD"
-echo "[qtwayland-guest] configure in $BD"
+echo "[qtwayland-guest] configure in $BD (Wayland=$WAYLAND_PREFIX)"
 "$GUEST_QT/bin/qt-cmake" "$QT_SRC/qtwayland" \
   -DCMAKE_INSTALL_PREFIX="$GUEST_QT" \
+  -DCMAKE_PREFIX_PATH="$WAYLAND_PREFIX" \
+  -DWAYLAND_SCANNER_EXECUTABLE="$(command -v wayland-scanner)" \
   -DQT_BUILD_EXAMPLES=OFF \
   -DQT_BUILD_TESTS=OFF \
-  -B "$BD"
+  -B "$BD" 2>&1 | tee "$BD/configure.log"
+
+if grep -q 'QtWayland is missing required dependencies' "$BD/configure.log"; then
+  echo "[qtwayland-guest] ERROR: QtWayland configure skipped module (missing Wayland deps)" >&2
+  echo "  Ensure: bash $ROOT/tools/build_x86_64_elf_wayland.sh" >&2
+  echo "  And:    sudo apt install wayland-protocols libwayland-dev meson ninja-build" >&2
+  exit 1
+fi
+
+if ! cmake --build "$BD" --target help 2>/dev/null | grep -q 'WaylandClient'; then
+  echo "[qtwayland-guest] ERROR: CMake did not generate WaylandClient target" >&2
+  echo "  See $BD/configure.log" >&2
+  exit 1
+fi
+
 cmake --build "$BD" --target WaylandClient QWaylandIntegrationPlugin --parallel "$(nproc 2>/dev/null || echo 4)"
 cmake --install "$BD" --component Devel 2>/dev/null || cmake --install "$BD"
+
+if [[ ! -f "$GUEST_QT/lib/libQt6WaylandClient.a" ]]; then
+  echo "[qtwayland-guest] ERROR: libQt6WaylandClient.a not installed under $GUEST_QT/lib" >&2
+  exit 1
+fi
 echo "[qtwayland-guest] done: $GUEST_QT/lib/libQt6WaylandClient.a"
