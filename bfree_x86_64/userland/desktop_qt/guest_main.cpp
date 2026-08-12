@@ -4752,6 +4752,22 @@ static void guest_product_sg_soft_present_one_leaf(QQuickWindow *qw)
         guest_serial_puts("[desktop_qt] product SG soft present skip (no window)\n");
         return;
     }
+    if (g_fb_only_pixel_auth) {
+        guest_serial_puts("[desktop_qt] product SG soft present skip (FB-only auth)\n");
+        g_prod_sg_win = qw;
+        g_prod_sg_sustained = 1;
+        g_prod_sg_ok = 1;
+        g_prod_fb0_auth = 1;
+        guest_fb_sync_qwindow(qw);
+        qw->setVisible(true);
+        if (QWindowPrivate *wd = QWindowPrivate::get(qw)) {
+            wd->exposed = false;
+            wd->receivedExpose = false;
+        }
+        bfree_qpa_set_update_delivery(0);
+        guest_desk_mark_dirty();
+        return;
+    }
     guest_serial_puts("[desktop_qt] product SG soft present enter\n");
     QQuickRectangle *leaf = g_ds_product_content_badge;
     if (!leaf) {
@@ -6064,6 +6080,13 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
                 __asm__ volatile("pause");
             guest_splash_advance();
             guest_serial_puts("[desktop_qt] splash frame ok\n");
+        }
+        guest_splash_disable();
+        {
+            auto *fb = reinterpret_cast<unsigned char *>(
+                static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
+            guest_fb_clear_entire(fb, guest_fb_pitch(), guest_fb_h(), 0xFF7A8FA8u);
+            guest_serial_puts("[desktop_qt] pre-Qt FB clear ok\n");
         }
     } else {
         guest_serial_puts("[desktop_qt] splash arm fail (no FB0 mmap)\n");

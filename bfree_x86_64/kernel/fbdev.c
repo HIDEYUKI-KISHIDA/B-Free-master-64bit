@@ -88,6 +88,7 @@ void fbdev_refresh_backend_info(void) {
     g_vbe_info.height = info.height;
     g_vbe_info.pitch = info.pitch;
     g_vbe_info.bpp = info.bpp;
+    vbe_set_info(&g_vbe_info);
 
     g_fb_info.addr = (uint8_t *)(uintptr_t)info.phys_addr;
     g_fb_info.width = info.width;

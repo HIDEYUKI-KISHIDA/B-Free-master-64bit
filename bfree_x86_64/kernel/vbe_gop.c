@@ -77,4 +77,10 @@ void vbe_get_info(struct vbe_info *info) {
     *info = g_vbe_info;
 }
 
+void vbe_set_info(const struct vbe_info *info)
+{
+    if (!info) return;
+    g_vbe_info = *info;
+}
+
 // 本来はUEFI/BIOSから情報取得する処理を実装

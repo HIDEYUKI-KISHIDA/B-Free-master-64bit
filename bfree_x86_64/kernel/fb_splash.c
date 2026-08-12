@@ -613,6 +613,20 @@ void fb_run_boot_splash_anim(uint32_t cycles)
     }
 }
 
+void fb_clear_screen(uint32_t rgb24)
+{
+    splash_bind_vbe();
+    if (!s_vram || s_pitch == 0 || s_h == 0)
+        return;
+    const uint32_t color = 0xFF000000u | (rgb24 & 0x00FFFFFFu);
+    const uint32_t row_px = s_pitch / 4u;
+    for (uint32_t y = 0; y < s_h; ++y) {
+        uint32_t *row = (uint32_t *)(s_vram + (size_t)y * s_pitch);
+        for (uint32_t x = 0; x < row_px; ++x)
+            row[x] = color;
+    }
+}
+
 void fb_draw_desktop_ready_frame(uint32_t frame) {
     /* Legacy mock desktop — unused on brand boot path. */
     splash_bind_vbe();
