@@ -12,6 +12,11 @@ QT_SRC="${BFREE_QT_SRC:-$HOME/src/qt6}"
 QT_TAG="${BFREE_QT_VERSION:-6.8.0}"
 WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
 
+if [[ "${BFREE_SKIP_QTWAYLAND:-0}" == "1" ]]; then
+  echo "[qtwayland-guest] SKIP (BFREE_SKIP_QTWAYLAND=1) — ISO will use bfree QPA desktop fallback"
+  exit 0
+fi
+
 if [[ -f "$GUEST_QT/lib/libQt6WaylandClient.a" ]]; then
   echo "[qtwayland-guest] already installed: $GUEST_QT/lib/libQt6WaylandClient.a"
   exit 0

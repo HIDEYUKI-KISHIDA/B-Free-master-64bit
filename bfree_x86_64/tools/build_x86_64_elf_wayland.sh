@@ -14,11 +14,15 @@ SRC="${BFREE_WAYLAND_SRC:-$HOME/src/wayland-${WAYLAND_VER}}"
 export PATH="${HOME}/x86_64-elf-toolchain/bin:/root/x86_64-elf-toolchain/bin:${PATH:-}"
 BFREE_ROOT="$ROOT" bash <(sed 's/\r$//' "$ROOT/tools/ensure_x86_64_elf_toolchain.sh") || true
 
-need() { command -v "$1" >/dev/null 2>&1 || { echo "[elf-wayland] missing: $1" >&2; exit 1; }; }
-need meson
-need ninja
-need x86_64-elf-gcc
-need pkg-config
+need() { command -v "$1" >/dev/null 2>&1 || { echo "[elf-wayland] missing: $1" >&2; return 1; }; }
+
+if ! need meson || ! need ninja || ! need x86_64-elf-gcc || ! need pkg-config; then
+  echo "[elf-wayland] install build tools (fix dpkg first if apt fails):" >&2
+  echo "  sudo dpkg --configure -a" >&2
+  echo "  sudo apt install -y wayland-protocols libwayland-dev meson ninja-build pkg-config" >&2
+  echo "  # or: pip install --user meson ninja" >&2
+  exit 1
+fi
 
 if [[ -f "$PREFIX/lib/pkgconfig/wayland-client.pc" ]]; then
   echo "[elf-wayland] already built: $PREFIX"
