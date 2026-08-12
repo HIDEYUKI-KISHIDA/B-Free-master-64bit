@@ -76,21 +76,19 @@ bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER_BIN"
 export PKG_CONFIG_PATH="$WAYLAND_PREFIX/lib/pkgconfig:$LIBFFI_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 unset PKG_CONFIG_SYSROOT_DIR PKG_CONFIG_LIBDIR
 
-FIND_ROOT="$WAYLAND_PREFIX"
-[[ -d "$LIBFFI_PREFIX" ]] && FIND_ROOT="$FIND_ROOT;$LIBFFI_PREFIX"
-[[ -d "$MUSL_SYSROOT/include" ]] && FIND_ROOT="$FIND_ROOT;$MUSL_SYSROOT"
+# Qt cross toolchain expects package roots here (maps to PREFIX/lib/cmake + FIND_ROOT_PATH).
+# Do NOT put the same path in both CMAKE_PREFIX_PATH and CMAKE_FIND_ROOT_PATH (Qt reroot bug).
+export QT_ADDITIONAL_PACKAGES_PREFIX_PATH="${WAYLAND_PREFIX}${QT_ADDITIONAL_PACKAGES_PREFIX_PATH:+:${QT_ADDITIONAL_PACKAGES_PREFIX_PATH}}"
 
 BD="$GUEST_QT/build-qtwayland"
 rm -rf "$BD"
 mkdir -p "$BD"
 echo "[qtwayland-guest] configure in $BD"
 echo "  Wayland=$WAYLAND_PREFIX  libffi=$LIBFFI_PREFIX  scanner=$SCANNER_BIN"
+echo "  QT_ADDITIONAL_PACKAGES_PREFIX_PATH=$QT_ADDITIONAL_PACKAGES_PREFIX_PATH"
 "$GUEST_QT/bin/qt-cmake" "$QT_SRC/qtwayland" \
   -DCMAKE_INSTALL_PREFIX="$GUEST_QT" \
-  -DCMAKE_PREFIX_PATH="$WAYLAND_PREFIX;$GUEST_QT" \
-  -DCMAKE_FIND_ROOT_PATH="$FIND_ROOT" \
-  -DWayland_DIR="$WAYLAND_PREFIX/lib/cmake/Wayland" \
-  -DWaylandScanner_DIR="$WAYLAND_PREFIX/lib/cmake/WaylandScanner" \
+  -DQT_ADDITIONAL_PACKAGES_PREFIX_PATH="$WAYLAND_PREFIX" \
   -DWaylandScanner_EXECUTABLE="$SCANNER_BIN" \
   -DQT_BUILD_EXAMPLES=OFF \
   -DQT_BUILD_TESTS=OFF \
@@ -98,12 +96,16 @@ echo "  Wayland=$WAYLAND_PREFIX  libffi=$LIBFFI_PREFIX  scanner=$SCANNER_BIN"
 
 if grep -q 'QtWayland is missing required dependencies' "$BD/configure.log"; then
   echo "[qtwayland-guest] ERROR: QtWayland configure skipped module (missing Wayland deps)" >&2
+  echo "  libs:" >&2
+  ls -la "$WAYLAND_PREFIX/lib"/libwayland-*.a 2>&1 | tail -8 >&2 || true
   echo "  pkg-config:" >&2
   PKG_CONFIG_PATH="$WAYLAND_PREFIX/lib/pkgconfig:$LIBFFI_PREFIX/lib/pkgconfig" \
     pkg-config --print-errors --exists wayland-client wayland-server wayland-cursor wayland-egl 2>&1 | tail -5 >&2 || true
   echo "  cmake configs:" >&2
-  ls -la "$WAYLAND_PREFIX/lib/cmake/Wayland" "$WAYLAND_PREFIX/lib/cmake/WaylandScanner" 2>&1 | tail -5 >&2 || true
+  ls -la "$WAYLAND_PREFIX/lib/cmake/Wayland" "$WAYLAND_PREFIX/lib/cmake/WaylandScanner" 2>&1 >&2 || true
+  grep -E 'B-Free Wayland|WaylandScanner|Wayland FOUND|Could NOT find Wayland' "$BD/configure.log" 2>&1 | tail -10 >&2 || true
   echo "  Ensure: bash $ROOT/tools/build_x86_64_elf_wayland.sh" >&2
+  echo "  Then:   bash $ROOT/tools/install_wayland_cmake_configs.sh \$(command -v wayland-scanner)" >&2
   echo "  And:    sudo apt install wayland-protocols libwayland-dev meson ninja-build" >&2
   exit 1
 fi

@@ -21,6 +21,18 @@ SCANNER="${1:-$(command -v wayland-scanner)}"
   exit 1
 }
 
+missing=()
+for lib in client server cursor egl; do
+  [[ -f "$PREFIX/lib/libwayland-${lib}.a" ]] || missing+=("libwayland-${lib}.a")
+  [[ -f "$PREFIX/include/wayland-${lib}.h" ]] || missing+=("wayland-${lib}.h")
+done
+if ((${#missing[@]})); then
+  echo "[wayland-cmake] incomplete cross libwayland under $PREFIX:" >&2
+  printf '  %s\n' "${missing[@]}" >&2
+  echo "  bash $ROOT/tools/build_x86_64_elf_wayland.sh" >&2
+  exit 1
+fi
+
 mkdir -p "$PREFIX/lib/cmake/Wayland" "$PREFIX/lib/cmake/WaylandScanner"
 sed -e "s|@PREFIX@|${PREFIX}|g" \
     -e "s|@VERSION@|${WAYLAND_VER}|g" \
