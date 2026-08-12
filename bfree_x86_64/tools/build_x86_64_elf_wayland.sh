@@ -51,6 +51,14 @@ rm -rf "$BD"
 mkdir -p "$PREFIX"
 
 CROSS_STUBS="$(cd "$ROOT/tools/cross-stubs" && pwd)"
+CC="${CC:-x86_64-elf-gcc}"
+AR="${AR:-x86_64-elf-ar}"
+
+# Static archive satisfies meson cc.has_function('clock_gettime') link test.
+"$CC" -c -o "$CROSS_STUBS/clock_gettime_stub.o" \
+  "$CROSS_STUBS/clock_gettime_stub.c" -I"$CROSS_STUBS"
+"$AR" rcs "$CROSS_STUBS/libcrossstub.a" "$CROSS_STUBS/clock_gettime_stub.o"
+
 CROSS_FILE="$(mktemp)"
 sed "s|@BFREE_CROSS_STUBS@|${CROSS_STUBS}|g" \
   "$ROOT/tools/meson-cross-x86_64-elf.txt" > "$CROSS_FILE"

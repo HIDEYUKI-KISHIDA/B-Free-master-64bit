@@ -5,9 +5,12 @@ ar = 'x86_64-elf-ar'
 strip = 'x86_64-elf-strip'
 pkg-config = 'pkg-config'
 
+[built-in options]
+c_args = ['-I@BFREE_CROSS_STUBS@']
+c_link_args = ['@BFREE_CROSS_STUBS@/libcrossstub.a']
+
 [properties]
 needs_exe_wrapper = false
-c_args = ['-I@BFREE_CROSS_STUBS@']
 
 [host_machine]
 system = 'linux'
