@@ -2676,14 +2676,16 @@ static void bfree_restore_user_fsbase(void)
 #define BFREE_EARLY_TCB_BYTES 256ULL
 
 /*
- * musl may touch %fs:0x28 (errno/TLS) before __init_tls runs arch_prctl.
- * exec_* paths used to zero FS_BASE; map a zeroed early TCB below RSP instead.
+ * musl __pthread_self reads the self pointer from %fs:0 before __init_tls.
+ * If that word is zero, errno/TLS helpers dereference NULL+0x28 → CR2=0x28.
+ * Match tools/guest_link_compat.cpp: zeroed early TCB below RSP + self word.
  */
 static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_fsbase)
 {
     uint64_t tcb;
     uint64_t off;
     uint64_t probe;
+    uint64_t self_word;
     uint8_t zbuf[64];
 
     if (!out_fsbase || user_rsp < BFREE_EARLY_TCB_BYTES + PAGE_SIZE) {
@@ -2703,6 +2705,10 @@ static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_
             return -1;
         }
     }
+    self_word = tcb;
+    if (bfree_user_stack_poke_bytes(tcb, (const char *)&self_word, sizeof(self_word)) != 0) {
+        return -1;
+    }
     *out_fsbase = tcb;
     return 0;
 }
@@ -2716,12 +2722,20 @@ static void bfree_user_exec_install_fsbase(uint64_t user_rsp, int bootstrap_tls)
             knl_current_task->user_fsbase = early_fs;
         }
         bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, early_fs);
+        uart_puts("[TLS] exec early fsbase=");
+        uart_puthex64(early_fs);
+        uart_puts("\n");
         return;
     }
     if (knl_current_task != 0) {
         knl_current_task->user_fsbase = 0;
     }
     bfree_wrmsr64((uint32_t)BFREE_MSR_FS_BASE, 0);
+    if (bootstrap_tls) {
+        uart_puts("[TLS] exec early bootstrap failed rsp=");
+        uart_puthex64(user_rsp);
+        uart_puts("\n");
+    }
 }
 
 // Linux 158: arch_prctl — musl __init_tls sets %fs via ARCH_SET_FS.
