@@ -16,6 +16,13 @@
 #include "process.h"
 #include "../../userland/libc/bfree_epoll.h"
 
+#ifndef BFREE_SIGNALFD_FD_BASE
+#define BFREE_SIGNALFD_FD_BASE 0x3680
+#endif
+#ifndef BFREE_MAX_SIGNALFD
+#define BFREE_MAX_SIGNALFD 8
+#endif
+
 extern int vmm_map_page(page_table_t *pt, uint64_t vaddr, uint64_t paddr, uint64_t flags);
 extern int vmm_unmap_page(page_table_t *pt, uint64_t vaddr);
 extern void vmm_drop_identity_alias(page_table_t *pt, uint64_t phys);
