@@ -112,6 +112,13 @@ SCANNER="$(command -v wayland-scanner)"
 bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER"
 
 MUSL_PREFIX="$(resolve_musl_prefix)"
+# install_musl_kernel_uapi.sh defaults BFREE_ELF_LIBM_DIR from $ROOT/out, not /root/out
+if [[ "$MUSL_PREFIX" == */prefix ]]; then
+  export BFREE_ELF_LIBM_DIR="${MUSL_PREFIX%/prefix}"
+else
+  export BFREE_ELF_LIBM_DIR="$MUSL_PREFIX"
+fi
+export BFREE_ELF_MUSL_SYSROOT="$MUSL_PREFIX"
 bash "$ROOT/tools/install_musl_kernel_uapi.sh"
 bash "$ROOT/tools/patch_qt_guest_linux_fs_h.sh"
 LIBGCC_DIR="$(dirname "$(x86_64-elf-g++ -print-file-name=libgcc.a)")"
@@ -123,6 +130,11 @@ ELF_CXX_TARGET="${CXX_INC_PAIR#*|}"
 [[ -f "$QT_SRC/qtbase/CMakeLists.txt" ]] || { echo "[FAIL] missing $QT_SRC/qtbase" >&2; exit 1; }
 
 EXTRA_ROOT=";${WAYLAND_PREFIX};${LIBFFI_PREFIX}"
+if ! mkdir -p "$PREFIX/build-qtbase" 2>/dev/null; then
+  echo "[guest-qtbase-wayland] ERROR: cannot write guest prefix: $PREFIX" >&2
+  echo "  export BFREE_QT_GUEST_BUILD_DIR=\$HOME/out/bfree-qt6-guest-static" >&2
+  exit 1
+fi
 rm -rf "$PREFIX/build-qtbase"
 mkdir -p "$PREFIX/build-qtbase"
 write_toolchain_cmake "$PREFIX/build-qtbase/toolchain.cmake" \

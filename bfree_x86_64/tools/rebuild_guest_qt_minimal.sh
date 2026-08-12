@@ -24,7 +24,7 @@ MKSPEC_DIR="$ROOT/tools/qt-mkspecs/bfree-g++"
 export PATH="/root/x86_64-elf-toolchain/bin:${HOME}/x86_64-elf-toolchain/bin:${PATH:-}"
 
 resolve_musl_prefix() {
-  local base="${BFREE_ELF_LIBM_DIR:-/root/out/x86_64-elf-libm}"
+  local base="${BFREE_ELF_LIBM_DIR:-${HOME}/out/x86_64-elf-libm}"
   if [[ -f "$base/prefix/include/stdint.h" ]]; then
     echo "$base/prefix"
   elif [[ -f "$base/include/stdint.h" ]]; then

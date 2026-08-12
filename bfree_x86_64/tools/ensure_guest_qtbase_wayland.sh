@@ -52,6 +52,18 @@ patch_toolchain_find_root() {
   echo "[guest-qt-wayland] patched toolchain FIND_ROOT_PATH: $toolchain"
 }
 
+verify_wayland_cmake_package() {
+  [[ -f "$WAYLAND_PREFIX/lib/cmake/Wayland/WaylandConfig.cmake" ]] || {
+    echo "[guest-qt-wayland] ERROR: missing $WAYLAND_PREFIX/lib/cmake/Wayland/WaylandConfig.cmake" >&2
+    return 1
+  }
+  [[ -f "$WAYLAND_PREFIX/lib/libwayland-client.a" ]] || {
+    echo "[guest-qt-wayland] ERROR: missing $WAYLAND_PREFIX/lib/libwayland-client.a" >&2
+    return 1
+  }
+  echo "[guest-qt-wayland] Wayland CMake package OK: $WAYLAND_PREFIX"
+}
+
 reconfigure_guest_qtbase_wayland() {
   local bd="$1"
   local toolchain="$bd/toolchain.cmake"
@@ -96,7 +108,14 @@ fi
 
 if [[ ! -f "$GUEST_QT/lib/libQt6Gui.a" ]]; then
   echo "[guest-qt-wayland] guest Qt6Gui missing under $GUEST_QT" >&2
+  echo "  export BFREE_QT_GUEST_BUILD_DIR=<dir with lib/libQt6Gui.a>" >&2
   echo "  bash $ROOT/tools/rebuild_guest_qt_minimal.sh" >&2
+  exit 1
+fi
+
+if [[ ! -w "$GUEST_QT" ]]; then
+  echo "[guest-qt-wayland] ERROR: guest prefix not writable: $GUEST_QT" >&2
+  echo "  use e.g. export BFREE_QT_GUEST_BUILD_DIR=\$HOME/out/bfree-qt6-guest-static" >&2
   exit 1
 fi
 
