@@ -1,6 +1,7 @@
 #include "gpu_backend.h"
 #include "cache.h"
 #include "vbe_gop.h"
+#include "virtio_gpu.h"
 
 #define PCI_VENDOR_QEMU_LEGACY 0x1234
 #define PCI_DEVICE_QEMU_STD_VGA 0x1111
@@ -215,6 +216,9 @@ static int mmio_gpu_backend_init(const bfree_gpu_device_info_t *device, tk2gpu_f
     vbe_get_info(&fallback_info);
 
     if (device->vendor_id == PCI_VENDOR_VIRTIO && device->device_id == PCI_DEVICE_VIRTIO_VGA) {
+        if (virtio_gpu_activate(device, fbinfo) == 0) {
+            return 0;
+        }
         fbinfo->width = fallback_info.width;
         fbinfo->height = fallback_info.height;
         fbinfo->bpp = fallback_info.bpp;
@@ -510,7 +514,14 @@ int gpu_backend_ioctl(int cmd, void *arg)
         return TK2GPU_ENOSYS;
 
     case TK2GPU_IOCTL_SUBMIT_CMD:
-        /* Phase 3: VirtIO-GPUコマンド送信の実装ポイント */
+        if (virtio_gpu_active()) {
+            tk2gpu_command_t *cmd = (tk2gpu_command_t *)arg;
+            (void)cmd;
+            if (virtio_gpu_resource_flush(0, 0, 0, g_gpu_backend_state.fbinfo.width,
+                                          g_gpu_backend_state.fbinfo.height) == 0) {
+                return TK2GPU_OK;
+            }
+        }
         return TK2GPU_ENOSYS;
     case TK2GPU_IOCTL_GET_BACKEND:
         if (!arg) {

@@ -19,13 +19,13 @@ multiboot_header_start:
     .long 0                         # Architecture (0: i386)
     .long multiboot_header_end - multiboot_header_start
     .long -(0xe85250d6 + 0 + (multiboot_header_end - multiboot_header_start))
-    # Framebuffer request tag: GRUB に 1024x768x32 VBE 画面モードを要求
+    # Framebuffer request tag: GRUB に 1920x1080x32 VBE 画面モードを要求
     .align 8
     .short 5      # MULTIBOOT_HEADER_TAG_FRAMEBUFFER
     .short 0      # flags (required)
     .long 20      # tag size
-    .long 1024    # width
-    .long 768     # height
+    .long 1920    # width
+    .long 1080    # height
     .long 32      # depth (bpp)
     # 終了タグ
     .align 8

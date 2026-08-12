@@ -10,6 +10,7 @@
 #include "guest_mvp_qmlcache_register.h"
 #include "guest_breeze_tokens.h"
 #include "guest_splash_data.h"
+#include "guest_fb_dims.h"
 
 #include <QEventLoop>
 #include <QBackingStore>
@@ -27,6 +28,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
+#include <QFont>
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
@@ -315,7 +317,7 @@ enum {
 
 static int guest_desk_start_menu_y0(void)
 {
-    return 768 - 52 - G_START_MENU_H - G_START_MENU_GAP; /* tbH=52 */
+    return (int)guest_fb_h() - 52 - G_START_MENU_H - G_START_MENU_GAP; /* tbH=52 */
 }
 
 static int guest_desk_start_row0_y(void)
@@ -325,7 +327,8 @@ static int guest_desk_start_row0_y(void)
 
 /* Phase C: /persist listing via raw syscalls (avoid QDir — corrupts dispatcher). */
 enum { G_PERSIST_MAX = 24, G_PERSIST_NAME = 32, G_TERM_MAX = 40, G_TERM_COLS = 64,
-       G_TERM_LINE_MAX = 120, G_TERM_CAPTURE_MAX = 1024 };
+       G_TERM_LINE_MAX = 120, G_TERM_CAPTURE_MAX = 1024,
+       G_TERM_FONT_SCALE = 2 };
 static char g_persist_names[G_PERSIST_MAX][G_PERSIST_NAME];
 static int g_persist_nnames = 0;
 static char g_persist_preview[120];
@@ -1228,8 +1231,8 @@ static void guest_desktopshell_guest_attach_chrome(QQuickItem *root)
     wall->setObjectName(QStringLiteral("DesktopShellGuestWallpaper"));
     wall->setParentItem(root);
     wall->setZ(0);
-    wall->setWidth(root->width() > 0 ? root->width() : 1024);
-    wall->setHeight(root->height() > 0 ? root->height() : 768);
+    wall->setWidth(root->width() > 0 ? root->width() : (int)guest_fb_w());
+    wall->setHeight(root->height() > 0 ? root->height() : (int)guest_fb_h());
     wall->setColor(QColor(0x7a, 0x8f, 0xa8));
     wall->setVisible(false);
     wall->setEnabled(false);
@@ -1257,8 +1260,8 @@ static void guest_desktopshell_guest_attach_chrome(QQuickItem *root)
     bar->setParentItem(root);
     bar->setZ(100);
     bar->setX(0);
-    bar->setY(768 - 52);
-    bar->setWidth(1024);
+    bar->setY((int)guest_fb_h() - 52);
+    bar->setWidth((int)guest_fb_w());
     bar->setHeight(52);
     bar->setColor(QColor(0x0d, 0x1b, 0x2a));
     bar->setVisible(false);
@@ -1305,8 +1308,8 @@ static void guest_configure_qml_rectangle(QQuickItem *root)
     } else {
         guest_serial_puts("[desktop_qt] QML Rectangle desk configured\n");
     }
-    rect->setWidth(root->width() > 0 ? root->width() : 1024);
-    rect->setHeight(root->height() > 0 ? root->height() : 768);
+    rect->setWidth(root->width() > 0 ? root->width() : (int)guest_fb_w());
+    rect->setHeight(root->height() > 0 ? root->height() : (int)guest_fb_h());
     /* Distinct from wallpaper #7A8FA8 so screendump/serial can prove QML provenance. */
     rect->setColor(QColor(0x3d, 0x8b, 0x6e));
     g_qml_rect_color = 0xFF3D8B6Eu;
@@ -1321,8 +1324,8 @@ static void guest_configure_qml_rectangle(QQuickItem *root)
 static void guest_paint_fb_direct(void)
 {
     /* Defaults match QPA probe path when ioctl is unavailable mid-session. */
-    const unsigned width = 1024;
-    const unsigned height = 768;
+    const unsigned width = guest_fb_w();
+    const unsigned height = guest_fb_h();
     const unsigned pitch = width * 4;
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
     guest_serial_puts("[desktop_qt] paint FB direct\n");
@@ -1363,6 +1366,9 @@ static void guest_paint_shell_window(void)
     p.setPen(QPen(QColor(0x64, 0x74, 0x8b), 2));
     p.drawRect(card.adjusted(0, 0, -1, -1));
     p.setPen(QColor(0x1e, 0x29, 0x3b));
+    QFont titleFont(QStringLiteral("sans-serif"));
+    titleFont.setPixelSize(18);
+    p.setFont(titleFont);
     p.drawText(card.adjusted(20, 40, -20, -80),
                Qt::AlignHCenter | Qt::AlignTop,
                QStringLiteral("DesktopShell MVP (native guest)"));
@@ -1497,7 +1503,7 @@ static int glyph_row(char c, int row)
 
 static void fb_put_pixel(unsigned char *fb, unsigned pitch, int x, int y, uint32_t argb)
 {
-    if (x < 0 || y < 0 || x >= 1024 || y >= 768)
+    if (x < 0 || y < 0 || x >= (int)guest_fb_w() || y >= (int)guest_fb_h())
         return;
     auto *row = reinterpret_cast<uint32_t *>(fb + (size_t)y * pitch);
     row[x] = argb;
@@ -1526,14 +1532,56 @@ static void fb_draw_text(unsigned char *fb, unsigned pitch, int x, int y, const 
     }
 }
 
+/* #3: prefer Qt monospace when QGuiApplication is live; fallback to bitmap glyphs. */
+static void guest_fb_draw_text_smart(unsigned char *fb, unsigned pitch, int x, int y,
+                                     const char *s, uint32_t color, int scale, int qt_font)
+{
+    if (!s || !s[0]) {
+        return;
+    }
+#if defined(BFREE_GUEST_HAS_QT6)
+    if (qt_font && g_qapp) {
+        const int len = (int)strlen(s);
+        const int px = 6 + scale * 5;
+        const int iw = len * px + 12;
+        const int ih = px + 10;
+        QImage img(iw, ih, QImage::Format_ARGB32);
+        img.fill(Qt::transparent);
+        QPainter p(&img);
+        p.setRenderHint(QPainter::TextAntialiasing, true);
+        p.setPen(QColor(int((color >> 16) & 0xFFu), int((color >> 8) & 0xFFu), int(color & 0xFFu)));
+        QFont f(QStringLiteral("monospace"));
+        f.setPixelSize(px);
+        f.setStyleHint(QFont::Monospace);
+        p.setFont(f);
+        p.drawText(4, px + 2, QString::fromLatin1(s));
+        p.end();
+        for (int py = 0; py < img.height(); ++py) {
+            const QRgb *row = reinterpret_cast<const QRgb *>(img.constScanLine(py));
+            for (int pxi = 0; pxi < img.width(); ++pxi) {
+                const QRgb pxv = row[pxi];
+                if (qAlpha(pxv) < 16) {
+                    continue;
+                }
+                fb_put_pixel(fb, pitch, x + pxi, y + py, 0xFF000000u | (uint32_t)(pxv & 0xFFFFFFu));
+            }
+        }
+        return;
+    }
+#else
+    (void)qt_font;
+#endif
+    fb_draw_text(fb, pitch, x, y, s, color, scale);
+}
+
 static void fb_fill_rect(unsigned char *fb, unsigned pitch, int x0, int y0, int w, int h, uint32_t argb)
 {
     for (int y = y0; y < y0 + h; ++y) {
-        if (y < 0 || y >= 768)
+        if (y < 0 || y >= (int)guest_fb_h())
             continue;
         auto *row = reinterpret_cast<uint32_t *>(fb + (size_t)y * pitch);
         for (int x = x0; x < x0 + w; ++x) {
-            if (x >= 0 && x < 1024)
+            if (x >= 0 && x < (int)guest_fb_w())
                 row[x] = argb;
         }
     }
@@ -1621,7 +1669,7 @@ static int g_desk_asleep = 0;
 static int g_desk_dirty = 1;
 /* 1=full desk, 2=windows/start overlay only (reuse g_desk_bg_cache). */
 static int g_desk_layer_dirty = 1;
-static unsigned char g_desk_bg_cache[1024u * 768u * 4u];
+static unsigned char g_desk_bg_cache[1920u * 1080u * 4u];
 static int g_desk_bg_cache_ok = 0;
 static int g_prod_badge_hidden = 0;
 static int g_host_tree_auth = 0; /* Themes/Widgets/Wabi via qrc URL on product Window */
@@ -1700,7 +1748,7 @@ static void guest_desk_cursor_blit_under(unsigned char *fb, unsigned pitch, int 
         for (int dx = 0; dx < 17; ++dx) {
             const int px = x - 8 + dx;
             const int py = y - 8 + dy;
-            if (px < 0 || px >= 1024 || py < 0 || py >= 768)
+            if (px < 0 || px >= (int)guest_fb_w() || py < 0 || py >= (int)guest_fb_h())
                 continue;
             if (save)
                 under[dy * 17 + dx] = pix[py * stride + px];
@@ -1713,7 +1761,7 @@ static void guest_desk_cursor_blit_under(unsigned char *fb, unsigned pitch, int 
 static void guest_desk_cursor_move_only(void)
 {
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
-    const unsigned pitch = 1024u * 4u;
+    const unsigned pitch = guest_fb_pitch();
     uint32_t *under = guest_desk_cur_under();
     if (g_cur_have)
         guest_desk_cursor_blit_under(fb, pitch, g_cur_sx, g_cur_sy, under, 0);
@@ -1731,8 +1779,8 @@ static void guest_desk_icon_xy(int i, int *ox, int *oy)
     int x = originX + (i % cols) * cellW;
     int y = originY + (i / cols) * cellH;
     if (i == g_desk_n_icons - 1) {
-        x = 1024 - 16 - 76;
-        y = 768 - g_desk_tb_h - 12 - 96;
+        x = (int)guest_fb_w() - 16 - 76;
+        y = (int)guest_fb_h() - g_desk_tb_h - 12 - 96;
     }
     *ox = x;
     *oy = y;
@@ -1740,13 +1788,13 @@ static void guest_desk_icon_xy(int i, int *ox, int *oy)
 
 static int guest_desk_hit_start(int mx, int my)
 {
-    const int x0 = 8, y0 = 768 - g_desk_tb_h + 6, w = 56, h = 40;
+    const int x0 = 8, y0 = (int)guest_fb_h() - g_desk_tb_h + 6, w = 56, h = 40;
     return (mx >= x0 && mx < x0 + w && my >= y0 && my < y0 + h) ? 1 : 0;
 }
 
 static int guest_desk_hit_search(int mx, int my)
 {
-    const int x0 = 72, y0 = 768 - g_desk_tb_h + 10, w = 220, h = 32;
+    const int x0 = 72, y0 = (int)guest_fb_h() - g_desk_tb_h + 10, w = 220, h = 32;
     return (mx >= x0 && mx < x0 + w && my >= y0 && my < y0 + h) ? 1 : 0;
 }
 
@@ -1888,21 +1936,21 @@ static int guest_desk_hit(int mx, int my)
 
 static void guest_win_clamp_geom(GuestWin *w)
 {
-    const int deskH = 768 - g_desk_tb_h;
+    const int deskH = (int)guest_fb_h() - g_desk_tb_h;
     if (w->w < g_win_min_w)
         w->w = g_win_min_w;
     if (w->h < g_win_min_h)
         w->h = g_win_min_h;
-    if (w->w > 1024)
-        w->w = 1024;
+    if (w->w > (int)guest_fb_w())
+        w->w = (int)guest_fb_w();
     if (w->h > deskH)
         w->h = deskH;
     if (w->x < 0)
         w->x = 0;
     if (w->y < 0)
         w->y = 0;
-    if (w->x + w->w > 1024)
-        w->x = 1024 - w->w;
+    if (w->x + w->w > (int)guest_fb_w())
+        w->x = (int)guest_fb_w() - w->w;
     if (w->y + w->h > deskH)
         w->y = deskH - w->h;
 }
@@ -1957,8 +2005,8 @@ static void guest_win_maximize(int wi)
     w->minimized = 0;
     w->x = 0;
     w->y = 0;
-    w->w = 1024;
-    w->h = 768 - g_desk_tb_h;
+    w->w = (int)guest_fb_w();
+    w->h = (int)guest_fb_h() - g_desk_tb_h;
     guest_win_raise(wi);
     guest_serial_puts("[desktop_qt] wm maximize\n");
 }
@@ -2206,8 +2254,8 @@ static void guest_w3_build_window_layer(QQuickItem *parent)
     g_w3_layer = new QQuickItem();
     g_w3_layer->setObjectName(QStringLiteral("W3WindowLayer"));
     g_w3_layer->setParentItem(parent);
-    g_w3_layer->setWidth(parent->width() > 0 ? parent->width() : 1024);
-    g_w3_layer->setHeight(parent->height() > 0 ? parent->height() : (768 - 52));
+    g_w3_layer->setWidth(parent->width() > 0 ? parent->width() : (int)guest_fb_w());
+    g_w3_layer->setHeight(parent->height() > 0 ? parent->height() : ((int)guest_fb_h() - 52));
     g_w3_layer->setZ(400);
     /* Build sparse chrome once at attach; keep invisible (g_w3_sg_pixels=0). */
     for (int i = 0; i < 4; ++i) {
@@ -2246,9 +2294,9 @@ static void guest_w31_build_taskbar_layer(QQuickItem *parent)
      * QQuickItem layer (z!=0) tips paintOrderChildItems / meta cast PFs. */
     g_w31_layer = parent;
     const int tbH = 52;
-    const int tbY = 768 - tbH;
+    const int tbY = (int)guest_fb_h() - tbH;
     g_w31_chrome.bar = guest_w3_new_rect(parent);
-    guest_w31_place_rect(g_w31_chrome.bar, 0, tbY, 1024, tbH, 0, QColor(BFREE_TASKBAR_FILL_RGB));
+    guest_w31_place_rect(g_w31_chrome.bar, 0, tbY, (int)guest_fb_w(), tbH, 0, QColor(BFREE_TASKBAR_FILL_RGB));
     /* Skip border() — pen object + software rect path has been a PF amplifier. */
     g_w31_chrome.bar->setZ(0);
     /* A child QQuickRectangle under bar (even HasContents=false) PFs first present
@@ -2265,7 +2313,7 @@ static void guest_w31_build_taskbar_layer(QQuickItem *parent)
 static void guest_w31_build_taskbar_extras(void)
 {
     const int tbH = 52;
-    const int tbY = 768 - tbH;
+    const int tbY = (int)guest_fb_h() - tbH;
     QQuickItem *parent = g_w31_layer;
 
     if (!parent || g_w31_chrome.startChip)
@@ -2375,8 +2423,8 @@ static void guest_sg_build_desktop_leaves(QQuickItem *parent)
     g_sg_wallpaper->setZ(0);
     g_sg_wallpaper->setX(0);
     g_sg_wallpaper->setY(0);
-    g_sg_wallpaper->setWidth(1024);
-    g_sg_wallpaper->setHeight(768 - 52);
+    g_sg_wallpaper->setWidth((int)guest_fb_w());
+    g_sg_wallpaper->setHeight((int)guest_fb_h() - 52);
     g_sg_wallpaper->setRadius(0);
     g_sg_wallpaper->setColor(QColor(BFREE_DESK_WALL_RGB));
     g_sg_wallpaper->setEnabled(false);
@@ -2733,7 +2781,8 @@ static void guest_paint_fb_win_client(unsigned char *fb, unsigned pitch, const G
     } else if (app == 2) {
         fb_draw_text(fb, pitch, cx, cy, "Terminal - BusyBox (type+Enter)", 0xFF1E293Bu, 1);
         {
-            const int row_h = 18;
+            const int term_scale = G_TERM_FONT_SCALE;
+            const int row_h = 7 * term_scale + 8;
             const int list_y0 = cy + 28;
             const int max_rows = client_h > 40 ? (client_h - 40) / row_h : 8;
             int start = 0;
@@ -2749,18 +2798,19 @@ static void guest_paint_fb_win_client(unsigned char *fb, unsigned pitch, const G
                 start = g_term_nlines - max_rows;
             int row = 0;
             for (int i = start; i < g_term_nlines; ++i) {
-                fb_draw_text(fb, pitch, cx + 4, list_y0 + row * row_h,
-                             g_term_lines[i], 0xFF0F766Eu, 1);
+                guest_fb_draw_text_smart(fb, pitch, cx + 4, list_y0 + row * row_h,
+                                         g_term_lines[i], 0xFF0F766Eu, term_scale, 1);
                 /* Solid block cursor on the live prompt line. */
                 if (focused && g_term_session && i == g_term_nlines - 1) {
-                    const int cur_x = cx + 4 + guest_term_prompt_cols() * 6;
-                    fb_fill_rect(fb, pitch, cur_x, list_y0 + row * row_h, 8, 12,
-                                 0xFF0F766Eu);
+                    const int cur_x = cx + 4 + guest_term_prompt_cols() * 6 * term_scale;
+                    fb_fill_rect(fb, pitch, cur_x, list_y0 + row * row_h,
+                                 4 * term_scale, 7 * term_scale + 2, 0xFF0F766Eu);
                 }
                 ++row;
             }
             if (g_term_nlines == 0) {
-                fb_draw_text(fb, pitch, cx + 8, list_y0, "(no session)", 0xFF64748Bu, 1);
+                guest_fb_draw_text_smart(fb, pitch, cx + 8, list_y0, "(no session)",
+                                         0xFF64748Bu, term_scale, 1);
             }
         }
     } else {
@@ -2864,7 +2914,7 @@ static void guest_fb_fill_desktop_bg(unsigned char *fb, unsigned pitch, int desk
 
     if (!g_w3_sg_win_auth) {
         for (int y = 0; y < desk_h; ++y)
-            fb_fill_rect(fb, pitch, 0, y, 1024, 1, row_color(y));
+            fb_fill_rect(fb, pitch, 0, y, (int)guest_fb_w(), 1, row_color(y));
         return;
     }
     const int px = W3_SG_PROBE_X;
@@ -2874,12 +2924,12 @@ static void guest_fb_fill_desktop_bg(unsigned char *fb, unsigned pitch, int desk
     for (int y = 0; y < desk_h; ++y) {
         const uint32_t c = row_color(y);
         if (y < py || y >= py + ph) {
-            fb_fill_rect(fb, pitch, 0, y, 1024, 1, c);
+            fb_fill_rect(fb, pitch, 0, y, (int)guest_fb_w(), 1, c);
         } else {
             if (px > 0)
                 fb_fill_rect(fb, pitch, 0, y, px, 1, c);
-            if (px + pw < 1024)
-                fb_fill_rect(fb, pitch, px + pw, y, 1024 - (px + pw), 1, c);
+            if (px + pw < (int)guest_fb_w())
+                fb_fill_rect(fb, pitch, px + pw, y, (int)guest_fb_w() - (px + pw), 1, c);
         }
     }
 }
@@ -2996,7 +3046,7 @@ static void guest_paint_fb_desktopshell(void)
     }
     g_prod_fb_chrome_force = 0;
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
-    const unsigned pitch = 1024u * 4u;
+    const unsigned pitch = guest_fb_pitch();
     const int tbH = g_desk_tb_h;
     const int win_only = (g_desk_layer_dirty == 2 && g_desk_bg_cache_ok != 0);
     if (win_only) {
@@ -3006,15 +3056,15 @@ static void guest_paint_fb_desktopshell(void)
     if (!g_sg_desktop_auth) {
         /* Prefer product chrome wallpaper color when root-qrc chrome is live. */
         if (g_prod_fb0_auth && g_prod_chrome_item)
-            guest_fb_fill_desktop_bg(fb, pitch, 768 - tbH, 0xFF7A8FA8u);
+            guest_fb_fill_desktop_bg(fb, pitch, (int)guest_fb_h() - tbH, 0xFF7A8FA8u);
         else
-            guest_fb_fill_desktop_bg(fb, pitch, 768 - tbH, BFREE_DESK_WALL_ARGB);
+            guest_fb_fill_desktop_bg(fb, pitch, (int)guest_fb_h() - tbH, BFREE_DESK_WALL_ARGB);
         if (g_qml_rect_color && !g_w3_sg_win_auth)
-            fb_fill_rect(fb, pitch, 0, 0, 1024, 56, g_qml_rect_color);
+            fb_fill_rect(fb, pitch, 0, 0, (int)guest_fb_w(), 56, g_qml_rect_color);
         else if (g_qml_rect_color && g_w3_sg_win_auth) {
             /* Banner strip above probe; leave probe Y band alone. */
             if (W3_SG_PROBE_Y > 0)
-                fb_fill_rect(fb, pitch, 0, 0, 1024,
+                fb_fill_rect(fb, pitch, 0, 0, (int)guest_fb_w(),
                              W3_SG_PROBE_Y < 56 ? W3_SG_PROBE_Y : 56, g_qml_rect_color);
         }
         /* IR live badge — skip when host-tree auth (not part of DesktopShell). */
@@ -3050,9 +3100,9 @@ static void guest_paint_fb_desktopshell(void)
     const uint32_t tbFill = (g_prod_fb0_auth && g_prod_chrome_item)
                                 ? 0xFF0D1B2Au
                                 : BFREE_TASKBAR_FILL_ARGB;
-    fb_fill_rect(fb, pitch, 0, 768 - tbH, 1024, tbH, tbFill);
+    fb_fill_rect(fb, pitch, 0, (int)guest_fb_h() - tbH, (int)guest_fb_w(), tbH, tbFill);
     /* Taskbar top hairline (host DesktopShell border). */
-    fb_fill_rect(fb, pitch, 0, 768 - tbH, 1024, 1, 0xFF1E3050u);
+    fb_fill_rect(fb, pitch, 0, (int)guest_fb_h() - tbH, (int)guest_fb_w(), 1, 0xFF1E3050u);
     }
 
     const int tile = 48;
@@ -3093,47 +3143,47 @@ static void guest_paint_fb_desktopshell(void)
         const int focused = (wi == g_win_focus && !tw->minimized);
         uint32_t col = tw->minimized ? 0xFF152538u : (focused ? 0xFF2A5090u : 0xFF1A3555u);
         uint32_t bcol = focused ? 0xFF5090E0u : (tw->minimized ? 0xFF1E3050u : 0xFF2A5070u);
-        fb_fill_round_rect(fb, pitch, bx, 768 - tbH + 6, 100, 40, 8, col);
-        fb_fill_rect(fb, pitch, bx, 768 - tbH + 6, 100, 1, bcol);
-        fb_fill_rect(fb, pitch, bx, 768 - tbH + 45, 100, 1, bcol);
-        fb_fill_rect(fb, pitch, bx, 768 - tbH + 6, 1, 40, bcol);
-        fb_fill_rect(fb, pitch, bx + 99, 768 - tbH + 6, 1, 40, bcol);
+        fb_fill_round_rect(fb, pitch, bx, (int)guest_fb_h() - tbH + 6, 100, 40, 8, col);
+        fb_fill_rect(fb, pitch, bx, (int)guest_fb_h() - tbH + 6, 100, 1, bcol);
+        fb_fill_rect(fb, pitch, bx, (int)guest_fb_h() - tbH + 45, 100, 1, bcol);
+        fb_fill_rect(fb, pitch, bx, (int)guest_fb_h() - tbH + 6, 1, 40, bcol);
+        fb_fill_rect(fb, pitch, bx + 99, (int)guest_fb_h() - tbH + 6, 1, 40, bcol);
         if (focused)
-            fb_fill_rect(fb, pitch, bx + 8, 768 - tbH + 42, 84, 3, 0xFFFBBF24u);
+            fb_fill_rect(fb, pitch, bx + 8, (int)guest_fb_h() - tbH + 42, 84, 3, 0xFFFBBF24u);
         const GuestDeskIcon *ic = &g_desk_icons[tw->app_id];
-        fb_draw_text(fb, pitch, bx + 8, 768 - tbH + 12, ic->acro, 0xFFE2E8F0u, 1);
+        fb_draw_text(fb, pitch, bx + 8, (int)guest_fb_h() - tbH + 12, ic->acro, 0xFFE2E8F0u, 1);
         /* Short title (clip ~8 chars visually by drawing full; FB font is tiny). */
-        fb_draw_text(fb, pitch, bx + 8, 768 - tbH + 26, ic->title,
+        fb_draw_text(fb, pitch, bx + 8, (int)guest_fb_h() - tbH + 26, ic->title,
                      tw->minimized ? 0xFF64748Bu : 0xFFC8DCEDu, 1);
     }
 
     /* Start — host launcherOpen colors */
     const uint32_t startFill = g_desk_start_open ? 0xFF2A5090u : 0xFF1A3060u;
     const uint32_t startBord = g_desk_start_open ? 0xFF5090E0u : 0xFF2A4070u;
-    fb_fill_round_rect(fb, pitch, 8, 768 - tbH + 6, 56, 40, 10, startFill);
-    fb_fill_rect(fb, pitch, 8, 768 - tbH + 6, 56, 1, startBord);
-    fb_fill_rect(fb, pitch, 8, 768 - tbH + 45, 56, 1, startBord);
-    fb_fill_rect(fb, pitch, 8, 768 - tbH + 6, 1, 40, startBord);
-    fb_fill_rect(fb, pitch, 63, 768 - tbH + 6, 1, 40, startBord);
-    fb_draw_text(fb, pitch, 16, 768 - tbH + 18, "Start", 0xFFC8DCEDu, 1);
+    fb_fill_round_rect(fb, pitch, 8, (int)guest_fb_h() - tbH + 6, 56, 40, 10, startFill);
+    fb_fill_rect(fb, pitch, 8, (int)guest_fb_h() - tbH + 6, 56, 1, startBord);
+    fb_fill_rect(fb, pitch, 8, (int)guest_fb_h() - tbH + 45, 56, 1, startBord);
+    fb_fill_rect(fb, pitch, 8, (int)guest_fb_h() - tbH + 6, 1, 40, startBord);
+    fb_fill_rect(fb, pitch, 63, (int)guest_fb_h() - tbH + 6, 1, 40, startBord);
+    fb_draw_text(fb, pitch, 16, (int)guest_fb_h() - tbH + 18, "Start", 0xFFC8DCEDu, 1);
 
     /* Search placeholder (opens Start on click). */
-    fb_fill_round_rect(fb, pitch, 72, 768 - tbH + 10, 220, 32, 10, 0xFF1A2D42u);
-    fb_fill_rect(fb, pitch, 72, 768 - tbH + 10, 220, 1, 0xFF2A4060u);
-    fb_draw_text(fb, pitch, 84, 768 - tbH + 18, "Q", 0xFF88AAC0u, 1);
-    fb_draw_text(fb, pitch, 100, 768 - tbH + 20, "Search", 0xFF557090u, 1);
+    fb_fill_round_rect(fb, pitch, 72, (int)guest_fb_h() - tbH + 10, 220, 32, 10, 0xFF1A2D42u);
+    fb_fill_rect(fb, pitch, 72, (int)guest_fb_h() - tbH + 10, 220, 1, 0xFF2A4060u);
+    fb_draw_text(fb, pitch, 84, (int)guest_fb_h() - tbH + 18, "Q", 0xFF88AAC0u, 1);
+    fb_draw_text(fb, pitch, 100, (int)guest_fb_h() - tbH + 20, "Search", 0xFF557090u, 1);
 
     /* Clock tray + host-like system tray chips (Net / N / *) */
-    fb_fill_round_rect(fb, pitch, 760, 768 - tbH + 10, 36, 32, 8, 0xFF152538u);
-    fb_draw_text(fb, pitch, 768, 768 - tbH + 20, "Net", 0xFF88AAC0u, 1);
-    fb_fill_round_rect(fb, pitch, 800, 768 - tbH + 10, 28, 32, 8, 0xFF152538u);
-    fb_draw_text(fb, pitch, 808, 768 - tbH + 20, "N", 0xFF88AAC0u, 1);
-    fb_fill_round_rect(fb, pitch, 832, 768 - tbH + 10, 28, 32, 8, 0xFF152538u);
-    fb_draw_text(fb, pitch, 840, 768 - tbH + 20, "*", 0xFF88AAC0u, 1);
+    fb_fill_round_rect(fb, pitch, 760, (int)guest_fb_h() - tbH + 10, 36, 32, 8, 0xFF152538u);
+    fb_draw_text(fb, pitch, (int)guest_fb_w() - 256, (int)guest_fb_h() - tbH + 20, "Net", 0xFF88AAC0u, 1);
+    fb_fill_round_rect(fb, pitch, 800, (int)guest_fb_h() - tbH + 10, 28, 32, 8, 0xFF152538u);
+    fb_draw_text(fb, pitch, 808, (int)guest_fb_h() - tbH + 20, "N", 0xFF88AAC0u, 1);
+    fb_fill_round_rect(fb, pitch, 832, (int)guest_fb_h() - tbH + 10, 28, 32, 8, 0xFF152538u);
+    fb_draw_text(fb, pitch, 840, (int)guest_fb_h() - tbH + 20, "*", 0xFF88AAC0u, 1);
     char clockBuf[16];
     guest_desk_clock_text(clockBuf, (int)sizeof(clockBuf));
-    fb_fill_round_rect(fb, pitch, 868, 768 - tbH + 10, 144, 32, 10, 0xFF152538u);
-    fb_draw_text(fb, pitch, 884, 768 - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
+    fb_fill_round_rect(fb, pitch, 868, (int)guest_fb_h() - tbH + 10, 144, 32, 10, 0xFF152538u);
+    fb_draw_text(fb, pitch, 884, (int)guest_fb_h() - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
     } else if (g_sg_desktop_auth) {
         /* Labels on SG chips (Start / Search / clock / task slots). */
         int taskWins[g_win_max];
@@ -3143,16 +3193,16 @@ static void guest_paint_fb_desktopshell(void)
             const GuestWin *tw = &g_wins[wi];
             const int bx = guest_desk_task_slot_x(slot);
             const GuestDeskIcon *ic = &g_desk_icons[tw->app_id];
-            fb_draw_text(fb, pitch, bx + 8, 768 - tbH + 12, ic->acro, 0xFFE2E8F0u, 1);
-            fb_draw_text(fb, pitch, bx + 8, 768 - tbH + 26, ic->title,
+            fb_draw_text(fb, pitch, bx + 8, (int)guest_fb_h() - tbH + 12, ic->acro, 0xFFE2E8F0u, 1);
+            fb_draw_text(fb, pitch, bx + 8, (int)guest_fb_h() - tbH + 26, ic->title,
                          tw->minimized ? 0xFF64748Bu : 0xFFC8DCEDu, 1);
         }
-        fb_draw_text(fb, pitch, 16, 768 - tbH + 18, "Start", 0xFFC8DCEDu, 1);
-        fb_draw_text(fb, pitch, 84, 768 - tbH + 18, "Q", 0xFF88AAC0u, 1);
-        fb_draw_text(fb, pitch, 100, 768 - tbH + 20, "Search", 0xFF557090u, 1);
+        fb_draw_text(fb, pitch, 16, (int)guest_fb_h() - tbH + 18, "Start", 0xFFC8DCEDu, 1);
+        fb_draw_text(fb, pitch, 84, (int)guest_fb_h() - tbH + 18, "Q", 0xFF88AAC0u, 1);
+        fb_draw_text(fb, pitch, 100, (int)guest_fb_h() - tbH + 20, "Search", 0xFF557090u, 1);
         char clockBuf[16];
         guest_desk_clock_text(clockBuf, (int)sizeof(clockBuf));
-        fb_draw_text(fb, pitch, 896, 768 - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
+        fb_draw_text(fb, pitch, 896, (int)guest_fb_h() - tbH + 20, clockBuf, 0xFFE2E8F0u, 1);
     }
 
     memcpy(g_desk_bg_cache, fb, sizeof(g_desk_bg_cache));
@@ -3163,7 +3213,7 @@ static void guest_paint_fb_desktopshell(void)
     /* Start menu: SG panel chrome when auth; FB labels always. */
     guest_paint_fb_start_menu(fb, pitch);
     if (g_desk_asleep) {
-        fb_fill_rect(fb, pitch, 0, 0, 1024, 768, 0xFF0B1220u);
+        fb_fill_rect(fb, pitch, 0, 0, (int)guest_fb_w(), (int)guest_fb_h(), 0xFF0B1220u);
         fb_fill_round_rect(fb, pitch, 280, 320, 460, 100, 12, 0xFF1E293Bu);
         fb_draw_text(fb, pitch, 340, 358, "Sleep — press any key", 0xFFF8FAFCu, 2);
     }
@@ -3249,7 +3299,7 @@ static void guest_prod_sg_pulse_flush(void)
 static int guest_fb_blank_or_white(void)
 {
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
-    const unsigned pitch = 1024u * 4u;
+    const unsigned pitch = guest_fb_pitch();
     const uint32_t c = *reinterpret_cast<uint32_t *>(fb + 384u * pitch + 512u * 4u);
     const unsigned r = (c >> 16) & 0xffu;
     const unsigned g = (c >> 8) & 0xffu;
@@ -3273,7 +3323,7 @@ static void guest_prod_sg_repair_blank_fb(void)
 static void guest_paint_fb_cursor_only(void)
 {
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
-    const unsigned pitch = 1024u * 4u;
+    const unsigned pitch = guest_fb_pitch();
     g_cur_have = 0;
     guest_desk_cursor_blit_under(fb, pitch, g_desk_mx, g_desk_my, guest_desk_cur_under(), 1);
     g_cur_sx = g_desk_mx;
@@ -3639,8 +3689,8 @@ static void guest_desk_power_halt(const char *serial_msg, const char *banner)
     guest_desk_mark_dirty();
     guest_desk_flush_paint();
     auto *fb = reinterpret_cast<unsigned char *>(static_cast<uintptr_t>(BFREE_FB0_USER_MMAP_BASE));
-    const unsigned pitch = 1024u * 4u;
-    fb_fill_rect(fb, pitch, 0, 0, 1024, 768, 0xFF0B1220u);
+    const unsigned pitch = guest_fb_pitch();
+    fb_fill_rect(fb, pitch, 0, 0, (int)guest_fb_w(), (int)guest_fb_h(), 0xFF0B1220u);
     fb_fill_round_rect(fb, pitch, 260, 300, 500, 120, 12, 0xFF1E293Bu);
     fb_draw_text(fb, pitch, 320, 348, banner, 0xFFF8FAFCu, 2);
     for (;;)
@@ -3755,7 +3805,7 @@ static void guest_desk_on_key(uint32_t k)
 
 static int guest_desk_hit_task_slot(int mx, int my)
 {
-    if (my < 768 - g_desk_tb_h)
+    if (my < (int)guest_fb_h() - g_desk_tb_h)
         return -1;
     int taskWins[g_win_max];
     const int nTask = guest_desk_collect_task_wins(taskWins, g_win_max);
@@ -3875,7 +3925,7 @@ static void guest_desk_on_click(int mx, int my)
         guest_desk_mark_dirty();
         return;
     }
-    if (my >= 768 - g_desk_tb_h) {
+    if (my >= (int)guest_fb_h() - g_desk_tb_h) {
         if (g_desk_start_open) {
             g_desk_start_open = 0;
             guest_serial_puts("[desktop_qt] Start close\n");
@@ -4510,8 +4560,8 @@ static void guest_product_host_visual_fill(QQuickWindow *qw)
     wall->setParentItem(ci);
     wall->setX(0);
     wall->setY(0);
-    wall->setWidth(qw->width() > 0 ? qw->width() : 1024);
-    wall->setHeight(qw->height() > 0 ? qw->height() : 768);
+    wall->setWidth(qw->width() > 0 ? qw->width() : (int)guest_fb_w());
+    wall->setHeight(qw->height() > 0 ? qw->height() : (int)guest_fb_h());
     wall->setZ(0);
     wall->setColor(QColor(0x7a, 0x8f, 0xa8));
     wall->setFlag(QQuickItem::ItemHasContents, true);
@@ -4539,8 +4589,8 @@ static void guest_product_host_visual_fill(QQuickWindow *qw)
     bar->setObjectName(QStringLiteral("HostShellTaskbar"));
     bar->setParentItem(ci);
     bar->setX(0);
-    bar->setY((qw->height() > 0 ? qw->height() : 768) - 48);
-    bar->setWidth(qw->width() > 0 ? qw->width() : 1024);
+    bar->setY((qw->height() > 0 ? qw->height() : (int)guest_fb_h()) - 48);
+    bar->setWidth(qw->width() > 0 ? qw->width() : (int)guest_fb_w());
     bar->setHeight(48);
     bar->setZ(100);
     bar->setColor(QColor(0x0d, 0x1b, 0x2a));
@@ -4564,7 +4614,7 @@ static void guest_product_host_visual_fill(QQuickWindow *qw)
     qw->setColor(QColor(BFREE_DESK_WALL_RGB));
     guest_serial_puts("[desktop_qt] product host visual wallpaper+bar ok\n");
     /* Host tray band (DesktopShell taskbar right): Net / Notif / Clock / Quick. */
-    const qreal tbY = (qw->height() > 0 ? qw->height() : 768) - 48;
+    const qreal tbY = (qw->height() > 0 ? qw->height() : (int)guest_fb_h()) - 48;
     guest_product_h3_one_url_at("qrc:/kde_widgets/TrayIconButton.qml", "TrayNet", 1, 780, tbY + 8);
     guest_product_h3_one_url_at("qrc:/kde_widgets/TrayIconButton.qml", "TrayNotif", 1, 820, tbY + 8);
     guest_product_h3_one_url_at("qrc:/kde_widgets/ClockApplet.qml", "ClockApplet", 1, 860, tbY + 6);
@@ -4947,7 +4997,7 @@ static void guest_gate1_window_controls_probe(void)
     guest_serial_puts("[desktop_qt] Gate1 fallback: native Window+Rectangle\n");
     auto *w = new QQuickWindow();
     w->setObjectName(QStringLiteral("Gate1NativeWindow"));
-    w->resize(1024, 768);
+    w->resize((int)guest_fb_w(), (int)guest_fb_h());
     auto *rect = new QQuickRectangle();
     rect->setObjectName(QStringLiteral("Gate1NativeControl"));
     rect->setParentItem(w->contentItem());
@@ -5258,7 +5308,7 @@ static void guest_show_shell_window(void)
     guest_desk_mark_dirty();
     guest_desk_flush_paint();
     g_shell_window = new QWindow();
-    g_shell_window->resize(1024, 768);
+    g_shell_window->resize((int)guest_fb_w(), (int)guest_fb_h());
     g_shell_window->setPosition(0, 0);
     g_shell_window->create();
     g_shell_window->setVisible(true);
@@ -5678,9 +5728,9 @@ static void guest_ctor_qml_phase(void)
                     guest_serial_puts("[desktop_qt] DesktopShell Window QML root is QWindow\n");
                     guest_serial_puts("[desktop_qt] DesktopShell product Window\n");
                     if (qw->width() <= 0)
-                        qw->resize(1024, qw->height() > 0 ? qw->height() : 768);
+                        qw->resize((int)guest_fb_w(), qw->height() > 0 ? qw->height() : (int)guest_fb_h());
                     if (qw->height() <= 0)
-                        qw->resize(qw->width() > 0 ? qw->width() : 1024, 768);
+                        qw->resize(qw->width() > 0 ? qw->width() : (int)guest_fb_w(), (int)guest_fb_h());
                     /* Window content visualization — contentItem path (Gate1-proven).
                      * Avoid setParentItem on IR Item tree (PF@0x238); badge on contentItem. */
                     if (QQuickItem *ci = qw->contentItem()) {
@@ -5718,9 +5768,9 @@ static void guest_ctor_qml_phase(void)
                     guest_serial_puts("[desktop_qt] Item create stage2 ok\n");
                     qi->setObjectName(QStringLiteral("DesktopShellGuest"));
                     if (qi->width() <= 0)
-                        qi->setWidth(1024);
+                        qi->setWidth((int)guest_fb_w());
                     if (qi->height() <= 0)
-                        qi->setHeight(768);
+                        qi->setHeight((int)guest_fb_h());
                     guest_serial_puts("[desktop_qt] Item geom harden ok\n");
                     const QObjectList qch = qi->children();
                     guest_serial_puts("[desktop_qt] Item QObject children=");
@@ -5812,7 +5862,7 @@ static void guest_ctor_qml_phase(void)
                 guest_serial_puts("[desktop_qt] DesktopShell beginCreate null; native Window fallback\n");
                 auto *qw = new QQuickWindow();
                 qw->setObjectName(QStringLiteral("DesktopShellNativeWindow"));
-                qw->resize(1024, 768);
+                qw->resize((int)guest_fb_w(), (int)guest_fb_h());
                 qw->setVisible(false);
                 g_qml_root = qw;
                 guest_serial_puts("[desktop_qt] DesktopShell Window QML beginCreate ok\n");
@@ -5870,8 +5920,8 @@ static void guest_try_stage2_item_create(void)
     }
     /* Properties not in IR (zero-binding unit) — set from C++. */
     qi->setObjectName(QStringLiteral("DesktopShellGuest"));
-    qi->setWidth(1024);
-    qi->setHeight(768);
+    qi->setWidth((int)guest_fb_w());
+    qi->setHeight((int)guest_fb_h());
     guest_configure_qml_rectangle(qi);
     guest_serial_puts("[desktop_qt] qml root is QQuickItem (DesktopShellGuest)\n");
     g_qml_root = obj;

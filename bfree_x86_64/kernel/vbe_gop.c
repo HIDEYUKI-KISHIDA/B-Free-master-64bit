@@ -28,9 +28,9 @@ typedef struct {
 static struct vbe_info g_vbe_info = {
     .vram_phys = 0xE0000000, // QEMU stdvga BAR0 デフォルト値
     .vram_size = 8 * 1024 * 1024,
-    .width     = 1024,
-    .height    = 768,
-    .pitch     = 1024 * 4,
+    .width     = 1920,
+    .height    = 1080,
+    .pitch     = 1920 * 4,
     .bpp       = 32,
 };
 

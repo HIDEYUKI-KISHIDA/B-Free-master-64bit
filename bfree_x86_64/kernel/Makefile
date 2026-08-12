@@ -96,7 +96,7 @@ ASMS := ../multiboot2_header.S \
 SRCS := $(wildcard sysmain/*.c) \
 	$(wildcard sysdepend/cpu/x86_64/*.c) \
 	$(wildcard sysmain/sysdepend/x86_64/*.c) \
-	string.c device.c fbdev.c vbe_gop.c gpu_backend.c cache.c devfs.c mouse.c fb_splash.c fb_splash_brand_data.c time_x86_64.c pci.c
+	string.c device.c fbdev.c vbe_gop.c gpu_backend.c virtio_gpu.c cache.c devfs.c mouse.c fb_splash.c fb_splash_brand_data.c time_x86_64.c pci.c
 
 ifeq ($(ENABLE_RUNTIME_NET),1)
 # Guest LAN stack lives one tree above Program/ (B-Free-master/kernel).
