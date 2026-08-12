@@ -46,33 +46,101 @@ if ! command -v wayland-scanner >/dev/null 2>&1; then
   exit 1
 fi
 
+SCANNER_BIN="$(command -v wayland-scanner)"
+NATIVE_FILE=""
+PC_DIR=""
+PKG_CONFIG_WRAPPER=""
+if ! env -u PKG_CONFIG_PATH pkg-config --exists "wayland-scanner = ${WAYLAND_VER}" 2>/dev/null; then
+  # Meson clears PKG_CONFIG_PATH for native deps during cross builds.
+  PC_DIR="$(mktemp -d)"
+  cat > "$PC_DIR/wayland-scanner.pc" <<EOF
+prefix=$(dirname "$(dirname "$SCANNER_BIN")")
+bindir=\${prefix}/bin
+wayland_scanner=${SCANNER_BIN}
+
+Name: Wayland Scanner
+Description: Wayland scanner
+Version: ${WAYLAND_VER}
+EOF
+  PKG_CONFIG_WRAPPER="$(mktemp)"
+  cat > "$PKG_CONFIG_WRAPPER" <<EOF
+#!/usr/bin/env bash
+export PKG_CONFIG_PATH="${PC_DIR}\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
+exec pkg-config "\$@"
+EOF
+  chmod +x "$PKG_CONFIG_WRAPPER"
+  NATIVE_FILE="$(mktemp)"
+  cat > "$NATIVE_FILE" <<EOF
+[binaries]
+pkg-config = '${PKG_CONFIG_WRAPPER}'
+EOF
+fi
+
 BD="$PREFIX/build"
 rm -rf "$BD"
 mkdir -p "$PREFIX"
 
+MUSL_SYSROOT="${BFREE_ELF_MUSL_SYSROOT:-$ROOT/out/x86_64-elf-libm/prefix}"
+if [[ ! -f "$MUSL_SYSROOT/include/stdio.h" ]]; then
+  echo "[elf-wayland] musl sysroot missing — building ..."
+  BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT" bash "$ROOT/tools/build_x86_64_elf_libm.sh"
+fi
+if [[ ! -f "$MUSL_SYSROOT/include/linux/fs.h" ]]; then
+  BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT" BFREE_ELF_LIBM_DIR="${BFREE_ELF_LIBM_DIR:-$ROOT/out/x86_64-elf-libm}" \
+    bash "$ROOT/tools/install_musl_kernel_uapi.sh" || true
+fi
+export BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT"
+export BFREE_ELF_CC="${BFREE_ELF_CC:-x86_64-elf-gcc}"
+export BFREE_ELF_CXX="${BFREE_ELF_CXX:-x86_64-elf-g++}"
+
+LIBFFI_PREFIX="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
+if [[ ! -f "$LIBFFI_PREFIX/lib/pkgconfig/libffi.pc" ]]; then
+  echo "[elf-wayland] cross libffi missing — building ..."
+  BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT" bash "$ROOT/tools/build_x86_64_elf_libffi.sh"
+fi
+export PKG_CONFIG_PATH="$LIBFFI_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+
 CROSS_STUBS="$(cd "$ROOT/tools/cross-stubs" && pwd)"
 CC="${CC:-x86_64-elf-gcc}"
 AR="${AR:-x86_64-elf-ar}"
+GCC_WRAP="$ROOT/tools/x86_64-elf-gcc-meson-wrap.sh"
+GXX_WRAP="$ROOT/tools/x86_64-elf-gxx-meson-wrap.sh"
 
 # Static archive satisfies meson cc.has_function('clock_gettime') link test.
 "$CC" -c -o "$CROSS_STUBS/clock_gettime_stub.o" \
   "$CROSS_STUBS/clock_gettime_stub.c" -I"$CROSS_STUBS"
 "$AR" rcs "$CROSS_STUBS/libcrossstub.a" "$CROSS_STUBS/clock_gettime_stub.o"
+# Meson cc.find_library('rt') fallback when link-args stub is not enough.
+"$AR" rcs "$CROSS_STUBS/librt.a" "$CROSS_STUBS/clock_gettime_stub.o"
 
 CROSS_FILE="$(mktemp)"
-sed "s|@BFREE_CROSS_STUBS@|${CROSS_STUBS}|g" \
+sed -e "s|@BFREE_CROSS_STUBS@|${CROSS_STUBS}|g" \
+    -e "s|@BFREE_GCC_WRAP@|${GCC_WRAP}|g" \
+    -e "s|@BFREE_GXX_WRAP@|${GXX_WRAP}|g" \
   "$ROOT/tools/meson-cross-x86_64-elf.txt" > "$CROSS_FILE"
-trap 'rm -f "$CROSS_FILE"' EXIT
+cleanup() {
+  rm -f "$CROSS_FILE"
+  [[ -n "$NATIVE_FILE" ]] && rm -f "$NATIVE_FILE"
+  [[ -n "$PKG_CONFIG_WRAPPER" ]] && rm -f "$PKG_CONFIG_WRAPPER"
+  [[ -n "$PC_DIR" ]] && rm -rf "$PC_DIR"
+}
+trap cleanup EXIT
+
+MESON_NATIVE=()
+if [[ -n "$NATIVE_FILE" ]]; then
+  MESON_NATIVE=(--native-file "$NATIVE_FILE")
+fi
 
 echo "[elf-wayland] meson cross build -> $PREFIX (stubs=$CROSS_STUBS)"
 meson setup "$BD" "$SRC" \
   --cross-file "$CROSS_FILE" \
+  "${MESON_NATIVE[@]}" \
   --prefix="$PREFIX" \
   --default-library=static \
   -Ddocumentation=false \
   -Dtests=false \
   -Dlibraries=true \
-  -Dscanner=true
+  -Dscanner=false
 
 ninja -C "$BD"
 ninja -C "$BD" install

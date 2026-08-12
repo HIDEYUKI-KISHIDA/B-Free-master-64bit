@@ -1,13 +1,14 @@
 [binaries]
-c = 'x86_64-elf-gcc'
-cpp = 'x86_64-elf-g++'
+c = '@BFREE_GCC_WRAP@'
+cpp = '@BFREE_GXX_WRAP@'
 ar = 'x86_64-elf-ar'
 strip = 'x86_64-elf-strip'
 pkg-config = 'pkg-config'
 
 [built-in options]
 c_args = ['-I@BFREE_CROSS_STUBS@']
-c_link_args = ['@BFREE_CROSS_STUBS@/libcrossstub.a']
+# Freestanding linker has no crt0 until musl sysroot; stub satisfies configure link tests.
+c_link_args = ['-nostdlib', '-nostartfiles', '@BFREE_CROSS_STUBS@/libcrossstub.a']
 
 [properties]
 needs_exe_wrapper = false
