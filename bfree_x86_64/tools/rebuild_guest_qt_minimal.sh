@@ -108,6 +108,12 @@ ensure_libstdcxx() {
 
 write_toolchain_cmake() {
   local out="$1" musl="$2" libgcc_dir="$3" elf_root="$4" cxx_inc="$5" cxx_target="$6"
+  local extra_root="${7:-}"
+  local wayland_prefix="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
+  local libffi_prefix="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
+  if [[ -z "$extra_root" && "${BFREE_QT_WAYLAND:-0}" != "0" && -f "$wayland_prefix/lib/libwayland-client.a" ]]; then
+    extra_root=";${wayland_prefix};${libffi_prefix}"
+  fi
   local cxx_extra=""
   if [[ -n "$cxx_inc" ]]; then
     cxx_extra=" -isystem ${cxx_inc}"
@@ -124,10 +130,11 @@ set(CMAKE_CXX_COMPILER x86_64-elf-g++)
 set(CMAKE_AR x86_64-elf-ar)
 set(CMAKE_RANLIB x86_64-elf-ranlib)
 set(CMAKE_STRIP x86_64-elf-strip)
-set(CMAKE_FIND_ROOT_PATH "$elf_root;${musl}")
+set(CMAKE_FIND_ROOT_PATH "$elf_root;${musl}${extra_root}")
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
 set(CMAKE_INCLUDE_PATH "${musl}/include")
 set(CMAKE_C_FLAGS "-isystem ${musl}/include -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}")
@@ -233,6 +240,17 @@ rm -rf "$PREFIX/build-qtbase"
 mkdir -p "$PREFIX/build-qtbase"
 cd "$PREFIX/build-qtbase"
 
+WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
+WAYLAND_CMAKE_ARGS=()
+if [[ "${BFREE_QT_WAYLAND:-auto}" != "0" && -f "$WAYLAND_PREFIX/lib/libwayland-client.a" ]]; then
+  SCANNER="$(command -v wayland-scanner 2>/dev/null || true)"
+  if [[ -n "$SCANNER" ]]; then
+    bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER"
+    WAYLAND_CMAKE_ARGS=(-DWayland_DIR="$WAYLAND_PREFIX/lib/cmake/Wayland")
+    echo "  wayland:  $WAYLAND_PREFIX (Gui FEATURE_wayland)"
+  fi
+fi
+
 write_toolchain_cmake "$PREFIX/build-qtbase/toolchain.cmake" "$MUSL_PREFIX" "$LIBGCC_DIR" "$ELF_ROOT" "$ELF_CXX_INC" "$ELF_CXX_TARGET"
 
 # Direct CMake invocation for cross-compilation
@@ -263,6 +281,7 @@ cmake -G Ninja \
   -DINPUT_harfbuzz=qt \
   -DINPUT_pcre=qt \
   -DFEATURE_fontconfig=OFF \
+  "${WAYLAND_CMAKE_ARGS[@]}" \
   "$QT_SRC/qtbase"
 
 cmake --build . --parallel "$JOBS"

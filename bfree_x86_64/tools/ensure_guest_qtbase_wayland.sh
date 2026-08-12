@@ -19,6 +19,76 @@ guest_qt_has_wayland() {
   grep -qE 'set\(QT_FEATURE_wayland (TRUE|"ON"|1)\)' "$features"
 }
 
+guest_qtbase_cache_has_wayland() {
+  local cache="$1/CMakeCache.txt"
+  [[ -f "$cache" ]] || return 1
+  grep -qE '^FEATURE_wayland:BOOL=ON$|^QT_FEATURE_wayland:BOOL=ON$' "$cache"
+}
+
+prepare_cross_wayland_cmake() {
+  if [[ ! -f "$WAYLAND_PREFIX/lib/libwayland-client.a" ]]; then
+    echo "[guest-qt-wayland] cross libwayland missing — building ..."
+    bash "$ROOT/tools/build_x86_64_elf_wayland.sh"
+  fi
+  local scanner
+  scanner="$(command -v wayland-scanner 2>/dev/null || true)"
+  if [[ -z "$scanner" ]]; then
+    echo "[guest-qt-wayland] host wayland-scanner missing:" >&2
+    echo "  sudo apt install wayland-protocols libwayland-dev" >&2
+    exit 1
+  fi
+  bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$scanner"
+}
+
+patch_toolchain_find_root() {
+  local toolchain="$1"
+  [[ -f "$toolchain" ]] || return 0
+  if grep -q "$WAYLAND_PREFIX" "$toolchain"; then
+    return 0
+  fi
+  # Append cross libwayland (+ libffi) to FIND_ROOT_PATH in guest toolchain.cmake.
+  sed -i "s|set(CMAKE_FIND_ROOT_PATH \"\(.*\)\")|set(CMAKE_FIND_ROOT_PATH \"\1;${WAYLAND_PREFIX};${LIBFFI_PREFIX}\")|" \
+    "$toolchain"
+  echo "[guest-qt-wayland] patched toolchain FIND_ROOT_PATH: $toolchain"
+}
+
+reconfigure_guest_qtbase_wayland() {
+  local bd="$1"
+  local toolchain="$bd/toolchain.cmake"
+  local -a unset_args=()
+  local line var
+
+  while IFS= read -r line; do
+    var="${line%%:*}"
+    case "$var" in
+      Wayland_*|FEATURE_wayland|QT_FEATURE_wayland|QT_INTERNAL_PREVIOUSLY_FOUND_PACKAGES|QT_INTERNAL_PREVIOUSLY_SEARCHED_PACKAGES)
+        unset_args+=(-U "$var")
+        ;;
+    esac
+  done < "$bd/CMakeCache.txt"
+
+  patch_toolchain_find_root "$toolchain"
+
+  echo "[guest-qt-wayland] reconfiguring guest qtbase (Wayland_DIR + FIND_ROOT_PATH) ..."
+  echo "  Wayland_DIR=$WAYLAND_PREFIX/lib/cmake/Wayland"
+  (
+    cd "$bd"
+    cmake . \
+      "${unset_args[@]}" \
+      -DCMAKE_TOOLCHAIN_FILE="$toolchain" \
+      -DQT_HOST_PATH="$HOST_QT" \
+      -DWayland_DIR="$WAYLAND_PREFIX/lib/cmake/Wayland" \
+      2>&1 | tee "$bd/reconfigure-wayland.log"
+  )
+}
+
+rebuild_guest_qtbase_gui() {
+  local bd="$1"
+  echo "[guest-qt-wayland] rebuilding Gui + install ..."
+  cmake --build "$bd" --target Gui --parallel "$JOBS"
+  cmake --install "$bd"
+}
+
 if guest_qt_has_wayland "$GUEST_QT"; then
   echo "[guest-qt-wayland] OK: Qt6Gui has wayland feature ($GUEST_QT)"
   exit 0
@@ -30,49 +100,34 @@ if [[ ! -f "$GUEST_QT/lib/libQt6Gui.a" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$WAYLAND_PREFIX/lib/libwayland-client.a" ]]; then
-  echo "[guest-qt-wayland] cross libwayland missing — building ..."
-  bash "$ROOT/tools/build_x86_64_elf_wayland.sh"
-fi
-
-SCANNER_BIN="$(command -v wayland-scanner 2>/dev/null || true)"
-if [[ -z "$SCANNER_BIN" ]]; then
-  echo "[guest-qt-wayland] host wayland-scanner missing:" >&2
-  echo "  sudo apt install wayland-protocols libwayland-dev" >&2
-  exit 1
-fi
-bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER_BIN"
+prepare_cross_wayland_cmake
+verify_wayland_cmake_package
 
 BD="$GUEST_QT/build-qtbase"
 if [[ ! -f "$BD/CMakeCache.txt" ]]; then
-  echo "[guest-qt-wayland] ERROR: guest qtbase build dir missing ($BD)" >&2
-  echo "  Rebuild guest qtbase with cross Wayland visible at configure time:" >&2
-  echo "    export QT_ADDITIONAL_PACKAGES_PREFIX_PATH=$WAYLAND_PREFIX" >&2
-  echo "    bash $ROOT/tools/rebuild_guest_qt_minimal.sh" >&2
+  echo "[guest-qt-wayland] no build-qtbase — running qtbase-only rebuild with wayland ..."
+  BFREE_AUTO_CONFIRM=1 bash "$ROOT/tools/rebuild_guest_qtbase_wayland_only.sh"
+  guest_qt_has_wayland "$GUEST_QT" && exit 0
+  echo "[guest-qt-wayland] ERROR: rebuild_guest_qtbase_wayland_only.sh finished without wayland feature" >&2
   exit 1
 fi
 
-echo "[guest-qt-wayland] reconfiguring guest qtbase for Qt6Gui wayland feature ..."
-echo "  QT_ADDITIONAL_PACKAGES_PREFIX_PATH=$WAYLAND_PREFIX"
-cd "$BD"
-cmake . \
-  -DQT_HOST_PATH="$HOST_QT" \
-  -DQT_ADDITIONAL_PACKAGES_PREFIX_PATH="$WAYLAND_PREFIX"
+reconfigure_guest_qtbase_wayland "$BD"
 
-if ! grep -qE 'QT_FEATURE_wayland:BOOL=ON|FEATURE_wayland:BOOL=ON' CMakeCache.txt 2>/dev/null; then
-  echo "[guest-qt-wayland] WARNING: wayland feature may still be OFF after reconfigure" >&2
-  grep -E 'wayland' CMakeCache.txt 2>/dev/null | head -10 >&2 || true
+if ! guest_qtbase_cache_has_wayland "$BD"; then
+  echo "[guest-qt-wayland] reconfigure did not enable FEATURE_wayland — full qtbase rebuild ..."
+  BFREE_AUTO_CONFIRM=1 bash "$ROOT/tools/rebuild_guest_qtbase_wayland_only.sh"
+else
+  rebuild_guest_qtbase_gui "$BD"
 fi
 
-echo "[guest-qt-wayland] rebuilding Qt6Gui (and dependents) ..."
-cmake --build . --target Gui --parallel "$JOBS"
-cmake --install . --component Devel 2>/dev/null || cmake --install .
-
 if ! guest_qt_has_wayland "$GUEST_QT"; then
-  echo "[guest-qt-wayland] ERROR: Qt6Gui still lacks wayland feature after rebuild" >&2
-  echo "  Try full guest qtbase rebuild with:" >&2
-  echo "    export QT_ADDITIONAL_PACKAGES_PREFIX_PATH=$WAYLAND_PREFIX" >&2
-  echo "    bash $ROOT/tools/rebuild_guest_qt_minimal.sh" >&2
+  echo "[guest-qt-wayland] ERROR: Qt6Gui still lacks wayland feature" >&2
+  echo "  Manual rebuild:" >&2
+  echo "    export BFREE_QT_GUEST_BUILD_DIR=$GUEST_QT" >&2
+  echo "    export BFREE_ELF_WAYLAND_DIR=$WAYLAND_PREFIX" >&2
+  echo "    BFREE_AUTO_CONFIRM=1 bash $ROOT/tools/rebuild_guest_qtbase_wayland_only.sh" >&2
+  grep -E 'wayland|Wayland' "$BD/CMakeCache.txt" 2>/dev/null | head -15 >&2 || true
   exit 1
 fi
 
