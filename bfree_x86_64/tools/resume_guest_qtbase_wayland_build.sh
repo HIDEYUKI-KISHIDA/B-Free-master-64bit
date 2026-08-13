@@ -32,8 +32,8 @@ if [[ ! -f "$BD/build.ninja" ]]; then
   exit 1
 fi
 
-# Block host /usr/include; ensure libgcc includes + POSIX limit macros for -nostdinc++.
-if ! grep -q nostdinc "$BD/toolchain.cmake" 2>/dev/null \
+# Block host /usr/include; ensure nostdinc on CXX + POSIX limit macros.
+if ! grep -q 'CMAKE_CXX_FLAGS "-nostdinc -nostdinc++' "$BD/toolchain.cmake" 2>/dev/null \
    || ! grep -q '_POSIX_PIPE_BUF=512' "$BD/toolchain.cmake" 2>/dev/null; then
   echo "[resume] patching toolchain (nostdinc / POSIX limits) ..."
   bash "$ROOT/tools/fix_guest_qtbase_nostdinc.sh"
