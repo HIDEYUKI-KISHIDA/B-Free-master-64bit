@@ -22,7 +22,8 @@ fi
 if ! grep -qE '^FEATURE_wayland:BOOL=ON$|^QT_FEATURE_wayland:BOOL=ON$' "$BD/CMakeCache.txt"; then
   echo "[resume] ERROR: FEATURE_wayland not ON in CMakeCache.txt" >&2
   grep -E 'wayland|Wayland' "$BD/CMakeCache.txt" | head -10 >&2 || true
-  echo "  re-run: BFREE_AUTO_CONFIRM=1 bash $ROOT/tools/rebuild_guest_qtbase_wayland_only.sh" >&2
+  echo "  re-run: bash $ROOT/tools/ensure_guest_qtbase_wayland.sh" >&2
+  echo "  or: BFREE_AUTO_CONFIRM=1 bash $ROOT/tools/rebuild_guest_qtbase_wayland_only.sh" >&2
   exit 1
 fi
 

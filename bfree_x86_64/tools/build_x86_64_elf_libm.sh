@@ -3,22 +3,27 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tools/resolve_elf_musl_paths.sh
+source "$ROOT/tools/resolve_elf_musl_paths.sh"
+export_elf_musl_paths "$ROOT"
+ensure_x86_64_elf_toolchain_path "$ROOT"
+
 MUSL_VER="${BFREE_MUSL_VERSION:-1.2.5}"
-MUSL_SRC="${BFREE_MUSL_SRC:-/root/src/musl-${MUSL_VER}}"
-OUT_DIR="${BFREE_ELF_LIBM_DIR:-$ROOT/out/x86_64-elf-libm}"
+MUSL_SRC="${BFREE_MUSL_SRC:-$HOME/src/musl-${MUSL_VER}}"
+OUT_DIR="$BFREE_ELF_LIBM_DIR"
 INSTALL_LIBC="$OUT_DIR/libc.a"
 INSTALL_LIBM="$OUT_DIR/libm.a"
-
-if [[ -f "$ROOT/tools/ensure_x86_64_elf_toolchain.sh" ]]; then
-  export PATH="/root/x86_64-elf-toolchain/bin:${HOME}/x86_64-elf-toolchain/bin:${PATH:-}"
-  BFREE_ROOT="$ROOT" bash <(sed 's/\r$//' "$ROOT/tools/ensure_x86_64_elf_toolchain.sh") || true
-fi
 
 CC="${BFREE_ELF_CC:-$(command -v x86_64-elf-gcc 2>/dev/null || true)}"
 AR="${BFREE_ELF_AR:-$(command -v x86_64-elf-ar 2>/dev/null || true)}"
 CROSS="${BFREE_CROSS_PREFIX:-x86_64-elf-}"
 
-[[ -n "$CC" && -x "$CC" ]] || { echo "[elf-musl] x86_64-elf-gcc not found (export PATH=/root/x86_64-elf-toolchain/bin:\$PATH)" >&2; exit 1; }
+if [[ -z "$CC" || ! -x "$CC" ]]; then
+  echo "[elf-musl] x86_64-elf-gcc not found or not executable" >&2
+  echo "  export PATH=\"\$HOME/x86_64-elf-toolchain/bin:\$PATH\"" >&2
+  echo "  # or install lordmilko x86_64-elf toolchain under ~/x86_64-elf-toolchain" >&2
+  exit 1
+fi
 echo "[elf-musl] using CC=$CC"
 [[ -x "$AR" ]] || AR="${CROSS}ar"
 

@@ -7,10 +7,16 @@ if [[ -z "${BFREE_FIX_CRLF_DONE:-}" ]] && grep -q $'\r' "$0" 2>/dev/null; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tools/resolve_elf_musl_paths.sh
+source "$ROOT/tools/resolve_elf_musl_paths.sh"
+export_elf_musl_paths "$ROOT"
+
 GUEST_QT="${BFREE_QT_GUEST_BUILD_DIR:-$HOME/out/bfree-qt6-guest-static}"
 HOST_QT="${BFREE_QT_BUILD_DIR:-$HOME/out/bfree-qt6-static}"
-WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
-LIBFFI_PREFIX="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
+WAYLAND_PREFIX="$(resolve_elf_out_prefix BFREE_ELF_WAYLAND_DIR x86_64-elf-wayland "$ROOT")"
+LIBFFI_PREFIX="$(resolve_elf_out_prefix BFREE_ELF_LIBFFI_DIR x86_64-elf-libffi "$ROOT")"
+export BFREE_ELF_WAYLAND_DIR="$WAYLAND_PREFIX"
+export BFREE_ELF_LIBFFI_DIR="$LIBFFI_PREFIX"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
 
 guest_qt_has_wayland() {

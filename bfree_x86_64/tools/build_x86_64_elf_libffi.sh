@@ -7,14 +7,16 @@ if [[ -z "${BFREE_FIX_CRLF_DONE:-}" ]] && grep -q $'\r' "$0" 2>/dev/null; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PREFIX="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
+# shellcheck source=tools/resolve_elf_musl_paths.sh
+source "$ROOT/tools/resolve_elf_musl_paths.sh"
+export_elf_musl_paths "$ROOT"
+ensure_x86_64_elf_toolchain_path "$ROOT"
+
+PREFIX="$(resolve_elf_out_prefix BFREE_ELF_LIBFFI_DIR x86_64-elf-libffi "$ROOT")"
 FFI_VER="${BFREE_LIBFFI_VERSION:-3.4.6}"
 SRC="${BFREE_LIBFFI_SRC:-$HOME/src/libffi-${FFI_VER}}"
-MUSL_SYSROOT="${BFREE_ELF_MUSL_SYSROOT:-$ROOT/out/x86_64-elf-libm/prefix}"
-LIBC_A="${BFREE_ELF_LIBM_DIR:-$ROOT/out/x86_64-elf-libm}/libc.a"
-
-export PATH="${HOME}/x86_64-elf-toolchain/bin:/root/x86_64-elf-toolchain/bin:${PATH:-}"
-BFREE_ROOT="$ROOT" bash <(sed 's/\r$//' "$ROOT/tools/ensure_x86_64_elf_toolchain.sh") || true
+MUSL_SYSROOT="$BFREE_ELF_MUSL_SYSROOT"
+LIBC_A="$BFREE_ELF_LIBM_DIR/libc.a"
 
 if [[ -f "$PREFIX/lib/libffi.a" && -f "$PREFIX/include/ffi.h" ]]; then
   echo "[elf-libffi] already built: $PREFIX"
@@ -22,10 +24,17 @@ if [[ -f "$PREFIX/lib/libffi.a" && -f "$PREFIX/include/ffi.h" ]]; then
 fi
 
 if [[ ! -f "$MUSL_SYSROOT/include/stdio.h" ]]; then
-  echo "[elf-libffi] musl sysroot missing — building ..."
-  BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT" bash "$ROOT/tools/build_x86_64_elf_libm.sh"
+  echo "[elf-libffi] musl sysroot missing at $MUSL_SYSROOT — building ..."
+  bash "$ROOT/tools/build_x86_64_elf_libm.sh"
+  export_elf_musl_paths "$ROOT"
+  MUSL_SYSROOT="$BFREE_ELF_MUSL_SYSROOT"
+  LIBC_A="$BFREE_ELF_LIBM_DIR/libc.a"
 fi
-[[ -f "$LIBC_A" ]] || { echo "[elf-libffi] missing $LIBC_A" >&2; exit 1; }
+[[ -f "$LIBC_A" ]] || {
+  echo "[elf-libffi] missing $LIBC_A" >&2
+  echo "  export BFREE_ELF_LIBM_DIR=\$HOME/out/x86_64-elf-libm" >&2
+  exit 1
+}
 
 if [[ ! -f "$SRC/configure" ]]; then
   mkdir -p "$(dirname "$SRC")"

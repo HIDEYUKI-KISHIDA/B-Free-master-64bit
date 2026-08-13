@@ -7,12 +7,14 @@ if [[ -z "${BFREE_FIX_CRLF_DONE:-}" ]] && grep -q $'\r' "$0" 2>/dev/null; then
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
+# shellcheck source=tools/resolve_elf_musl_paths.sh
+source "$ROOT/tools/resolve_elf_musl_paths.sh"
+export_elf_musl_paths "$ROOT"
+ensure_x86_64_elf_toolchain_path "$ROOT"
+
+PREFIX="$(resolve_elf_out_prefix BFREE_ELF_WAYLAND_DIR x86_64-elf-wayland "$ROOT")"
 WAYLAND_VER="${BFREE_WAYLAND_VERSION:-1.23.1}"
 SRC="${BFREE_WAYLAND_SRC:-$HOME/src/wayland-${WAYLAND_VER}}"
-
-export PATH="${HOME}/x86_64-elf-toolchain/bin:/root/x86_64-elf-toolchain/bin:${PATH:-}"
-BFREE_ROOT="$ROOT" bash <(sed 's/\r$//' "$ROOT/tools/ensure_x86_64_elf_toolchain.sh") || true
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "[elf-wayland] missing: $1" >&2; return 1; }; }
 
@@ -80,23 +82,24 @@ BD="$PREFIX/build"
 rm -rf "$BD"
 mkdir -p "$PREFIX"
 
-MUSL_SYSROOT="${BFREE_ELF_MUSL_SYSROOT:-$ROOT/out/x86_64-elf-libm/prefix}"
+MUSL_SYSROOT="$BFREE_ELF_MUSL_SYSROOT"
 if [[ ! -f "$MUSL_SYSROOT/include/stdio.h" ]]; then
-  echo "[elf-wayland] musl sysroot missing — building ..."
-  BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT" bash "$ROOT/tools/build_x86_64_elf_libm.sh"
+  echo "[elf-wayland] musl sysroot missing at $MUSL_SYSROOT — building ..."
+  bash "$ROOT/tools/build_x86_64_elf_libm.sh"
+  export_elf_musl_paths "$ROOT"
+  MUSL_SYSROOT="$BFREE_ELF_MUSL_SYSROOT"
 fi
 if [[ ! -f "$MUSL_SYSROOT/include/linux/fs.h" ]]; then
-  BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT" BFREE_ELF_LIBM_DIR="${BFREE_ELF_LIBM_DIR:-$ROOT/out/x86_64-elf-libm}" \
-    bash "$ROOT/tools/install_musl_kernel_uapi.sh" || true
+  bash "$ROOT/tools/install_musl_kernel_uapi.sh" || true
 fi
 export BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT"
 export BFREE_ELF_CC="${BFREE_ELF_CC:-x86_64-elf-gcc}"
 export BFREE_ELF_CXX="${BFREE_ELF_CXX:-x86_64-elf-g++}"
 
-LIBFFI_PREFIX="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
+LIBFFI_PREFIX="$(resolve_elf_out_prefix BFREE_ELF_LIBFFI_DIR x86_64-elf-libffi "$ROOT")"
 if [[ ! -f "$LIBFFI_PREFIX/lib/pkgconfig/libffi.pc" ]]; then
   echo "[elf-wayland] cross libffi missing — building ..."
-  BFREE_ELF_MUSL_SYSROOT="$MUSL_SYSROOT" bash "$ROOT/tools/build_x86_64_elf_libffi.sh"
+  bash "$ROOT/tools/build_x86_64_elf_libffi.sh"
 fi
 export PKG_CONFIG_PATH="$LIBFFI_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
