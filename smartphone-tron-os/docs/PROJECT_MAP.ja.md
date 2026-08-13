@@ -1,51 +1,57 @@
 # SMARTPHONE TRON OS — プロジェクト地図
 
-## レイヤと優先度（仕様書 §17 要約）
+> 正本: [`spec/SMARTPHONE_TRON_OS_仕様書_v0.5.1.ja.md`](spec/SMARTPHONE_TRON_OS_仕様書_v0.5.1.ja.md)
+
+## アーキテクチャ（STOS 単体）
 
 ```
-[④ BSP / DTS]     Xperia 等 → TRON BSP 転写     ★ 今やる（Phase 1〜5）
+[④ BSP / DTS]     lena → bsp_lena_pdx213.h     ★ Phase 1
        ↓
-[カーネル]        TK2 / T-Kernel 2.0 AArch64
+[カーネル]        stos-tk2-lena (T-Kernel 2.0 AArch64)
        ↓
-[ゲスト ABI]      B-Free guest syscall + musl
+[STOS Runtime]    musl + stos_syscall（STOS 専用 ABI）
        ↓
-[① アプリ]        Qt/QML guest ELF（desktop 型）  ★ フェーズ A 後
+[UI]              Qt6 QML → shell.elf
        ↓
-[③ APK]          対象外
-[② .so そのまま]  対象外（長期研究 §17.7）
+[同梱アプリ]      settings / clock / about …
 ```
 
-## 他リポジトリとの対応
+**x86_64 デスクトップ系への依存は必須としない。**
 
-| SMARTPHONE TRON OS | B-Free リポジトリ |
-|--------------------|-------------------|
-| Qt スマホ UI / QML | `bfree_x86_64/userland/desktop_qt/` |
-| guest syscall | `bfree_x86_64/include/bfree/bfree_guest_abi.h` |
-| compositor / Wayland | `bfree_x86_64/docs/COMPOSITOR_MIGRATION.ja.md` |
-| aarch64 移植 | `bfree_aarch64/docs/PORT_ROADMAP.ja.md` |
-| Android 互換（部分） | `bfree_aarch64/docs/ANDROID_COMPAT_LAYER.ja.md` |
-| x86 検証 | `bfree_x86_64/` ISO / QEMU |
+## ソフトウェア資産 4 層
 
-## ハードウェアライン（混同しない）
+| 層 | MVP |
+|----|-----|
+| ④ DT/ドライバ知識 → BSP | ○ 最優先 |
+| ① FLOSS ソース再ビルド | ○ |
+| ② バイナリそのまま | × |
+| ③ Android Framework / APK | × |
 
-| ライン | SoC | 用途 |
-|--------|-----|------|
-| **SMARTPHONE TRON OS** | Xperia 系 / ARM64 スマホ | 本仕様書 |
-| JH7110 Compact MiniPC | StarFive JH7110 (RISC-V) | 別ボード・別フォルダ |
+## フェーズ
 
-## フェーズ（製品 MVP）
+| フェーズ | 内容 | MVP |
+|----------|------|-----|
+| A | kexec + UART + タイマ | MVP-1 |
+| B | FB + タッチ | MVP-2,3 |
+| C | Runtime + QML シェル | MVP-4 |
+| D | 手順・initrd | MVP-5 |
 
-| フェーズ | 内容 |
+## 並行トラック
+
+| トラック | 内容 |
 |----------|------|
-| A | カーネル + 最小 BSP で電源 ON・UART |
-| B | 入力・表示・ネットワーク |
-| C | Qt guest 1 本（ランチャー相当） |
-| D | settings / 電話アプリ等（ゲスト追加） |
+| **K** | カーネル + BSP（フェーズ A） |
+| **I** | 表示・入力 BSP（フェーズ B） |
+| **U** | Runtime + Qt（フェーズ C） |
 
-## ドキュメント整理チェックリスト
+## 第 1 実機
 
-- [ ] `docs/spec/` に v0.5 のみ
-- [ ] v0.4 は `docs/archive/`
-- [ ] Desktop 旧フォルダと J: を統合済み
-- [ ] JH7110 資料が混ざっていない
-- [ ] Git に `smartphone-tron-os/` を commit
+**Sony Xperia 10 III（lena / SM6350）** — v0.5.1 §0.4
+
+## 混同しないもの
+
+| 項目 | 扱い |
+|------|------|
+| JH7110 RISC-V ボード | 別フォルダ |
+| Android / APK 互換 | スコープ外 |
+| v0.6 社会インフラ・富岳・メッシュ | `docs/vision/`（Product v2） |
