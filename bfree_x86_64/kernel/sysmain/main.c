@@ -430,8 +430,13 @@ void knl_main(void) {
     extern void fb_draw_splash(void);
     extern void fb_draw_splash_frame(uint32_t frame);
     extern void fb_run_boot_splash_anim(uint32_t cycles);
+    extern void fb_boot_compositor_handoff(void);
     vbe_init_from_mb2((const uint8_t *)(uintptr_t)g_mb2_info);
+#if BFREE_BOOT_GUI_FIRST
+    fb_boot_compositor_handoff();
+#else
     fb_draw_splash(); /* earliest white + logo + spinner frame0 */
+#endif
 
     // --- PMM を先に初期化しないと、user ELF / user stack が 0x0,0x1000...
     // を踏んで低物理メモリを壊す ---
@@ -460,8 +465,13 @@ void knl_main(void) {
                 if (vmm_map_mmio_huge(&kernel_page_table, a, a) != 0)
                     break;
             }
+#if BFREE_BOOT_GUI_FIRST
+            fb_boot_compositor_handoff();
+            uart_puts("[BOOT] Early compositor handoff fill (post-VMM)\n");
+#else
             fb_draw_splash();
             uart_puts("[BOOT] Early brand splash (post-VMM)\n");
+#endif
         }
     }
     init_task_page_table(&tcb1);
@@ -552,7 +562,9 @@ void knl_main(void) {
     // 既定: init.elf（PID1 + FB UI）。無ければ shell.elf → user_hello.elf。
     uart_puts("[BOOT] Preparing to launch userland.\n");
     uart_puts("[KERNEL] Loading user ELF...\n");
+#if !BFREE_BOOT_GUI_FIRST
     fb_draw_splash_frame(1);
+#endif
     const char *target_elf = boot_primary_elf;
     int res = load_elf_image(target_elf, &user_entry, tcb1.page_table_base);
     if (res != 0) {
@@ -560,16 +572,22 @@ void knl_main(void) {
         uart_puthex64((uint64_t)(int64_t)res);
         uart_puts("), fallback to shell.elf\n");
         target_elf = "shell.elf";
+#if !BFREE_BOOT_GUI_FIRST
         fb_draw_splash_frame(2);
+#endif
         res = load_elf_image(target_elf, &user_entry, tcb1.page_table_base);
         if (res != 0) {
             uart_puts("[KERNEL] shell.elf fallback failed, trying user_hello.elf\n");
             target_elf = "user_hello.elf";
+#if !BFREE_BOOT_GUI_FIRST
             fb_draw_splash_frame(3);
+#endif
             res = load_elf_image(target_elf, &user_entry, tcb1.page_table_base);
         }
     }
+#if !BFREE_BOOT_GUI_FIRST
     fb_draw_splash_frame(4);
+#endif
     /* load_elf_image restores the caller's CR3; boot needs the task PT active. */
     if (tcb1.page_table_base) {
         __asm__ volatile("mov %0, %%cr3" :: "r"(tcb1.page_table_base) : "memory");
@@ -623,6 +641,7 @@ void knl_main(void) {
         {
             extern void vbe_get_info(struct vbe_info *info);
             extern void fb_draw_splash(void);
+            extern void fb_boot_compositor_handoff(void);
             extern page_table_t kernel_page_table;
             struct vbe_info vi;
             vbe_get_info(&vi);
@@ -648,11 +667,15 @@ void knl_main(void) {
                 uart_puts(" h=");
                 uart_puthex64((uint64_t)vi.height);
                 uart_puts("\n");
-                uart_puts("[SPLASH] VRAM mapped, drawing brand splash...\n");
-                /* Already painted early; one smooth cycle before ring3. */
+                uart_puts("[SPLASH] VRAM mapped, preparing handoff...\n");
+#if BFREE_BOOT_GUI_FIRST
+                fb_boot_compositor_handoff();
+                uart_puts("[BOOT] Compositor handoff fill done -> ring3 compositor.\n");
+#else
                 fb_run_boot_splash_anim(1);
                 uart_puts("[BOOT] Framebuffer splash drawn.\n");
                 uart_puts("[BOOT] Brand splash anim done -> ring3 init.\n");
+#endif
             } else {
                 uart_puts("[SPLASH] vbe_info invalid, skip.\n");
             }

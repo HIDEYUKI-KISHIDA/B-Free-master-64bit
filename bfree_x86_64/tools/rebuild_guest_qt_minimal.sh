@@ -24,7 +24,7 @@ MKSPEC_DIR="$ROOT/tools/qt-mkspecs/bfree-g++"
 export PATH="/root/x86_64-elf-toolchain/bin:${HOME}/x86_64-elf-toolchain/bin:${PATH:-}"
 
 resolve_musl_prefix() {
-  local base="${BFREE_ELF_LIBM_DIR:-/root/out/x86_64-elf-libm}"
+  local base="${BFREE_ELF_LIBM_DIR:-${HOME}/out/x86_64-elf-libm}"
   if [[ -f "$base/prefix/include/stdint.h" ]]; then
     echo "$base/prefix"
   elif [[ -f "$base/include/stdint.h" ]]; then
@@ -108,32 +108,15 @@ ensure_libstdcxx() {
 
 write_toolchain_cmake() {
   local out="$1" musl="$2" libgcc_dir="$3" elf_root="$4" cxx_inc="$5" cxx_target="$6"
-  local cxx_extra=""
-  if [[ -n "$cxx_inc" ]]; then
-    cxx_extra=" -isystem ${cxx_inc}"
-    if [[ -n "$cxx_target" ]]; then
-      cxx_extra+=" -isystem ${cxx_target}"
-    fi
+  local extra_root="${7:-}"
+  local wayland_prefix="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
+  local libffi_prefix="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
+  if [[ -z "$extra_root" && "${BFREE_QT_WAYLAND:-auto}" != "0" && -f "$wayland_prefix/lib/libwayland-client.a" ]]; then
+    extra_root=";${wayland_prefix};${libffi_prefix}"
   fi
-  cxx_extra+=" -isystem ${musl}/include"
-  cat >"$out" <<EOF
-set(CMAKE_SYSTEM_NAME Linux)
-set(CMAKE_SYSTEM_PROCESSOR x86_64)
-set(CMAKE_C_COMPILER x86_64-elf-gcc)
-set(CMAKE_CXX_COMPILER x86_64-elf-g++)
-set(CMAKE_AR x86_64-elf-ar)
-set(CMAKE_RANLIB x86_64-elf-ranlib)
-set(CMAKE_STRIP x86_64-elf-strip)
-set(CMAKE_FIND_ROOT_PATH "$elf_root;${musl}")
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
-set(CMAKE_INCLUDE_PATH "${musl}/include")
-set(CMAKE_C_FLAGS "-isystem ${musl}/include -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}")
-set(CMAKE_CXX_FLAGS "-D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}${cxx_extra}")
-set(CMAKE_EXE_LINKER_FLAGS "-L${libgcc_dir} -L${musl}/lib")
-EOF
+  # shellcheck source=tools/guest_qtbase_write_toolchain.sh
+  source "$ROOT/tools/guest_qtbase_write_toolchain.sh"
+  guest_qtbase_write_toolchain_cmake "$out" "$musl" "$libgcc_dir" "$elf_root" "$cxx_inc" "$cxx_target" "$extra_root"
 }
 
 resolve_elf_cxx_include() {
@@ -233,6 +216,17 @@ rm -rf "$PREFIX/build-qtbase"
 mkdir -p "$PREFIX/build-qtbase"
 cd "$PREFIX/build-qtbase"
 
+WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
+WAYLAND_CMAKE_ARGS=()
+if [[ "${BFREE_QT_WAYLAND:-auto}" != "0" && -f "$WAYLAND_PREFIX/lib/libwayland-client.a" ]]; then
+  SCANNER="$(command -v wayland-scanner 2>/dev/null || true)"
+  if [[ -n "$SCANNER" ]]; then
+    bash "$ROOT/tools/install_wayland_cmake_configs.sh" "$SCANNER"
+    WAYLAND_CMAKE_ARGS=(-DWayland_DIR="$WAYLAND_PREFIX/lib/cmake/Wayland")
+    echo "  wayland:  $WAYLAND_PREFIX (Gui FEATURE_wayland)"
+  fi
+fi
+
 write_toolchain_cmake "$PREFIX/build-qtbase/toolchain.cmake" "$MUSL_PREFIX" "$LIBGCC_DIR" "$ELF_ROOT" "$ELF_CXX_INC" "$ELF_CXX_TARGET"
 
 # Direct CMake invocation for cross-compilation
@@ -263,6 +257,10 @@ cmake -G Ninja \
   -DINPUT_harfbuzz=qt \
   -DINPUT_pcre=qt \
   -DFEATURE_fontconfig=OFF \
+  -DFEATURE_libudev=OFF \
+  -DFEATURE_libinput=OFF \
+  -DFEATURE_evdev=OFF \
+  "${WAYLAND_CMAKE_ARGS[@]}" \
   "$QT_SRC/qtbase"
 
 cmake --build . --parallel "$JOBS"

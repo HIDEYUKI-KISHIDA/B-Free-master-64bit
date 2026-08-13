@@ -30,6 +30,9 @@ extern uint64_t g_bfree_elf_watch_phys;
 extern uint64_t g_bfree_elf_watch_phys2;
 /* Sticky shell setvbuf frame (first busybox private text @0x522ea0). */
 extern uint64_t g_bfree_shell_text_phys;
+/* First-seen busybox .text fingerprint @ VA 0x522ea0 (fork clone diagnostic). */
+extern uint8_t g_bfree_shell_text_fp[4];
+extern int g_bfree_shell_text_fp_valid;
 void bfree_shell_pin_page(uint64_t phys);
 struct page_table;
 void bfree_shell_pin_range(struct page_table *pt, uint64_t va_lo, uint64_t va_hi);

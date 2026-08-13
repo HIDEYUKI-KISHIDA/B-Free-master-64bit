@@ -5,11 +5,12 @@ if grep -q $'\r' "$0" 2>/dev/null; then
 fi
 set -euo pipefail
 
-MUSL_BASE="${BFREE_ELF_LIBM_DIR:-/root/out/x86_64-elf-libm}"
-MUSL_PREFIX="$MUSL_BASE"
-if [[ -d "$MUSL_BASE/prefix/include" ]]; then
-  MUSL_PREFIX="$MUSL_BASE/prefix"
-fi
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=tools/resolve_elf_musl_paths.sh
+source "$ROOT/tools/resolve_elf_musl_paths.sh"
+export_elf_musl_paths "$ROOT"
+MUSL_BASE="$BFREE_ELF_LIBM_DIR"
+MUSL_PREFIX="$BFREE_ELF_MUSL_SYSROOT"
 INC="$MUSL_PREFIX/include"
 
 kernel_uapi_ok() {
@@ -33,7 +34,12 @@ for need in /usr/include/linux/fs.h /usr/include/asm-generic/ioctl.h /usr/includ
   fi
 done
 
-mkdir -p "$INC/linux" "$INC/asm" "$INC/asm-generic"
+if ! mkdir -p "$INC/linux" "$INC/asm" "$INC/asm-generic" 2>/dev/null; then
+  echo "[kernel-uapi] cannot write under $INC (permission denied?)" >&2
+  echo "  export BFREE_ELF_LIBM_DIR=\$HOME/out/x86_64-elf-libm" >&2
+  echo "  or use a writable musl sysroot under \$HOME/out" >&2
+  exit 1
+fi
 cp -a /usr/include/linux/. "$INC/linux/"
 cp -a /usr/include/asm-generic/. "$INC/asm-generic/"
 cp -a /usr/include/x86_64-linux-gnu/asm/. "$INC/asm/"

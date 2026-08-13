@@ -624,3 +624,32 @@ void fb_draw_desktop_ready_frame(uint32_t frame) {
     draw_desktop_ready_panel(phase);
 }
 
+void fb_clear_screen(uint32_t rgb24)
+{
+    splash_bind_vbe();
+    if (!s_vram || s_w == 0 || s_h == 0)
+        return;
+    fill_rect(0, 0, s_w, s_h, rgb24);
+}
+
+void fb_clear_vram_all(uint32_t rgb24)
+{
+    splash_bind_vbe();
+    if (!s_vram || s_pitch == 0)
+        return;
+    /* Cover visible scanout plus a second band (legacy double-buffer layouts). */
+    uint32_t rows = s_h ? s_h * 2u : 768u * 2u;
+    for (uint32_t y = 0; y < rows; ++y) {
+        uint32_t *row = (uint32_t *)(s_vram + (size_t)y * (size_t)s_pitch);
+        uint32_t cols = s_pitch / 4u;
+        for (uint32_t x = 0; x < cols; ++x)
+            row[x] = rgb24;
+    }
+}
+
+void fb_boot_compositor_handoff(void)
+{
+    /* Dark neutral — compositor owns pixels after ring3; no kernel brand art. */
+    fb_clear_vram_all(0xFF101820u);
+}
+

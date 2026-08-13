@@ -16,6 +16,13 @@
 #include "process.h"
 #include "../../userland/libc/bfree_epoll.h"
 
+#ifndef BFREE_SIGNALFD_FD_BASE
+#define BFREE_SIGNALFD_FD_BASE 0x3680
+#endif
+#ifndef BFREE_MAX_SIGNALFD
+#define BFREE_MAX_SIGNALFD 8
+#endif
+
 extern int vmm_map_page(page_table_t *pt, uint64_t vaddr, uint64_t paddr, uint64_t flags);
 extern int vmm_unmap_page(page_table_t *pt, uint64_t vaddr);
 extern void vmm_drop_identity_alias(page_table_t *pt, uint64_t phys);
@@ -21322,26 +21329,26 @@ long knl_syscall_handler(long num, long arg1, long arg2, long arg3, long arg4, l
         return -1;
     }
     switch (num) {
-        /* dup case 0 removed */
-        /* dup case 1 removed */
+        case 0: return sys_poll_input_event(arg1);
+        case 1: return sys_get_framebuffer_info(arg1);
         case 1001: return sys_get_framebuffer_info(arg1);
-        /* dup case 2 removed */
-        /* dup case 3 removed */
-        /* dup case 4 removed */
-        /* dup case 5 removed */
-        /* dup case 6 removed */
-        /* dup case 7 removed */
-        /* dup case 8 removed */
-        /* dup case 9 removed */
-        /* dup case 10 removed */
-        /* dup case 11 removed */
-        /* dup case 12 removed */
-        /* dup case 13 removed */
-        /* dup case 14 removed */
+        case 2: return sys_clear_screen(arg1);
+        case 3: return sys_get_time(arg1);
+        case 4: return sys_input_event_pending(arg1);
+        case 5: return sys_timerfd_create(arg1, arg2);
+        case 6: return sys_timerfd_settime(arg1, arg2, arg3, arg4);
+        case 7: return sys_timerfd_gettime(arg1, arg2);
+        case 8: return sys_timerfd_read(arg1, arg2);
+        case 9: return sys_timerfd_pending(arg1);
+        case 10: return sys_timerfd_close(arg1);
+        case 11: return sys_signal_setmask(arg1);
+        case 12: return sys_signal_pending(arg1);
+        case 13: return sys_signal_post(arg1, arg2);
+        case 14: return sys_signal_has_ready(arg1);
         case 15: return sys_signal_consume(arg1, arg2);
-        /* dup case 20 removed */
-        /* dup case 21 removed */
-        /* dup case 22 removed */
+        case 20: return sys_fbdev_ioctl(arg1, arg2, arg3);
+        case 21: return sys_input_ioctl(arg1, arg2, arg3);
+        case 22: return sys_ioctl(arg1, arg2, arg3);
         case 23: return sys_get_tk2_snapshot(arg1, arg2);
         case 24: return sys_debug_serial_write(arg1, arg2);
 
@@ -21349,22 +21356,22 @@ long knl_syscall_handler(long num, long arg1, long arg2, long arg3, long arg4, l
         case 25: return sys_pipe(arg1);
         case 26: return sys_mmap(arg1, arg2, arg3, arg4, arg5);
         case 27: return sys_shm_open(arg1, arg2, arg3);
-        /* dup case 28 removed */
+        case 28: return sys_shm_unlink(arg1);
         case 29: return sys_clock_gettime(arg1, arg2);
 
         // --- 時刻・タイマー syscall (30-32) ---
         case 30: return sys_clock_getres(arg1, arg2);
         case 31: return sys_nanosleep(arg1, arg2);
-        /* dup case 32 removed */
+        case 32: return sys_clock_nanosleep(arg1, arg2, arg3, arg4);
 
         // --- その他 syscall (33-40) ---
-        /* dup case 33 removed */
+        case 33: return sys_uname(arg1);
         case 34: return sys_sysconf(arg1);
-        /* dup case 35 removed */
+        case 35: return sys_gethostname(arg1, arg2);
         case 36: return sys_pause();
         case 37: return sys_sched_yield();
         case 38: return sys_isatty(arg1);
-        /* dup case 39 removed */
+        case 39: return sys_tcgetattr(arg1, arg2);
         case 40: return sys_tcsetattr(arg1, arg2, arg3);
         case 41: return sys_exec_initrd(arg1);
         case 42: return sys_legacy_initrd_read(arg1, arg2, arg3, arg4);
