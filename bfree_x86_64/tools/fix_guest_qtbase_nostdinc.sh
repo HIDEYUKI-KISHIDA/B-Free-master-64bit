@@ -59,9 +59,19 @@ echo "[fix-nostdinc] rewriting $BD/toolchain.cmake (musl=$MUSL_PREFIX)"
 guest_qtbase_write_toolchain_cmake "$BD/toolchain.cmake" \
   "$MUSL_PREFIX" "$LIBGCC_DIR" "$ELF_ROOT" "$ELF_CXX_INC" "$ELF_CXX_TARGET" "$EXTRA_ROOT"
 
-echo "[fix-nostdinc] reconfigure build-qtbase ..."
+echo "[fix-nostdinc] reconfigure build-qtbase (nostdinc + disable host libudev/libinput/evdev) ..."
 (
   cd "$BD"
-  cmake . -DCMAKE_TOOLCHAIN_FILE="$BD/toolchain.cmake"
+  cmake . \
+    -DCMAKE_TOOLCHAIN_FILE="$BD/toolchain.cmake" \
+    -DFEATURE_libudev=OFF \
+    -DFEATURE_libinput=OFF \
+    -DFEATURE_evdev=OFF \
+    -U FEATURE_libudev \
+    -U FEATURE_libinput \
+    -U FEATURE_evdev \
+    -U QT_FEATURE_libudev \
+    -U QT_FEATURE_libinput \
+    -U QT_FEATURE_evdev
 )
 echo "[fix-nostdinc] OK — resume: JOBS=4 bash tools/resume_guest_qtbase_wayland_build.sh"

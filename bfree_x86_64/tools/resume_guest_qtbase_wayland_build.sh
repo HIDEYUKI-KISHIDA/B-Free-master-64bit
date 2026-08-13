@@ -33,8 +33,17 @@ if [[ ! -f "$BD/build.ninja" ]]; then
 fi
 
 # Block host /usr/include; CXX isystem v2 (libstdc++ then musl for #include_next).
+# libudev pulls pkg-config -I/usr/include → host glibc stdint.h (bfree_guest_no_libudev=v1).
+need_fix=0
 if ! grep -q 'bfree_guest_cxx_isystem_order=v2' "$BD/toolchain.cmake" 2>/dev/null; then
-  echo "[resume] patching toolchain (nostdinc / CXX isystem order) ..."
+  need_fix=1
+fi
+if grep -qE '^FEATURE_libudev:BOOL=ON$|^QT_FEATURE_libudev:BOOL=ON$' "$BD/CMakeCache.txt" 2>/dev/null; then
+  echo "[resume] WARN: FEATURE_libudev=ON — host /usr/include leak (qdevicediscovery_udev)" >&2
+  need_fix=1
+fi
+if [[ "$need_fix" -eq 1 ]]; then
+  echo "[resume] patching toolchain (nostdinc / disable libudev) ..."
   bash "$ROOT/tools/fix_guest_qtbase_nostdinc.sh"
 fi
 

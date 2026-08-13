@@ -257,6 +257,9 @@ cmake -G Ninja \
   -DINPUT_harfbuzz=qt \
   -DINPUT_pcre=qt \
   -DFEATURE_fontconfig=OFF \
+  -DFEATURE_libudev=OFF \
+  -DFEATURE_libinput=OFF \
+  -DFEATURE_evdev=OFF \
   "${WAYLAND_CMAKE_ARGS[@]}" \
   "$QT_SRC/qtbase"
 

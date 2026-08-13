@@ -37,6 +37,7 @@ set(CMAKE_INCLUDE_PATH "${musl}/include")
 # -nostdinc/-nostdinc++: block host /usr/include.
 # CXX isystem order (bfree_guest_cxx_isystem_order=v2): libstdc++ BEFORE musl so
 #   <cmath> #include_next <math.h> resolves to musl; include-fixed last.
+# bfree_guest_no_libudev=v1: configure with FEATURE_libudev=OFF (pkg-config -I/usr/include leak).
 # posix_defs: limits.h macros when include-fixed shadows musl.
 set(CMAKE_C_FLAGS "-nostdinc -isystem ${musl}/include${gcc_intrinsic}${gcc_fixed} -D__linux__ -D_GNU_SOURCE ${posix_defs} -L${musl}/lib -L${libgcc_dir}")
 set(CMAKE_CXX_FLAGS "-nostdinc -nostdinc++ -D__linux__ -D_GNU_SOURCE ${posix_defs} -L${musl}/lib -L${libgcc_dir}${gcc_intrinsic}${cxx_isystem} -isystem ${musl}/include${gcc_fixed}")
