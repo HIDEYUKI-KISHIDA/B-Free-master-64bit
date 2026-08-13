@@ -60,5 +60,9 @@ guest_qtbase_write_toolchain_cmake "$BD/toolchain.cmake" \
   "$MUSL_PREFIX" "$LIBGCC_DIR" "$ELF_ROOT" "$ELF_CXX_INC" "$ELF_CXX_TARGET" "$EXTRA_ROOT"
 
 echo "[fix-nostdinc] reconfigure build-qtbase ..."
-cmake -S "$BD/.." -B "$BD" 2>/dev/null || cmake "$BD"
+cmake -S "$BD" -B "$BD" 2>/dev/null || true
+(
+  cd "$BD"
+  cmake . -DCMAKE_TOOLCHAIN_FILE="$BD/toolchain.cmake"
+)
 echo "[fix-nostdinc] OK — resume: JOBS=4 bash tools/resume_guest_qtbase_wayland_build.sh"
