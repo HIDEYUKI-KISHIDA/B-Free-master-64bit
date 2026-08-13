@@ -32,6 +32,12 @@ if [[ ! -f "$BD/build.ninja" ]]; then
   exit 1
 fi
 
+# Block host /usr/include (bits/libc-header-start.h) if toolchain predates -nostdinc fix.
+if ! grep -q nostdinc "$BD/toolchain.cmake" 2>/dev/null; then
+  echo "[resume] patching toolchain (-nostdinc) ..."
+  bash "$ROOT/tools/fix_guest_qtbase_nostdinc.sh"
+fi
+
 log_phase "building qtbase (jobs=$JOBS) — typically 1–3 hours on WSL ..."
 cmake --build "$BD" --parallel "$JOBS" 2>&1 | tee -a "$BD/build.log"
 

@@ -11,8 +11,10 @@ PREFIX="${BFREE_QT_GUEST_BUILD_DIR:-$HOME/out/bfree-qt6-guest-static}"
 HOST_QT="${BFREE_QT_BUILD_DIR:-$HOME/out/bfree-qt6-static}"
 WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
 LIBFFI_PREFIX="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
-JOBS="${JOBS:-2}"
+JOBS="${JOBS:-4}"
 export PATH="${HOME}/x86_64-elf-toolchain/bin:/root/x86_64-elf-toolchain/bin:${PATH:-}"
+
+log_phase() { echo "[$(date '+%H:%M:%S')] [guest-qtbase-wayland] $*"; }
 
 resolve_musl_prefix() {
   local base="${BFREE_ELF_LIBM_DIR:-${HOME}/out/x86_64-elf-libm}"
@@ -68,31 +70,9 @@ resolve_elf_cxx_include() {
 }
 
 write_toolchain_cmake() {
-  local out="$1" musl="$2" libgcc_dir="$3" elf_root="$4" cxx_inc="$5" cxx_target="$6"
-  local extra_root="$7"
-  local cxx_extra=" -isystem ${musl}/include"
-  if [[ -n "$cxx_inc" ]]; then
-    cxx_extra=" -isystem ${cxx_inc}${cxx_target:+ -isystem ${cxx_target}}${cxx_extra}"
-  fi
-  cat >"$out" <<EOF
-set(CMAKE_SYSTEM_NAME Linux)
-set(CMAKE_SYSTEM_PROCESSOR x86_64)
-set(CMAKE_C_COMPILER x86_64-elf-gcc)
-set(CMAKE_CXX_COMPILER x86_64-elf-g++)
-set(CMAKE_AR x86_64-elf-ar)
-set(CMAKE_RANLIB x86_64-elf-ranlib)
-set(CMAKE_STRIP x86_64-elf-strip)
-set(CMAKE_FIND_ROOT_PATH "$elf_root;${musl}${extra_root}")
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
-set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
-set(CMAKE_INCLUDE_PATH "${musl}/include")
-set(CMAKE_C_FLAGS "-isystem ${musl}/include -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}")
-set(CMAKE_CXX_FLAGS "-D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}${cxx_extra}")
-set(CMAKE_EXE_LINKER_FLAGS "-L${libgcc_dir} -L${musl}/lib")
-EOF
+  # shellcheck source=tools/guest_qtbase_write_toolchain.sh
+  source "$ROOT/tools/guest_qtbase_write_toolchain.sh"
+  guest_qtbase_write_toolchain_cmake "$@"
 }
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "[FAIL] missing: $1" >&2; exit 1; }; }
@@ -140,7 +120,8 @@ mkdir -p "$PREFIX/build-qtbase"
 write_toolchain_cmake "$PREFIX/build-qtbase/toolchain.cmake" \
   "$MUSL_PREFIX" "$LIBGCC_DIR" "$ELF_ROOT" "$ELF_CXX_INC" "$ELF_CXX_TARGET" "$EXTRA_ROOT"
 
-echo "[guest-qtbase-wayland] configure qtbase with Wayland_DIR=$WAYLAND_PREFIX/lib/cmake/Wayland"
+log_phase "configure qtbase (Wayland_DIR=$WAYLAND_PREFIX/lib/cmake/Wayland)"
+log_phase "this phase is slow (10–30 min); log: $PREFIX/build-qtbase/configure.log"
 cmake -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$PREFIX/build-qtbase/toolchain.cmake" \
   -DQT_HOST_PATH="$HOST_QT" \
@@ -173,13 +154,16 @@ cmake -G Ninja \
   -S "$QT_SRC/qtbase" \
   2>&1 | tee "$PREFIX/build-qtbase/configure.log"
 
+log_phase "configure finished — checking FEATURE_wayland ..."
 if ! grep -qE '^FEATURE_wayland:BOOL=ON$|^QT_FEATURE_wayland:BOOL=ON$' "$PREFIX/build-qtbase/CMakeCache.txt"; then
-  echo "[guest-qtbase-wayland] ERROR: FEATURE_wayland not ON after configure" >&2
+  log_phase "ERROR: FEATURE_wayland not ON after configure"
   grep -iE 'wayland' "$PREFIX/build-qtbase/configure.log" | tail -20 >&2 || true
   grep -E 'wayland|Wayland' "$PREFIX/build-qtbase/CMakeCache.txt" | head -20 >&2 || true
   exit 1
 fi
-
-cmake --build "$PREFIX/build-qtbase" --parallel "$JOBS"
+grep -E '^FEATURE_wayland:|^QT_FEATURE_wayland:' "$PREFIX/build-qtbase/CMakeCache.txt"
+log_phase "building qtbase (jobs=$JOBS) — typically 1–3 hours; log: $PREFIX/build-qtbase/build.log"
+cmake --build "$PREFIX/build-qtbase" --parallel "$JOBS" 2>&1 | tee -a "$PREFIX/build-qtbase/build.log"
+log_phase "installing qtbase ..."
 cmake --install "$PREFIX/build-qtbase"
-echo "[guest-qtbase-wayland] qtbase install done"
+log_phase "qtbase install done"

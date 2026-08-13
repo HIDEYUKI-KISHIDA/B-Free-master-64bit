@@ -111,36 +111,12 @@ write_toolchain_cmake() {
   local extra_root="${7:-}"
   local wayland_prefix="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
   local libffi_prefix="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
-  if [[ -z "$extra_root" && "${BFREE_QT_WAYLAND:-0}" != "0" && -f "$wayland_prefix/lib/libwayland-client.a" ]]; then
+  if [[ -z "$extra_root" && "${BFREE_QT_WAYLAND:-auto}" != "0" && -f "$wayland_prefix/lib/libwayland-client.a" ]]; then
     extra_root=";${wayland_prefix};${libffi_prefix}"
   fi
-  local cxx_extra=""
-  if [[ -n "$cxx_inc" ]]; then
-    cxx_extra=" -isystem ${cxx_inc}"
-    if [[ -n "$cxx_target" ]]; then
-      cxx_extra+=" -isystem ${cxx_target}"
-    fi
-  fi
-  cxx_extra+=" -isystem ${musl}/include"
-  cat >"$out" <<EOF
-set(CMAKE_SYSTEM_NAME Linux)
-set(CMAKE_SYSTEM_PROCESSOR x86_64)
-set(CMAKE_C_COMPILER x86_64-elf-gcc)
-set(CMAKE_CXX_COMPILER x86_64-elf-g++)
-set(CMAKE_AR x86_64-elf-ar)
-set(CMAKE_RANLIB x86_64-elf-ranlib)
-set(CMAKE_STRIP x86_64-elf-strip)
-set(CMAKE_FIND_ROOT_PATH "$elf_root;${musl}${extra_root}")
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
-set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
-set(CMAKE_INCLUDE_PATH "${musl}/include")
-set(CMAKE_C_FLAGS "-isystem ${musl}/include -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}")
-set(CMAKE_CXX_FLAGS "-D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}${cxx_extra}")
-set(CMAKE_EXE_LINKER_FLAGS "-L${libgcc_dir} -L${musl}/lib")
-EOF
+  # shellcheck source=tools/guest_qtbase_write_toolchain.sh
+  source "$ROOT/tools/guest_qtbase_write_toolchain.sh"
+  guest_qtbase_write_toolchain_cmake "$out" "$musl" "$libgcc_dir" "$elf_root" "$cxx_inc" "$cxx_target" "$extra_root"
 }
 
 resolve_elf_cxx_include() {
