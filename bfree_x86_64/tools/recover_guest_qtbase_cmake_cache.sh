@@ -33,11 +33,9 @@ rm -f "$BD/CMakeCache.txt" "$BD/build.ninja"
 find "$BD" -name CMakeFiles -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 echo "[recover-cmake] full configure (~10–45 min) ..."
-(
-  cd "$ROOT"
-  env -u PKG_CONFIG_PATH -u PKG_CONFIG_LIBDIR -u PKG_CONFIG_SYSROOT_DIR \
-    guest_qtbase_wayland_configure "$BD" "$HOST_QT" "$QT_SRC" "$WAYLAND_PREFIX"
-) 2>&1 | tee "$BD/configure-recover.log"
+unset PKG_CONFIG_PATH PKG_CONFIG_LIBDIR PKG_CONFIG_SYSROOT_DIR
+guest_qtbase_wayland_configure "$BD" "$HOST_QT" "$QT_SRC" "$WAYLAND_PREFIX" \
+  2>&1 | tee "$BD/configure-recover.log"
 
 grep -E '^FEATURE_libudev:|^FEATURE_wayland:' "$BD/CMakeCache.txt" || true
 grep qdevicediscovery_udev "$BD/build.ninja" 2>/dev/null && {
