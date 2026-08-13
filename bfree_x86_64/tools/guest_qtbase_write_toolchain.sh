@@ -4,7 +4,13 @@
 guest_qtbase_write_toolchain_cmake() {
   local out="$1" musl="$2" libgcc_dir="$3" elf_root="$4" cxx_inc="$5" cxx_target="$6"
   local extra_root="${7:-}"
-  local cxx_isystem=""
+  local cxx_isystem="" gcc_isystem=""
+  if [[ -d "${libgcc_dir}/include" ]]; then
+    gcc_isystem+=" -isystem ${libgcc_dir}/include"
+  fi
+  if [[ -d "${libgcc_dir}/include-fixed" ]]; then
+    gcc_isystem+=" -isystem ${libgcc_dir}/include-fixed"
+  fi
   if [[ -n "$cxx_inc" ]]; then
     cxx_isystem+=" -isystem ${cxx_inc}"
     if [[ -n "$cxx_target" ]]; then
@@ -29,8 +35,9 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
 set(CMAKE_INCLUDE_PATH "${musl}/include")
 # -nostdinc/-nostdinc++: never use host glibc headers (/usr/include/stdint.h -> bits/libc-header-start.h).
-set(CMAKE_C_FLAGS "-nostdinc -isystem ${musl}/include -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}")
-set(CMAKE_CXX_FLAGS "-nostdinc++ -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}${cxx_isystem}")
+# libgcc include(+fixed): x86intrin.h and other compiler intrinsics (pcre2 JIT, QtGui SIMD, etc.).
+set(CMAKE_C_FLAGS "-nostdinc -isystem ${musl}/include${gcc_isystem} -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}")
+set(CMAKE_CXX_FLAGS "-nostdinc++ -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}${gcc_isystem}${cxx_isystem}")
 set(CMAKE_EXE_LINKER_FLAGS "-L${libgcc_dir} -L${musl}/lib")
 EOF
 }

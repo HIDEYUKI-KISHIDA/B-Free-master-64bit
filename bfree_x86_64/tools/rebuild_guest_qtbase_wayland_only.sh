@@ -16,8 +16,15 @@ PREFIX="${BFREE_QT_GUEST_BUILD_DIR:-$HOME/out/bfree-qt6-guest-static}"
 HOST_QT="${BFREE_QT_BUILD_DIR:-$HOME/out/bfree-qt6-static}"
 WAYLAND_PREFIX="${BFREE_ELF_WAYLAND_DIR:-$ROOT/out/x86_64-elf-wayland}"
 LIBFFI_PREFIX="${BFREE_ELF_LIBFFI_DIR:-$ROOT/out/x86_64-elf-libffi}"
-JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
+# WSL: nproc=12 often OOMs during Qt cross-build; cap unless user sets JOBS.
+if [[ -z "${JOBS:-}" ]]; then
+  _nc="$(nproc 2>/dev/null || echo 2)"
+  if ((_nc > 4)); then JOBS=4; else JOBS="$_nc"; fi
+  unset _nc
+fi
 export PATH="${HOME}/x86_64-elf-toolchain/bin:/root/x86_64-elf-toolchain/bin:${PATH:-}"
+
+log_phase() { echo "[$(date '+%H:%M:%S')] [guest-qtbase-wayland] $*"; }
 
 guest_qt_has_wayland() {
   local features="$1/lib/cmake/Qt6Gui/Qt6GuiFeatures.cmake"

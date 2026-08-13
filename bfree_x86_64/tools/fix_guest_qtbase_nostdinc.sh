@@ -60,7 +60,6 @@ guest_qtbase_write_toolchain_cmake "$BD/toolchain.cmake" \
   "$MUSL_PREFIX" "$LIBGCC_DIR" "$ELF_ROOT" "$ELF_CXX_INC" "$ELF_CXX_TARGET" "$EXTRA_ROOT"
 
 echo "[fix-nostdinc] reconfigure build-qtbase ..."
-cmake -S "$BD" -B "$BD" 2>/dev/null || true
 (
   cd "$BD"
   cmake . -DCMAKE_TOOLCHAIN_FILE="$BD/toolchain.cmake"
