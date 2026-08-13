@@ -101,6 +101,7 @@ fi
 export BFREE_ELF_MUSL_SYSROOT="$MUSL_PREFIX"
 bash "$ROOT/tools/install_musl_kernel_uapi.sh"
 bash "$ROOT/tools/patch_qt_guest_linux_fs_h.sh"
+bash "$ROOT/tools/patch_qt_guest_qsharedmemory_path_max.sh"
 LIBGCC_DIR="$(dirname "$(x86_64-elf-g++ -print-file-name=libgcc.a)")"
 ELF_ROOT="$(cd "$(dirname "$(command -v x86_64-elf-g++)")/.." && pwd)"
 CXX_INC_PAIR="$(resolve_elf_cxx_include)"

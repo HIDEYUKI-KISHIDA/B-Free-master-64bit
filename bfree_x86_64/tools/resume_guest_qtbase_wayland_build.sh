@@ -38,6 +38,8 @@ if ! grep -q nostdinc "$BD/toolchain.cmake" 2>/dev/null; then
   bash "$ROOT/tools/fix_guest_qtbase_nostdinc.sh"
 fi
 
+bash "$ROOT/tools/patch_qt_guest_qsharedmemory_path_max.sh"
+
 log_phase "building qtbase (jobs=$JOBS) — typically 1–3 hours on WSL ..."
 cmake --build "$BD" --parallel "$JOBS" 2>&1 | tee -a "$BD/build.log"
 
