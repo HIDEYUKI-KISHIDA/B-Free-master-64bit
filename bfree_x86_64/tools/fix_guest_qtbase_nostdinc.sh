@@ -62,11 +62,23 @@ echo "[fix-nostdinc] rewriting $BD/toolchain.cmake (musl=$MUSL_PREFIX)"
 guest_qtbase_write_toolchain_cmake "$BD/toolchain.cmake" \
   "$MUSL_PREFIX" "$LIBGCC_DIR" "$ELF_ROOT" "$ELF_CXX_INC" "$ELF_CXX_TARGET" "$EXTRA_ROOT"
 
+purge_input_feature_cache() {
+  local cache="$BD/CMakeCache.txt" tmp
+  [[ -f "$cache" ]] || return 0
+  tmp="$(mktemp)"
+  grep -viE \
+    '^FEATURE_libudev:|^QT_FEATURE_libudev:|^FEATURE_libinput:|^QT_FEATURE_libinput:|^FEATURE_evdev:|^QT_FEATURE_evdev:|PKGCONFIG_.*libudev|LIBUDEV|libudev\.pc' \
+    "$cache" >"$tmp" || true
+  mv "$tmp" "$cache"
+  echo "[fix-nostdinc] purged libudev/libinput/evdev entries from CMakeCache.txt"
+  rm -rf "$BD/src/platformsupport/devicediscovery/CMakeFiles" 2>/dev/null || true
+}
+
 verify_no_udev_in_build() {
   local cache="$BD/CMakeCache.txt" ninja="$BD/build.ninja"
-  if grep -qE '^FEATURE_libudev:BOOL=ON$|^QT_FEATURE_libudev:BOOL=ON$' "$cache" 2>/dev/null; then
+  if grep -qE '^(FEATURE_libudev|QT_FEATURE_libudev).*ON' "$cache" 2>/dev/null; then
     echo "[fix-nostdinc] ERROR: libudev still ON in CMakeCache.txt" >&2
-    grep -E 'libudev|libinput|evdev' "$cache" >&2 || true
+    grep -iE 'libudev|libinput|FEATURE_evdev' "$cache" >&2 || true
     return 1
   fi
   if [[ -f "$ninja" ]] && grep -q 'qdevicediscovery_udev.cpp' "$ninja"; then
@@ -76,6 +88,8 @@ verify_no_udev_in_build() {
   fi
   echo "[fix-nostdinc] verify: libudev OFF, no udev.cpp in build.ninja"
 }
+
+purge_input_feature_cache
 
 echo "[fix-nostdinc] reconfigure build-qtbase (nostdinc + disable host libudev/libinput/evdev) ..."
 (
