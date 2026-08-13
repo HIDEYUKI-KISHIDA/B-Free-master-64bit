@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Guest nostdinc++: qsharedmemory.cpp uses PATH_MAX without including limits.h.
+# Guest nostdinc++: qsharedmemory.cpp defines MAX_PATH from PATH_MAX without limits.h.
 if grep -q $'\r' "$0" 2>/dev/null; then
   exec env BFREE_FIX_CRLF_DONE=1 bash -c "$(tr -d '\r' <"$0")" bash "$@"
 fi
@@ -10,22 +10,36 @@ marker="$QT_SRC/qtbase/.bfree_guest_qsharedmemory_path_max_patched"
 
 [[ -f "$f" ]] || { echo "[patch] missing: $f" >&2; exit 1; }
 
-if [[ -f "$marker" ]] && grep -q '#include <limits.h>' "$f"; then
-  echo "[patch] ok: qsharedmemory PATH_MAX already patched"
+# Qt sources on /mnt/c may be CRLF; normalize so perl anchors match.
+if grep -q $'\r' "$f" 2>/dev/null; then
+  sed -i 's/\r$//' "$f"
+fi
+
+already_ok() {
+  grep -qE '#[[:space:]]*define[[:space:]]+MAX_PATH[[:space:]]+4096' "$f" \
+    && ! grep -qE '#[[:space:]]*define[[:space:]]+MAX_PATH[[:space:]]+PATH_MAX' "$f"
+}
+
+if [[ -f "$marker" ]] && already_ok; then
+  echo "[patch] ok: qsharedmemory MAX_PATH already patched"
   exit 0
 fi
 
-old_block=$'#include <errno.h>\n\n#ifndef MAX_PATH\n# define MAX_PATH PATH_MAX\n#endif\n'
-new_block=$'#include <errno.h>\n#include <limits.h>\n\n#ifndef MAX_PATH\n# ifdef PATH_MAX\n#  define MAX_PATH PATH_MAX\n# else\n#  define MAX_PATH 1024\n# endif\n#endif\n'
+# Drop stale marker when an earlier run only added limits.h or failed to rewrite MAX_PATH.
+rm -f "$marker"
 
-if grep -qF '# define MAX_PATH PATH_MAX' "$f" && ! grep -q '#include <limits.h>' "$f"; then
-  perl -0pi -e '
-    s/#include <errno.h>\n\n#ifndef MAX_PATH\n# define MAX_PATH PATH_MAX\n#endif\n/
-#include <errno.h>\n#include <limits.h>\n\n#ifndef MAX_PATH\n# ifdef PATH_MAX\n#  define MAX_PATH PATH_MAX\n# else\n#  define MAX_PATH 1024\n# endif\n#endif\n/s;
-  ' "$f"
-elif ! grep -q '#include <limits.h>' "$f"; then
-  perl -pi -e 's/(#include <errno.h>)/$1\n#include <limits.h>/' "$f"
+perl -0pi -e '
+  s/#ifndef MAX_PATH\s*\n#\s*define MAX_PATH PATH_MAX\s*\n#endif\s*\n/
+#ifndef MAX_PATH\n# define MAX_PATH 4096\n#endif\n/s;
+  s/#ifndef MAX_PATH\s*\n#\s*ifdef PATH_MAX\s*\n#\s*define MAX_PATH PATH_MAX\s*\n#\s*else\s*\n#\s*define MAX_PATH \d+\s*\n#\s*endif\s*\n#endif\s*\n/
+#ifndef MAX_PATH\n# define MAX_PATH 4096\n#endif\n/s;
+' "$f"
+
+if ! already_ok; then
+  echo "[patch] ERROR: failed to rewrite MAX_PATH in $f" >&2
+  grep -n 'MAX_PATH\|PATH_MAX\|limits.h' "$f" | head -20 >&2 || true
+  exit 1
 fi
 
 touch "$marker"
-echo "[patch] ok: qsharedmemory PATH_MAX (limits.h + safe fallback)"
+echo "[patch] ok: qsharedmemory MAX_PATH=4096 (no PATH_MAX dependency)"
