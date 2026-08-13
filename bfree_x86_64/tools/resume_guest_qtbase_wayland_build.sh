@@ -34,8 +34,8 @@ fi
 
 # Block host /usr/include; ensure libgcc includes + POSIX limit macros for -nostdinc++.
 if ! grep -q nostdinc "$BD/toolchain.cmake" 2>/dev/null \
-   || ! grep -q 'PATH_MAX=4096' "$BD/toolchain.cmake" 2>/dev/null; then
-  echo "[resume] patching toolchain (nostdinc / PATH_MAX) ..."
+   || ! grep -q '_POSIX_PIPE_BUF=512' "$BD/toolchain.cmake" 2>/dev/null; then
+  echo "[resume] patching toolchain (nostdinc / POSIX limits) ..."
   bash "$ROOT/tools/fix_guest_qtbase_nostdinc.sh"
 fi
 

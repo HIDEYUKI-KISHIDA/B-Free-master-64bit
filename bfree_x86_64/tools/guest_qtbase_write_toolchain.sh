@@ -4,12 +4,13 @@
 guest_qtbase_write_toolchain_cmake() {
   local out="$1" musl="$2" libgcc_dir="$3" elf_root="$4" cxx_inc="$5" cxx_target="$6"
   local extra_root="${7:-}"
-  local cxx_isystem="" gcc_isystem=""
+  local cxx_isystem="" gcc_intrinsic="" gcc_fixed=""
+  local posix_defs="-DPATH_MAX=4096 -DNAME_MAX=255 -D_POSIX_PIPE_BUF=512 -DPIPE_BUF=4096"
   if [[ -d "${libgcc_dir}/include" ]]; then
-    gcc_isystem+=" -isystem ${libgcc_dir}/include"
+    gcc_intrinsic+=" -isystem ${libgcc_dir}/include"
   fi
   if [[ -d "${libgcc_dir}/include-fixed" ]]; then
-    gcc_isystem+=" -isystem ${libgcc_dir}/include-fixed"
+    gcc_fixed+=" -isystem ${libgcc_dir}/include-fixed"
   fi
   if [[ -n "$cxx_inc" ]]; then
     cxx_isystem+=" -isystem ${cxx_inc}"
@@ -17,7 +18,6 @@ guest_qtbase_write_toolchain_cmake() {
       cxx_isystem+=" -isystem ${cxx_target}"
     fi
   fi
-  cxx_isystem+=" -isystem ${musl}/include"
   cat >"$out" <<EOF
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
@@ -35,10 +35,10 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
 set(CMAKE_INCLUDE_PATH "${musl}/include")
 # -nostdinc/-nostdinc++: never use host glibc headers (/usr/include/stdint.h -> bits/libc-header-start.h).
-# libgcc include(+fixed): x86intrin.h and other compiler intrinsics (pcre2 JIT, QtGui SIMD, etc.).
-# PATH_MAX/NAME_MAX: musl limits.h macros are not visible without explicit include under -nostdinc++.
-set(CMAKE_C_FLAGS "-nostdinc -isystem ${musl}/include${gcc_isystem} -D__linux__ -D_GNU_SOURCE -DPATH_MAX=4096 -DNAME_MAX=255 -L${musl}/lib -L${libgcc_dir}")
-set(CMAKE_CXX_FLAGS "-nostdinc++ -D__linux__ -D_GNU_SOURCE -DPATH_MAX=4096 -DNAME_MAX=255 -L${musl}/lib -L${libgcc_dir}${gcc_isystem}${cxx_isystem}")
+# libgcc include: x86intrin.h (pcre2 JIT). include-fixed AFTER musl so limits.h comes from musl.
+# posix_defs: musl limits.h macros not always visible under -nostdinc++ (PATH_MAX, _POSIX_PIPE_BUF, …).
+set(CMAKE_C_FLAGS "-nostdinc -isystem ${musl}/include${gcc_intrinsic}${gcc_fixed} -D__linux__ -D_GNU_SOURCE ${posix_defs} -L${musl}/lib -L${libgcc_dir}")
+set(CMAKE_CXX_FLAGS "-nostdinc++ -D__linux__ -D_GNU_SOURCE ${posix_defs} -L${musl}/lib -L${libgcc_dir}${gcc_intrinsic}${cxx_isystem} -isystem ${musl}/include${gcc_fixed}")
 set(CMAKE_EXE_LINKER_FLAGS "-L${libgcc_dir} -L${musl}/lib")
 EOF
 }
