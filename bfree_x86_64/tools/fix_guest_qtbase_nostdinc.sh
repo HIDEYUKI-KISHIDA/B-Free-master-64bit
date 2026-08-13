@@ -55,23 +55,43 @@ ELF_CXX_INC="${CXX_INC_PAIR%%|*}"
 ELF_CXX_TARGET="${CXX_INC_PAIR#*|}"
 EXTRA_ROOT=";${WAYLAND_PREFIX};${LIBFFI_PREFIX}"
 
+export BFREE_QT_SRC="${BFREE_QT_SRC:-$HOME/src/qt6}"
+bash "$ROOT/tools/patch_qt_guest_disable_udev.sh"
+
 echo "[fix-nostdinc] rewriting $BD/toolchain.cmake (musl=$MUSL_PREFIX)"
 guest_qtbase_write_toolchain_cmake "$BD/toolchain.cmake" \
   "$MUSL_PREFIX" "$LIBGCC_DIR" "$ELF_ROOT" "$ELF_CXX_INC" "$ELF_CXX_TARGET" "$EXTRA_ROOT"
 
+verify_no_udev_in_build() {
+  local cache="$BD/CMakeCache.txt" ninja="$BD/build.ninja"
+  if grep -qE '^FEATURE_libudev:BOOL=ON$|^QT_FEATURE_libudev:BOOL=ON$' "$cache" 2>/dev/null; then
+    echo "[fix-nostdinc] ERROR: libudev still ON in CMakeCache.txt" >&2
+    grep -E 'libudev|libinput|evdev' "$cache" >&2 || true
+    return 1
+  fi
+  if [[ -f "$ninja" ]] && grep -q 'qdevicediscovery_udev.cpp' "$ninja"; then
+    echo "[fix-nostdinc] ERROR: build.ninja still lists qdevicediscovery_udev.cpp" >&2
+    grep 'qdevicediscovery_udev' "$ninja" | head -3 >&2 || true
+    return 1
+  fi
+  echo "[fix-nostdinc] verify: libudev OFF, no udev.cpp in build.ninja"
+}
+
 echo "[fix-nostdinc] reconfigure build-qtbase (nostdinc + disable host libudev/libinput/evdev) ..."
 (
   cd "$BD"
-  cmake . \
+  env -u PKG_CONFIG_PATH -u PKG_CONFIG_LIBDIR -u PKG_CONFIG_SYSROOT_DIR \
+    cmake . \
     -DCMAKE_TOOLCHAIN_FILE="$BD/toolchain.cmake" \
     -DFEATURE_libudev=OFF \
     -DFEATURE_libinput=OFF \
     -DFEATURE_evdev=OFF \
-    -U FEATURE_libudev \
-    -U FEATURE_libinput \
-    -U FEATURE_evdev \
-    -U QT_FEATURE_libudev \
-    -U QT_FEATURE_libinput \
-    -U QT_FEATURE_evdev
+    -DQT_FEATURE_libudev=OFF \
+    -DQT_FEATURE_libinput=OFF \
+    -DQT_FEATURE_evdev=OFF
 )
-echo "[fix-nostdinc] OK — resume: JOBS=4 bash tools/resume_guest_qtbase_wayland_build.sh"
+verify_no_udev_in_build
+
+echo "[fix-nostdinc] OK — fresh build log recommended:"
+echo "  : > \"$BD/build.log\""
+echo "  JOBS=4 bash tools/resume_guest_qtbase_wayland_build.sh"

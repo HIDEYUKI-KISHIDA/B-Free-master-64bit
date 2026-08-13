@@ -34,6 +34,17 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
 set(CMAKE_INCLUDE_PATH "${musl}/include")
+# Block host pkg-config from finding libudev (pulls -I/usr/include into CXX targets).
+set(ENV{PKG_CONFIG_PATH} "")
+set(ENV{PKG_CONFIG_LIBDIR} "")
+set(ENV{PKG_CONFIG_SYSROOT_DIR} "")
+# Force-off input features that leak host headers (reconfigure honors CACHE FORCE).
+set(FEATURE_libudev OFF CACHE BOOL "bfree guest" FORCE)
+set(FEATURE_libinput OFF CACHE BOOL "bfree guest" FORCE)
+set(FEATURE_evdev OFF CACHE BOOL "bfree guest" FORCE)
+set(QT_FEATURE_libudev OFF CACHE BOOL "bfree guest" FORCE)
+set(QT_FEATURE_libinput OFF CACHE BOOL "bfree guest" FORCE)
+set(QT_FEATURE_evdev OFF CACHE BOOL "bfree guest" FORCE)
 # -nostdinc/-nostdinc++: block host /usr/include.
 # CXX isystem order (bfree_guest_cxx_isystem_order=v2): libstdc++ BEFORE musl so
 #   <cmath> #include_next <math.h> resolves to musl; include-fixed last.

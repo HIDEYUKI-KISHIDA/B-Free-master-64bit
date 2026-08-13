@@ -48,6 +48,13 @@ if [[ "$need_fix" -eq 1 ]]; then
 fi
 
 bash "$ROOT/tools/patch_qt_guest_qsharedmemory_path_max.sh"
+bash "$ROOT/tools/patch_qt_guest_disable_udev.sh"
+
+if grep -q 'qdevicediscovery_udev.cpp' "$BD/build.ninja" 2>/dev/null; then
+  echo "[resume] ERROR: build.ninja still builds qdevicediscovery_udev.cpp" >&2
+  echo "  bash tools/fix_guest_qtbase_nostdinc.sh" >&2
+  exit 1
+fi
 
 log_phase "building qtbase (jobs=$JOBS) — typically 1–3 hours on WSL ..."
 cmake --build "$BD" --parallel "$JOBS" 2>&1 | tee -a "$BD/build.log"
