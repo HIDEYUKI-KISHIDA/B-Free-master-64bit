@@ -36,8 +36,9 @@ set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
 set(CMAKE_INCLUDE_PATH "${musl}/include")
 # -nostdinc/-nostdinc++: never use host glibc headers (/usr/include/stdint.h -> bits/libc-header-start.h).
 # libgcc include(+fixed): x86intrin.h and other compiler intrinsics (pcre2 JIT, QtGui SIMD, etc.).
-set(CMAKE_C_FLAGS "-nostdinc -isystem ${musl}/include${gcc_isystem} -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}")
-set(CMAKE_CXX_FLAGS "-nostdinc++ -D__linux__ -D_GNU_SOURCE -L${musl}/lib -L${libgcc_dir}${gcc_isystem}${cxx_isystem}")
+# PATH_MAX/NAME_MAX: musl limits.h macros are not visible without explicit include under -nostdinc++.
+set(CMAKE_C_FLAGS "-nostdinc -isystem ${musl}/include${gcc_isystem} -D__linux__ -D_GNU_SOURCE -DPATH_MAX=4096 -DNAME_MAX=255 -L${musl}/lib -L${libgcc_dir}")
+set(CMAKE_CXX_FLAGS "-nostdinc++ -D__linux__ -D_GNU_SOURCE -DPATH_MAX=4096 -DNAME_MAX=255 -L${musl}/lib -L${libgcc_dir}${gcc_isystem}${cxx_isystem}")
 set(CMAKE_EXE_LINKER_FLAGS "-L${libgcc_dir} -L${musl}/lib")
 EOF
 }

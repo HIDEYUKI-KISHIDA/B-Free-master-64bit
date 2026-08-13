@@ -32,9 +32,10 @@ if [[ ! -f "$BD/build.ninja" ]]; then
   exit 1
 fi
 
-# Block host /usr/include (bits/libc-header-start.h) if toolchain predates -nostdinc fix.
-if ! grep -q nostdinc "$BD/toolchain.cmake" 2>/dev/null; then
-  echo "[resume] patching toolchain (-nostdinc) ..."
+# Block host /usr/include; ensure libgcc includes + POSIX limit macros for -nostdinc++.
+if ! grep -q nostdinc "$BD/toolchain.cmake" 2>/dev/null \
+   || ! grep -q 'PATH_MAX=4096' "$BD/toolchain.cmake" 2>/dev/null; then
+  echo "[resume] patching toolchain (nostdinc / PATH_MAX) ..."
   bash "$ROOT/tools/fix_guest_qtbase_nostdinc.sh"
 fi
 
