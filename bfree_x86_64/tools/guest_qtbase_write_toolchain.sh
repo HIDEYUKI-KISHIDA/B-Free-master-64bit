@@ -34,12 +34,12 @@ set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
 set(CMAKE_LIBRARY_PATH "$libgcc_dir;${musl}/lib")
 set(CMAKE_INCLUDE_PATH "${musl}/include")
-# -nostdinc/-nostdinc++: block host /usr/include (cstdint -> stdint.h -> bits/libc-header-start.h).
-# CXX needs BOTH: -nostdinc++ alone still pulls glibc stdint.h via libstdc++ <cstdint>.
-# libgcc include: x86intrin.h. include-fixed AFTER musl so limits.h comes from musl.
-# posix_defs: limits.h macros when headers are not explicitly included.
+# -nostdinc/-nostdinc++: block host /usr/include.
+# CXX isystem order (bfree_guest_cxx_isystem_order=v2): libstdc++ BEFORE musl so
+#   <cmath> #include_next <math.h> resolves to musl; include-fixed last.
+# posix_defs: limits.h macros when include-fixed shadows musl.
 set(CMAKE_C_FLAGS "-nostdinc -isystem ${musl}/include${gcc_intrinsic}${gcc_fixed} -D__linux__ -D_GNU_SOURCE ${posix_defs} -L${musl}/lib -L${libgcc_dir}")
-set(CMAKE_CXX_FLAGS "-nostdinc -nostdinc++ -D__linux__ -D_GNU_SOURCE ${posix_defs} -L${musl}/lib -L${libgcc_dir} -isystem ${musl}/include${gcc_intrinsic}${cxx_isystem}${gcc_fixed}")
+set(CMAKE_CXX_FLAGS "-nostdinc -nostdinc++ -D__linux__ -D_GNU_SOURCE ${posix_defs} -L${musl}/lib -L${libgcc_dir}${gcc_intrinsic}${cxx_isystem} -isystem ${musl}/include${gcc_fixed}")
 set(CMAKE_EXE_LINKER_FLAGS "-L${libgcc_dir} -L${musl}/lib")
 EOF
 }

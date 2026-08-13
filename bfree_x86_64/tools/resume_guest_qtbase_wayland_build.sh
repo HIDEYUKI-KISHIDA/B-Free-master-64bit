@@ -32,10 +32,9 @@ if [[ ! -f "$BD/build.ninja" ]]; then
   exit 1
 fi
 
-# Block host /usr/include; ensure nostdinc on CXX + POSIX limit macros.
-if ! grep -q 'CMAKE_CXX_FLAGS "-nostdinc -nostdinc++' "$BD/toolchain.cmake" 2>/dev/null \
-   || ! grep -q '_POSIX_PIPE_BUF=512' "$BD/toolchain.cmake" 2>/dev/null; then
-  echo "[resume] patching toolchain (nostdinc / POSIX limits) ..."
+# Block host /usr/include; CXX isystem v2 (libstdc++ then musl for #include_next).
+if ! grep -q 'bfree_guest_cxx_isystem_order=v2' "$BD/toolchain.cmake" 2>/dev/null; then
+  echo "[resume] patching toolchain (nostdinc / CXX isystem order) ..."
   bash "$ROOT/tools/fix_guest_qtbase_nostdinc.sh"
 fi
 
