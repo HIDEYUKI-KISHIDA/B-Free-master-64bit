@@ -4092,10 +4092,28 @@ static QObject *guest_product_load_child_url(QQmlEngine *eng, const char *urlUtf
     guest_serial_puts("[desktop_qt] product child IR enter ");
     guest_serial_puts(tag);
     guest_serial_puts("\n");
+    /* Guest QML type-loader can block a PreferSynchronous qrc load forever
+     * (loader-thread stall right after getcwd during compile). Construct the
+     * component asynchronously and pump events with a hard spin cap so a
+     * stalled child turns into a diagnosable status instead of an infinite
+     * hang, letting boot fall through to its DesktopShell FB fallback.
+     * The "ctor begin"/"ctor end" markers isolate ctor vs load-thread stalls. */
+    guest_serial_puts("[desktop_qt] product child IR ctor begin ");
+    guest_serial_puts(tag);
+    guest_serial_puts("\n");
     QQmlComponent c(eng, QUrl(QString::fromUtf8(urlUtf8)),
-                    QQmlComponent::PreferSynchronous);
-    for (int spin = 0; c.isLoading() && spin < 64; ++spin)
-        QCoreApplication::processEvents();
+                    QQmlComponent::Asynchronous);
+    guest_serial_puts("[desktop_qt] product child IR ctor end ");
+    guest_serial_puts(tag);
+    guest_serial_puts("\n");
+    for (int spin = 0; c.isLoading() && spin < 4000; ++spin) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 2);
+        if ((spin & 0x1ff) == 0x1ff) {
+            guest_serial_puts("[desktop_qt] product child IR loading spin=");
+            guest_serial_hex_u64((uint64_t)(unsigned)spin);
+            guest_serial_puts("\n");
+        }
+    }
     guest_serial_puts("[desktop_qt] product child IR status=");
     guest_serial_hex_u64((uint64_t)(unsigned)c.status());
     guest_serial_puts(" tag=");
