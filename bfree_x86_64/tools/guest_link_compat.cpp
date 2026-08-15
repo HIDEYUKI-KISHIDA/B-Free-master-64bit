@@ -4069,8 +4069,17 @@ static void bfree_guest_resource_list_sanitize(void)
         return;
     }
     for (i = 0; i < n; ++i) {
-        if (ptrs[i])
-            ptrs[w++] = ptrs[i];
+        void *r = ptrs[i];
+        if (!r)
+            continue;
+        /* Drop resource roots whose vtable is bogus (uninitialized / deferred
+         * ctor never ran => vtable pointer == 1). Such a root crashes
+         * QResourceRoot::findNode at `call *0x10(vtable)` (CR2=0x11). The
+         * object memory is allocated (r != NULL) so reading the vtable qword
+         * is safe; a valid guest vtable lives well above 0x100000. */
+        if (*(uintptr_t *)r < (uintptr_t)0x100000)
+            continue;
+        ptrs[w++] = r;
     }
     if (w == n)
         return;
