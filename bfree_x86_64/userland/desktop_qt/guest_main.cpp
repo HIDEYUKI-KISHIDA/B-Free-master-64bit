@@ -4827,6 +4827,20 @@ static void guest_g1_post_loop_thin_qml(void)
     g_g1_comp->loadUrl(QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
                        QQmlComponent::Asynchronous);
     guest_serial_puts("[desktop_qt] G1 loadUrl async posted\n");
+    /* Async load stays Loading forever if the desk loop never processEvents.
+     * Pump only here, ExcludeUserInputEvents, bounded. If this hangs, last
+     * line is G1 pump spin=N without G1 pump ok. */
+    guest_serial_puts("[desktop_qt] G1 pump enter\n");
+    for (int spin = 0; g_g1_comp->isLoading() && spin < 16; ++spin) {
+        guest_serial_puts("[desktop_qt] G1 pump spin=");
+        guest_serial_hex_u64((uint64_t)(unsigned)spin);
+        guest_serial_puts("\n");
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 2);
+        guest_serial_puts("[desktop_qt] G1 pump ok\n");
+    }
+    guest_serial_puts("[desktop_qt] G1 pump done status=");
+    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
+    guest_serial_puts("\n");
 }
 
 static void guest_g1_post_loop_thin_qml_poll(void)

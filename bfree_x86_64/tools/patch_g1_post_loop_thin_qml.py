@@ -49,6 +49,17 @@ static void guest_g1_post_loop_thin_qml(void)
     g_g1_comp->loadUrl(QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
                        QQmlComponent::Asynchronous);
     {fn}("[desktop_qt] G1 loadUrl async posted\\n");
+    {fn}("[desktop_qt] G1 pump enter\\n");
+    for (int spin = 0; g_g1_comp->isLoading() && spin < 16; ++spin) {{
+        {fn}("[desktop_qt] G1 pump spin=");
+        guest_serial_hex_u64((uint64_t)(unsigned)spin);
+        {fn}("\\n");
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 2);
+        {fn}("[desktop_qt] G1 pump ok\\n");
+    }}
+    {fn}("[desktop_qt] G1 pump done status=");
+    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
+    {fn}("\\n");
 }}
 
 static void guest_g1_post_loop_thin_qml_poll(void)

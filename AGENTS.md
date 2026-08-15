@@ -71,5 +71,8 @@ FB chrome path. Gate 1 (QML IR Ready) runs only after
 `loadUrl(qrc:/GuestGate1Window.qml, Asynchronous)`. Do not wait on boot.
 Do not load product `DesktopShell.qml` on this path. Success serial:
 `G1 product QML Ready`. Timeout: `G1 thin QML timeout (still Loading)`
-(type-loader never ran — this loop skips `processEvents` on purpose).
-Do not reintroduce a boot URL ctor to “try again”.
+means `loadUrl(Asynchronous)` posted but IR stayed `status=2` because the
+desk loop skips `processEvents`. A bounded G1-only pump
+(`ExcludeUserInputEvents`, 16 spins) runs right after `loadUrl`; if it
+hangs, last line is `G1 pump spin=N` without `G1 pump ok`. Do not
+reintroduce a boot URL ctor to “try again”.
