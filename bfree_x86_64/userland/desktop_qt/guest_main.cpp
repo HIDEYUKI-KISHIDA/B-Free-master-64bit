@@ -5673,11 +5673,23 @@ static void guest_ctor_qml_phase(void)
     guest_gate1_window_controls_probe();
     /* DesktopShell.qml URL 本読 after Gate1 (product Window root). */
     guest_serial_puts("[desktop_qt] load DesktopShell.qml (full guest URL)\n");
+    /* PreferSynchronous stalls the guest QML type-loader forever here (same as
+     * the product-child path). Load asynchronously with a bounded event pump so
+     * a stalled load falls through to the C++/FB fallback + event loop instead
+     * of hanging before the status print. */
+    guest_serial_puts("[desktop_qt] DesktopShell.qml ctor begin\n");
     g_item_comp = new QQmlComponent(g_engine,
                                     guest_primary_qml_url(),
-                                    QQmlComponent::PreferSynchronous);
-    for (int spin = 0; g_item_comp->isLoading() && spin < 64; ++spin)
-        QCoreApplication::processEvents();
+                                    QQmlComponent::Asynchronous);
+    guest_serial_puts("[desktop_qt] DesktopShell.qml ctor end\n");
+    for (int spin = 0; g_item_comp->isLoading() && spin < 4000; ++spin) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 2);
+        if ((spin & 0x1ff) == 0x1ff) {
+            guest_serial_puts("[desktop_qt] DesktopShell.qml loading spin=");
+            guest_serial_hex_u64((uint64_t)(unsigned)spin);
+            guest_serial_puts("\n");
+        }
+    }
     guest_serial_puts("[desktop_qt] DesktopShell.qml IR status=");
     guest_serial_hex_u64((uint64_t)(unsigned)g_item_comp->status());
     guest_serial_puts("\n");
