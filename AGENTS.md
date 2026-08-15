@@ -60,3 +60,16 @@ STAGE3 ioport/snapshot) then loads userland (`init.elf`→`shell.elf`→embedded
 `user_hello.elf`). Capture a framebuffer screenshot via the QEMU monitor
 `screendump` command. With no `init.elf`/`shell.elf`/`busybox` modules present,
 it falls back to the committed embedded `user_hello.elf`.
+
+### Guest DesktopShell / Wayland gate 1
+Product `qrc:/DesktopShell.qml` URL construction (`PreferSynchronous` or
+Asynchronous-on-boot) hangs the guest QML type-loader **before** qmlcache
+lookup. `QQmlComponent::setData` historically page-faults (`@0x29000000`).
+Boot must skip that load (`skip DesktopShell.qml boot load`) and keep the
+FB chrome path. Gate 1 (QML IR Ready) runs only after
+`QML ready, entering event loop`: empty `QQmlComponent(engine)` then
+`loadUrl(qrc:/GuestGate1Window.qml, Asynchronous)`. Do not wait on boot.
+Do not load product `DesktopShell.qml` on this path. Success serial:
+`G1 product QML Ready`. Timeout: `G1 thin QML timeout (still Loading)`
+(type-loader never ran — this loop skips `processEvents` on purpose).
+Do not reintroduce a boot URL ctor to “try again”.

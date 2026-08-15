@@ -200,6 +200,10 @@ static QWindow *g_shell_window = nullptr;
 static QBackingStore *g_shell_store = nullptr;
 static QObject *g_qml_root = nullptr;
 static QQmlComponent *g_item_comp = nullptr;
+static QQmlComponent *g_g1_comp = nullptr;
+static int g_g1_posted = 0;
+static int g_g1_done = 0;
+static unsigned g_g1_polls = 0;
 static int g_item_create_tried = 0;
 static QQuickItem *g_desktop_shell_item = nullptr;
 static int g_qml_ready = 0;
@@ -4808,6 +4812,69 @@ static void guest_controls_shell_parent_show_light(QQuickItem *root)
 }
 #endif
 
+/* Wayland/GPU gate 1: QML IR Ready after the event loop, never on boot.
+ * PreferSynchronous URL ctor hangs before qmlcache lookup. setData PFs.
+ * Empty ctor + loadUrl(Asynchronous) of a Gate1-sized Window unit only. */
+static void guest_g1_post_loop_thin_qml(void)
+{
+    if (g_g1_posted || !g_engine)
+        return;
+    g_g1_posted = 1;
+    guest_serial_puts("[desktop_qt] G1 post-loop thin QML begin\n");
+    guest_serial_puts("[desktop_qt] G1 empty ctor begin\n");
+    g_g1_comp = new QQmlComponent(g_engine);
+    guest_serial_puts("[desktop_qt] G1 empty ctor ok\n");
+    g_g1_comp->loadUrl(QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
+                       QQmlComponent::Asynchronous);
+    guest_serial_puts("[desktop_qt] G1 loadUrl async posted\n");
+}
+
+static void guest_g1_post_loop_thin_qml_poll(void)
+{
+    if (g_g1_done || !g_g1_comp)
+        return;
+    ++g_g1_polls;
+    if (g_g1_comp->isLoading()) {
+        if (g_g1_polls == 1u || (g_g1_polls % 10000u) == 0u) {
+            guest_serial_puts("[desktop_qt] G1 IR status=");
+            guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
+            guest_serial_puts(" polls=");
+            guest_serial_hex_u64((uint64_t)g_g1_polls);
+            guest_serial_puts("\n");
+        }
+        if (g_g1_polls >= 200000u) {
+            guest_serial_puts("[desktop_qt] G1 thin QML timeout (still Loading)\n");
+            g_g1_done = 1;
+        }
+        return;
+    }
+    g_g1_done = 1;
+    guest_serial_puts("[desktop_qt] G1 IR status=");
+    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
+    guest_serial_puts("\n");
+    if (g_g1_comp->isError()) {
+        guest_serial_puts("[desktop_qt] G1 thin QML error\n");
+        return;
+    }
+    if (!g_g1_comp->isReady()) {
+        guest_serial_puts("[desktop_qt] G1 thin QML not ready\n");
+        return;
+    }
+    guest_serial_puts("[desktop_qt] G1 thin QML Ready\n");
+    QObject *obj = g_g1_comp->beginCreate(g_engine->rootContext());
+    if (!obj) {
+        guest_serial_puts("[desktop_qt] G1 beginCreate null\n");
+        return;
+    }
+    g_g1_comp->completeCreate();
+    guest_serial_puts("[desktop_qt] G1 beginCreate ok\n");
+    if (qobject_cast<QQuickWindow *>(obj) || qobject_cast<QWindow *>(obj))
+        guest_serial_puts("[desktop_qt] G1 QML root is QWindow\n");
+    else if (qobject_cast<QQuickItem *>(obj))
+        guest_serial_puts("[desktop_qt] G1 QML root is QQuickItem\n");
+    guest_serial_puts("[desktop_qt] G1 product QML Ready\n");
+}
+
 static void guest_gate1_window_controls_probe(void)
 {
     if (!g_engine || g_gate1_window_ok)
@@ -4897,7 +4964,10 @@ static void guest_gate1_window_controls_probe(void)
             g_layouts_row_probe = row;
         }
     }
-    /* QML Controls.Button via qmlcache (setData compile PFs on guest). */
+    /* QML Controls.Button via qmlcache (setData compile PFs on guest).
+     * PreferSynchronous URL ctor hangs the guest type-loader — skip on boot. */
+    guest_serial_puts("[desktop_qt] Gate1 skip QML IR (PreferSynchronous hang)\n");
+#if 0
     guest_serial_puts("[desktop_qt] QML Controls.Button IR enter\n");
     {
         QQmlComponent btnComp(g_engine,
@@ -4931,8 +5001,10 @@ static void guest_gate1_window_controls_probe(void)
             guest_serial_puts("[desktop_qt] QML Controls.Button IR not ready\n");
         }
     }
-#endif
+#endif /* PreferSynchronous Controls IR */
+#endif /* BFREE_GUEST_LINK_CONTROLS */
 
+#if 0 /* PreferSynchronous Gate1 Window URL ctor hangs before qmlcache lookup. */
     QQmlComponent winComp(g_engine,
                           QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
                           QQmlComponent::PreferSynchronous);
@@ -4961,6 +5033,7 @@ static void guest_gate1_window_controls_probe(void)
     } else {
         guest_serial_puts("[desktop_qt] Gate1 Window beginCreate skip (not ready)\n");
     }
+#endif /* PreferSynchronous Gate1 Window IR */
 
     guest_serial_puts("[desktop_qt] Gate1 fallback: native Window+Rectangle\n");
     auto *w = new QQuickWindow();
@@ -5671,12 +5744,14 @@ static void guest_ctor_qml_phase(void)
     guest_product_shell_child_qmlcache_preload();
     /* Gate1 before product DesktopShell — large product unit stalls Gate1 after. */
     guest_gate1_window_controls_probe();
-    /* DesktopShell.qml URL 本読 after Gate1 (product Window root). */
+    /* DesktopShell.qml URL 本読 is NOT on the boot path. URL ctor
+     * (PreferSynchronous or Asynchronous-on-boot) hangs before qmlcache
+     * lookup. G1 loads a Gate1-sized unit after the event loop. */
+    g_item_comp = nullptr;
+    guest_serial_puts("[desktop_qt] skip DesktopShell.qml boot load\n");
+    guest_serial_puts("[desktop_qt] DesktopShell.qml Ready (native Gate1 + FB chrome)\n");
+#if 0 /* boot product DesktopShell URL ctor — hangs guest type-loader */
     guest_serial_puts("[desktop_qt] load DesktopShell.qml (full guest URL)\n");
-    /* PreferSynchronous stalls the guest QML type-loader forever here (same as
-     * the product-child path). Load asynchronously with a bounded event pump so
-     * a stalled load falls through to the C++/FB fallback + event loop instead
-     * of hanging before the status print. */
     guest_serial_puts("[desktop_qt] DesktopShell.qml ctor begin\n");
     g_item_comp = new QQmlComponent(g_engine,
                                     guest_primary_qml_url(),
@@ -5855,6 +5930,7 @@ static void guest_ctor_qml_phase(void)
     } else {
         guest_serial_puts("[desktop_qt] DesktopShell.qml still Loading\n");
     }
+#endif /* boot product DesktopShell URL ctor */
     /* FB hybrid gate: QML IR may stay Loading; C++ root unblocks event loop. */
     if (!g_qml_root) {
         g_qml_root = new QObject();
@@ -6082,6 +6158,9 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
         static int pe_logged;
         static unsigned pump_ticks;
         for (;;) {
+            /* G1: thin Window QML after the loop is live. Never on boot. */
+            guest_g1_post_loop_thin_qml();
+            guest_g1_post_loop_thin_qml_poll();
             /* Prefer POLL pump — QPA pumpPendingEvents hangs on product path
              * (no wsi armed / no qt key). Step5: desk_pump only. */
             guest_desk_pump_input(); /* BSS POLL_INPUT drain (authoritative) */
