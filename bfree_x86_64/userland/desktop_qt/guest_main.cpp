@@ -123,6 +123,7 @@ void bfree_guest_set_prefer_fallback_alloc(int on);
 void bfree_guest_serial_step_raw(char step);
 void bfree_guest_rebind_musl_fs(void);
 void guest_mmap_session_entry(void);
+void bfree_guest_qt_coop_schedule(void);
 }
 
 static void guest_serial_puts(const char *s)
@@ -4831,10 +4832,13 @@ static void guest_g1_post_loop_thin_qml(void)
      * Pump only here, ExcludeUserInputEvents, bounded. If this hangs, last
      * line is G1 pump spin=N without G1 pump ok. */
     guest_serial_puts("[desktop_qt] G1 pump enter\n");
-    for (int spin = 0; g_g1_comp->isLoading() && spin < 16; ++spin) {
+    /* Type-loader is a QThread. This guest is cooperative pthread
+     * (libstdc++ threads=no): processEvents alone never runs the worker. */
+    for (int spin = 0; g_g1_comp->isLoading() && spin < 64; ++spin) {
         guest_serial_puts("[desktop_qt] G1 pump spin=");
         guest_serial_hex_u64((uint64_t)(unsigned)spin);
         guest_serial_puts("\n");
+        bfree_guest_qt_coop_schedule();
         QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 2);
         guest_serial_puts("[desktop_qt] G1 pump ok\n");
     }

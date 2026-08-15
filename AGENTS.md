@@ -74,5 +74,8 @@ Do not load product `DesktopShell.qml` on this path. Success serial:
 means `loadUrl(Asynchronous)` posted but IR stayed `status=2` because the
 desk loop skips `processEvents`. A bounded G1-only pump
 (`ExcludeUserInputEvents`, 16 spins) runs right after `loadUrl`; if it
-hangs, last line is `G1 pump spin=N` without `G1 pump ok`. Do not
-reintroduce a boot URL ctor to “try again”.
+hangs, last line is `G1 pump spin=N` without `G1 pump ok`. Observed:
+16× `G1 pump ok` then `status=2` timeout — `processEvents` is safe after
+the loop but does **not** run the type-loader QThread. Guest pthreads are
+cooperative (`libstdc++ threads=no`); G1 pump must also call
+`bfree_guest_qt_coop_schedule()`. Do not reintroduce a boot URL ctor.
