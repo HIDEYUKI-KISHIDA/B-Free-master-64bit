@@ -109,6 +109,9 @@ reconfigure PFd at STAGE 5 `qrc gui_shaders` /
 `qresource ensure list d=0` (`CR2=0x8`, RIP user read) — before
 `skip DesktopShell` / G1. Revert `isThisThread` to the stock body
 and restore G1 to main-thread lookup only (no `PreferSynchronous`
-`loadUrl`). Any later inline loader must be a runtime flag set
-after `entering event loop`, never a process-wide always-true.
+`loadUrl`). Relinking `guest_main.o` alone is not enough: the
+crashing `libQt6Qml.a` (always-true `isThisThread`) must be
+rebuilt after reverting `qqmlthread.cpp`, then copied to the
+prefix and the desktop ELF relinked. Same RIP `0x3766BB9` at
+`qrc gui_shaders` means the old Qml archive is still linked.
 Do not reintroduce a boot URL ctor.
