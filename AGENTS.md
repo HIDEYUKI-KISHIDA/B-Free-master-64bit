@@ -94,5 +94,10 @@ Observed: `qmlcache lookup` + `qmlcache HIT GuestGate1Window` +
 required for HIT. `beginCreate` still needs `initializeFromCachedUnit`
 on the type-loader thread (`assertTypeLoaderThread`). Next: make
 `QQmlTypeLoaderThread::isThisThread()` true on the main thread (or run
-the loader inline) so PreferSynchronous/`getType` can finish. Do not
-reintroduce a boot URL ctor.
+the loader inline) so PreferSynchronous/`getType` can finish. Guest
+already has `tools/qqmlthread_guest_single.cpp` and
+`tools/rebuild_guest_qtdeclarative_singlethread.sh`. If
+`libQt6Qml.a` still has `QQmlThreadPrivate::threadEvent`, the guest
+Qt is the threaded loader and `loadUrl` will stay Loading. Apply the
+single-thread stub (or force `isThisThread()` true) and rebuild Qml
+before retrying `getType`. Do not reintroduce a boot URL ctor.
