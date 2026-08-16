@@ -89,4 +89,10 @@ will not reach Ready. Next Gate 1 work must instantiate
 thread, so `loadUrl` cannot complete on this guest. Next: call lookup
 from the main thread (no `loadUrl`), then either instantiate the
 `CachedQmlUnit` without TypeData or run the type-loader inline on main.
-Do not reintroduce a boot URL ctor.
+Observed: `qmlcache lookup` + `qmlcache HIT GuestGate1Window` +
+`G1 cache unit ok` after a direct main-thread lookup. `loadUrl` is not
+required for HIT. `beginCreate` still needs `initializeFromCachedUnit`
+on the type-loader thread (`assertTypeLoaderThread`). Next: make
+`QQmlTypeLoaderThread::isThisThread()` true on the main thread (or run
+the loader inline) so PreferSynchronous/`getType` can finish. Do not
+reintroduce a boot URL ctor.
