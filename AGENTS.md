@@ -141,3 +141,11 @@ then rebuild `guest_main.o` + `guest_link_compat.o` + `desktop`)
 until `nm` holder equals the header. Do not rebuild Qml again
 to "fix" this PF. Do not reintroduce a boot URL ctor. Use
 `bfree_x86_64/tools/force_rebuild_stock_qqmlthread.sh` on WSL.
+Observed after VA converge to `0x62c4160` (stock Qml 13:22,
+desktop relink): `holder=0x62c4160`, `qrc gui_shaders` with
+no `CR2=8`, `skip DesktopShell.qml boot load`,
+`DesktopShell.qml Ready (native Gate1 + FB chrome)`,
+`entering event loop`, `G1 cache lookup enter`,
+`qmlcache HIT GuestGate1Window`, `G1 cache unit ok`, then
+live FB input (`desk open Terminal`, `wm close hit`).
+That is FB restore, not QML IR Ready / not Wayland.
