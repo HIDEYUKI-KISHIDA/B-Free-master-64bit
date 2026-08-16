@@ -158,5 +158,10 @@ set only after the event loop, then `PreferSynchronous` for
 boot. Apply `tools/patch_qqmlthread_runtime_flag.sh` then
 `tools/force_rebuild_stock_qqmlthread.sh`, then VA-loop relink.
 Success serial: `typeloader main ok=1` then `G1 sync loadUrl end`
-then `G1 thin QML Ready`. If `qrc gui_shaders` / `CR2=8` or hang
-at `G1 sync loadUrl begin`, restore the backup.
+then `G1 thin QML Ready`. Observed after the post-loop flag +
+`PreferSynchronous`: 64× `G1 pump ok`, `status=2`, then
+`G1 thin QML timeout (still Loading)`. No `CR2=8`. The runtime
+flag does not finish the type-loader; more `loadUrl` / pump is
+the same dead path. Next Gate 1 must instantiate the cached
+unit without `QQmlTypeLoader` / `loadUrl`. Restore the
+2026-08-16 backup for the working FB desk.
