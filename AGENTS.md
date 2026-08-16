@@ -96,8 +96,9 @@ on the type-loader thread (`assertTypeLoaderThread`). Next: make
 `QQmlTypeLoaderThread::isThisThread()` true on the main thread (or run
 the loader inline) so PreferSynchronous/`getType` can finish. Guest
 already has `tools/qqmlthread_guest_single.cpp` and
-`tools/rebuild_guest_qtdeclarative_singlethread.sh`. If
-`libQt6Qml.a` still has `QQmlThreadPrivate::threadEvent`, the guest
-Qt is the threaded loader and `loadUrl` will stay Loading. Apply the
-single-thread stub (or force `isThisThread()` true) and rebuild Qml
-before retrying `getType`. Do not reintroduce a boot URL ctor.
+`tools/rebuild_guest_qtdeclarative_singlethread.sh`. Confirmed on the WSL guest Qt: `ftw/qqmlthread.cpp` is the stock
+threaded loader and `libQt6Qml.a` exports
+`QQmlThreadPrivate::threadEvent`. The single-thread stub was not
+applied. Force `QQmlThread::isThisThread()` to return true, rebuild
+`Qml`, relink `desktop.elf`, then `getType`/`loadUrl` can run on the
+main thread. Do not reintroduce a boot URL ctor.
