@@ -78,4 +78,9 @@ hangs, last line is `G1 pump spin=N` without `G1 pump ok`. Observed:
 16× `G1 pump ok` then `status=2` timeout — `processEvents` is safe after
 the loop but does **not** run the type-loader QThread. Guest pthreads are
 cooperative (`libstdc++ threads=no`); G1 pump must also call
-`bfree_guest_qt_coop_schedule()`. Do not reintroduce a boot URL ctor.
+`bfree_guest_qt_coop_schedule()`. Observed after that: 64× `G1 pump ok`
+then `status=2` timeout and **no** `qmlcache lookup`. The type-loader
+QThread never runs; further `loadUrl` / `processEvents` / coop pumps
+will not reach Ready. Next Gate 1 work must instantiate
+`guest_gate1_window_qmlcache` on the main thread (no QQmlTypeLoader).
+Do not reintroduce a boot URL ctor.
