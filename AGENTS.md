@@ -165,3 +165,8 @@ flag does not finish the type-loader; more `loadUrl` / pump is
 the same dead path. Next Gate 1 must instantiate the cached
 unit without `QQmlTypeLoader` / `loadUrl`. Restore the
 2026-08-16 backup for the working FB desk.
+Cache-instantiate experiment (no `loadUrl`, no `beginCreate`):
+`tools/patch_g1_cache_instantiate.py`. Keep the good ISO; copy
+`desktop.elf` before relink. Do not rebuild Qml. Success:
+`G1 cache instantiate ok` then `G1 thin QML Ready`. Failure:
+restore `$HOME/out/bfree-good-20260816`.

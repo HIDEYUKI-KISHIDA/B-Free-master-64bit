@@ -37,6 +37,11 @@
 #include <QQuickWindow>
 #include <private/qquickrectangle_p.h>
 #include <private/qwindow_p.h>
+#include <private/qqmlcomponent_p.h>
+#include <private/qv4compileddata_p.h>
+#include <private/qv4executablecompilationunit_p.h>
+#include <QtQml/qqmlprivate.h>
+#include <memory>
 #if defined(BFREE_GUEST_LINK_CONTROLS)
 #include <QtQuickTemplates2/private/qquickabstractbutton_p.h>
 #include <QtQuickTemplates2/private/qquickbutton_p.h>
@@ -4816,9 +4821,56 @@ static void guest_controls_shell_parent_show_light(QQuickItem *root)
 }
 #endif
 
-/* Wayland/GPU gate 1: QML IR Ready after the event loop, never on boot.
- * Empty ctor + proven main-thread qmlcache HIT, then PreferSynchronous only
- * after bfree_guest_set_typeloader_main_ok(1). Never always-true from boot. */
+/* Attach HIT CachedQmlUnit to an empty QQmlComponent. No loadUrl / TypeLoader.
+ * beginCreate is not called in this experiment. */
+static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
+{
+    guest_serial_puts("[desktop_qt] G1 cache instantiate enter\n");
+    if (!g_g1_comp || !g_engine || !unit_raw) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate args null\n");
+        g_g1_done = 1;
+        return;
+    }
+    const auto *cached = static_cast<const QQmlPrivate::CachedQmlUnit *>(unit_raw);
+    if (!cached->qmlData) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate qmlData null\n");
+        g_g1_done = 1;
+        return;
+    }
+    guest_serial_puts("[desktop_qt] G1 cache instantiate data ok\n");
+    auto unit = std::unique_ptr<QV4::CompiledData::CompilationUnit>(
+        new QV4::CompiledData::CompilationUnit());
+    unit->data = cached->qmlData;
+    unit->aotCompiledFunctions = cached->aotCompiledFunctions;
+    QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
+        QV4::ExecutableCompilationUnit::create(std::move(unit), g_engine);
+    if (!exec) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate exec null\n");
+        g_g1_done = 1;
+        return;
+    }
+    guest_serial_puts("[desktop_qt] G1 cache instantiate exec ok\n");
+    QQmlComponentPrivate *priv = QQmlComponentPrivate::get(g_g1_comp);
+    if (!priv) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate priv null\n");
+        g_g1_done = 1;
+        return;
+    }
+    priv->compilationUnit = exec;
+    guest_serial_puts("[desktop_qt] G1 cache instantiate ok\n");
+    guest_serial_puts("[desktop_qt] G1 IR status=");
+    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
+    guest_serial_puts("\n");
+    if (g_g1_comp->isReady())
+        guest_serial_puts("[desktop_qt] G1 thin QML Ready\n");
+    else if (g_g1_comp->isError())
+        guest_serial_puts("[desktop_qt] G1 thin QML error\n");
+    else
+        guest_serial_puts("[desktop_qt] G1 thin QML not ready\n");
+    g_g1_done = 1;
+}
+
+/* Wayland/GPU gate 1: after event loop, HIT then instantiate. Never loadUrl. */
 static void guest_g1_post_loop_thin_qml(void)
 {
     if (g_g1_posted || !g_engine)
@@ -4829,21 +4881,16 @@ static void guest_g1_post_loop_thin_qml(void)
     g_g1_comp = new QQmlComponent(g_engine);
     guest_serial_puts("[desktop_qt] G1 empty ctor ok\n");
     guest_serial_puts("[desktop_qt] G1 cache lookup enter\n");
-    if (bfree_guest_qmlcache_unit_for_url) {
-        const void *unit = bfree_guest_qmlcache_unit_for_url("qrc:/GuestGate1Window.qml");
-        if (unit)
-            guest_serial_puts("[desktop_qt] G1 cache unit ok\n");
-        else
-            guest_serial_puts("[desktop_qt] G1 cache unit miss\n");
+    const void *unit = nullptr;
+    if (bfree_guest_qmlcache_unit_for_url)
+        unit = bfree_guest_qmlcache_unit_for_url("qrc:/GuestGate1Window.qml");
+    if (unit) {
+        guest_serial_puts("[desktop_qt] G1 cache unit ok\n");
+        guest_g1_instantiate_from_cached_unit(unit);
+    } else {
+        guest_serial_puts("[desktop_qt] G1 cache unit miss\n");
+        g_g1_done = 1;
     }
-    bfree_guest_set_typeloader_main_ok(1);
-    guest_serial_puts("[desktop_qt] G1 sync loadUrl begin\n");
-    g_g1_comp->loadUrl(QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
-                       QQmlComponent::PreferSynchronous);
-    guest_serial_puts("[desktop_qt] G1 sync loadUrl end\n");
-    guest_serial_puts("[desktop_qt] G1 pump done status=");
-    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
-    guest_serial_puts("\n");
 }
 
 static void guest_g1_post_loop_thin_qml_poll(void)
