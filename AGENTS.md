@@ -100,5 +100,8 @@ already has `tools/qqmlthread_guest_single.cpp` and
 threaded loader and `libQt6Qml.a` exports
 `QQmlThreadPrivate::threadEvent`. The single-thread stub was not
 applied. Force `QQmlThread::isThisThread()` to return true, rebuild
-`Qml`, relink `desktop.elf`, then `getType`/`loadUrl` can run on the
-main thread. Do not reintroduce a boot URL ctor.
+`Qml`, copy `build-qtdeclarative/lib/libQt6Qml.a` into the prefix
+`lib/`, relink `desktop.elf`, then after the proven main-thread
+`qmlcache HIT` call `loadUrl(GuestGate1Window, PreferSynchronous)`
+only — never on boot. If serial stops at `G1 sync loadUrl begin`,
+the inline loader still hangs. Do not reintroduce a boot URL ctor.
