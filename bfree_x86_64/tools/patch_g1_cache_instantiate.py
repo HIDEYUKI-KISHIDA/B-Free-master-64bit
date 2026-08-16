@@ -4,6 +4,7 @@ Removes loadUrl / pump. Does not touch the boot DesktopShell skip.
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -15,10 +16,10 @@ CANDIDATES = [
 ]
 
 INCLUDES = """#include <private/qqmlcomponent_p.h>
+#include <private/qqmlengine_p.h>
 #include <private/qv4compileddata_p.h>
 #include <private/qv4executablecompilationunit_p.h>
 #include <QtQml/qqmlprivate.h>
-#include <memory>
 """
 
 HELPER = r'''
@@ -37,12 +38,18 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
         return;
     }
     guest_serial_puts("[desktop_qt] G1 cache instantiate data ok\n");
-    auto unit = std::unique_ptr<QV4::CompiledData::CompilationUnit>(
-        new QV4::CompiledData::CompilationUnit());
-    unit->data = cached->qmlData;
-    unit->aotCompiledFunctions = cached->aotCompiledFunctions;
+    QQmlEnginePrivate *ep = QQmlEnginePrivate::get(g_engine);
+    if (!ep || !ep->v4engine()) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate v4 null\n");
+        g_g1_done = 1;
+        return;
+    }
+    QQmlRefPointer<QV4::CompiledData::CompilationUnit> cu(
+        new QV4::CompiledData::CompilationUnit);
+    cu->data = cached->qmlData;
+    cu->aotCompiledFunctions = cached->aotCompiledFunctions;
     QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
-        QV4::ExecutableCompilationUnit::create(std::move(unit), g_engine);
+        QV4::ExecutableCompilationUnit::create(std::move(cu), ep->v4engine());
     if (!exec) {
         guest_serial_puts("[desktop_qt] G1 cache instantiate exec null\n");
         g_g1_done = 1;
@@ -80,10 +87,44 @@ def find_file() -> Path:
     raise SystemExit("guest_main.cpp not found")
 
 
+OLD_CREATE_RE = re.compile(
+    r"[ \t]*auto unit = std::unique_ptr<QV4::CompiledData::CompilationUnit>\(\r?\n"
+    r"[ \t]*new QV4::CompiledData::CompilationUnit\(\)\);\r?\n"
+    r"[ \t]*unit->data = cached->qmlData;\r?\n"
+    r"[ \t]*unit->aotCompiledFunctions = cached->aotCompiledFunctions;\r?\n"
+    r"[ \t]*QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =\r?\n"
+    r"[ \t]*QV4::ExecutableCompilationUnit::create\(std::move\(unit\), g_engine\);\r?\n"
+)
+
+NEW_CREATE = r"""    QQmlEnginePrivate *ep = QQmlEnginePrivate::get(g_engine);
+    if (!ep || !ep->v4engine()) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate v4 null\n");
+        g_g1_done = 1;
+        return;
+    }
+    QQmlRefPointer<QV4::CompiledData::CompilationUnit> cu(
+        new QV4::CompiledData::CompilationUnit);
+    cu->data = cached->qmlData;
+    cu->aotCompiledFunctions = cached->aotCompiledFunctions;
+    QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
+        QV4::ExecutableCompilationUnit::create(std::move(cu), ep->v4engine());
+"""
+
+
 def main() -> None:
     path = find_file()
     src = path.read_text(encoding="utf-8", errors="replace")
-    if "G1 cache instantiate enter" in src and "loadUrl" not in src[src.find("guest_g1_post_loop_thin_qml") : src.find("guest_g1_post_loop_thin_qml") + 2500]:
+    if OLD_CREATE_RE.search(src):
+        if "#include <private/qqmlengine_p.h>" not in src:
+            needle = "#include <private/qqmlcomponent_p.h>\n"
+            if needle not in src:
+                raise SystemExit("qqmlcomponent_p.h include not found")
+            src = src.replace(needle, needle + "#include <private/qqmlengine_p.h>\n", 1)
+        src = OLD_CREATE_RE.sub(lambda _m: NEW_CREATE, src, count=1)
+        path.write_text(src, encoding="utf-8")
+        print("[ok] create() signature fixed", path)
+        return
+    if "G1 cache instantiate enter" in src and "ep->v4engine()" in src:
         print("[ok] already instantiated path", path)
         return
     if "#include <private/qqmlcomponent_p.h>" not in src:

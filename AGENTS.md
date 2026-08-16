@@ -166,7 +166,11 @@ the same dead path. Next Gate 1 must instantiate the cached
 unit without `QQmlTypeLoader` / `loadUrl`. Restore the
 2026-08-16 backup for the working FB desk.
 Cache-instantiate experiment (no `loadUrl`, no `beginCreate`):
-`tools/patch_g1_cache_instantiate.py`. Keep the good ISO; copy
+`tools/patch_g1_cache_instantiate.py`. Qt 6.8
+`ExecutableCompilationUnit::create` takes
+`QQmlRefPointer<CompiledData::CompilationUnit>&&` plus
+`QV4::ExecutionEngine*` (`QQmlEnginePrivate::v4engine()`),
+not `unique_ptr` plus `QQmlEngine*`. Keep the good ISO; copy
 `desktop.elf` before relink. Do not rebuild Qml. Success:
 `G1 cache instantiate ok` then `G1 thin QML Ready`. Failure:
-restore `$HOME/out/bfree-good-20260816`.
+restore `desktop.elf.good-running` or `$HOME/out/bfree-good-20260816`.

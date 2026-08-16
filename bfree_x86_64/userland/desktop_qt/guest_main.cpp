@@ -38,10 +38,10 @@
 #include <private/qquickrectangle_p.h>
 #include <private/qwindow_p.h>
 #include <private/qqmlcomponent_p.h>
+#include <private/qqmlengine_p.h>
 #include <private/qv4compileddata_p.h>
 #include <private/qv4executablecompilationunit_p.h>
 #include <QtQml/qqmlprivate.h>
-#include <memory>
 #if defined(BFREE_GUEST_LINK_CONTROLS)
 #include <QtQuickTemplates2/private/qquickabstractbutton_p.h>
 #include <QtQuickTemplates2/private/qquickbutton_p.h>
@@ -4838,12 +4838,18 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
         return;
     }
     guest_serial_puts("[desktop_qt] G1 cache instantiate data ok\n");
-    auto unit = std::unique_ptr<QV4::CompiledData::CompilationUnit>(
-        new QV4::CompiledData::CompilationUnit());
-    unit->data = cached->qmlData;
-    unit->aotCompiledFunctions = cached->aotCompiledFunctions;
+    QQmlEnginePrivate *ep = QQmlEnginePrivate::get(g_engine);
+    if (!ep || !ep->v4engine()) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate v4 null\n");
+        g_g1_done = 1;
+        return;
+    }
+    QQmlRefPointer<QV4::CompiledData::CompilationUnit> cu(
+        new QV4::CompiledData::CompilationUnit);
+    cu->data = cached->qmlData;
+    cu->aotCompiledFunctions = cached->aotCompiledFunctions;
     QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
-        QV4::ExecutableCompilationUnit::create(std::move(unit), g_engine);
+        QV4::ExecutableCompilationUnit::create(std::move(cu), ep->v4engine());
     if (!exec) {
         guest_serial_puts("[desktop_qt] G1 cache instantiate exec null\n");
         g_g1_done = 1;
