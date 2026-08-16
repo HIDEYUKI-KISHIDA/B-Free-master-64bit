@@ -83,4 +83,10 @@ then `status=2` timeout and **no** `qmlcache lookup`. The type-loader
 QThread never runs; further `loadUrl` / `processEvents` / coop pumps
 will not reach Ready. Next Gate 1 work must instantiate
 `guest_gate1_window_qmlcache` on the main thread (no QQmlTypeLoader).
+`guest_mvp_qmlcache_lookup` already maps `qrc:/GuestGate1Window.qml` to
+`guest_gate1_window_cached_unit` and would print `qmlcache HIT`.
+`QQmlTypeData::initializeFromCachedUnit` asserts the type-loader
+thread, so `loadUrl` cannot complete on this guest. Next: call lookup
+from the main thread (no `loadUrl`), then either instantiate the
+`CachedQmlUnit` without TypeData or run the type-loader inline on main.
 Do not reintroduce a boot URL ctor.
