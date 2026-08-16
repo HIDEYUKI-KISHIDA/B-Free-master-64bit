@@ -184,4 +184,9 @@ at STAGE 5, not a `qmlData` read fault. Restore
 `desktop.elf.good-running` first. Then
 `tools/converge_guest_resource_holder_va.sh` until `nm`
 equals the header before `build.sh`. Do not ISO until
-`[ok] holder converged`.
+`[ok] holder converged`. The converge script must not
+delete `desktop.elf`; if `desktop` is under 10MB it is a
+stub (`Qt guest not linked`). Restore
+`desktop.elf.good-running` and do not `build.sh`. Always
+pass `BFREE_QT_GUEST_LINKED=1 BFREE_MVP_GUEST_QML=1`.
+Do not run `build_iso_desktop_shell.sh`.
