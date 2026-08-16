@@ -75,38 +75,13 @@ OLD_CREATE_RE = re.compile(
     r"[ \t]*QV4::ExecutableCompilationUnit::create\(std::move\(unit\), g_engine\);\r?\n"
 )
 
-NEW_CREATE = r"""    QQmlEnginePrivate *ep = QQmlEnginePrivate::get(g_engine);
-    if (!ep || !ep->v4engine()) {
-        guest_serial_puts("[desktop_qt] G1 cache instantiate v4 null\n");
-        g_g1_done = 1;
-        return;
-    }
-    QQmlRefPointer<QV4::CompiledData::CompilationUnit> cu(
-        new QV4::CompiledData::CompilationUnit);
-    cu->data = cached->qmlData;
-    cu->aotCompiledFunctions = cached->aotCompiledFunctions;
-    QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
-        QV4::ExecutableCompilationUnit::create(std::move(cu), ep->v4engine());
-"""
-
-
 def main() -> None:
     path = find_file()
     src = path.read_text(encoding="utf-8", errors="replace")
-    if OLD_CREATE_RE.search(src):
-        if "#include <private/qqmlengine_p.h>" not in src:
-            needle = "#include <private/qqmlcomponent_p.h>\n"
-            if needle not in src:
-                raise SystemExit("qqmlcomponent_p.h include not found")
-            src = src.replace(needle, needle + "#include <private/qqmlengine_p.h>\n", 1)
-        src = OLD_CREATE_RE.sub(lambda _m: NEW_CREATE, src, count=1)
-        path.write_text(src, encoding="utf-8")
-        print("[ok] create() signature fixed", path)
-        return
     if "G1 cache instantiate skip create" in src:
         print("[ok] already skip create", path)
         return
-    if "ExecutableCompilationUnit::create" in src:
+    if "ExecutableCompilationUnit::create" in src or OLD_CREATE_RE.search(src):
         print("[err] create() still present; run patch_g1_cache_skip_create.py")
         raise SystemExit(2)
     if "#include <private/qqmlcomponent_p.h>" not in src:
