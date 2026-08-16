@@ -121,7 +121,13 @@ archive in place. Force the object: `rm` the `.o`, `touch` the
 `.cpp`, then rebuild. The build log must compile
 `qml/ftw/qqmlthread.cpp.o` (not "no work"). Prefix
 `lib/libQt6Qml.a` mtime must be newer than that always-true
-archive. `strings desktop.elf` showing `G1 cache lookup enter`
-only proves `guest_main.o`; it does not prove Qml was rebuilt.
+archive. Observed good rebuild: `[5/5] Linking CXX static
+library lib/libQt6Qml.a` and prefix mtime `13:22`. Stock
+`isThisThread` in the unlinked `.o` is `jmp` + reloc to
+`isCurrentThread` (`objdump -d -r -C`); plain `-d` will not
+print that name. `strings desktop.elf` showing
+`G1 cache lookup enter` only proves `guest_main.o`. Relink
+`desktop` after the new archive; do not ISO the pre-rebuild
+75322720 ELF.
 Do not reintroduce a boot URL ctor. Use
 `bfree_x86_64/tools/force_rebuild_stock_qqmlthread.sh` on WSL.

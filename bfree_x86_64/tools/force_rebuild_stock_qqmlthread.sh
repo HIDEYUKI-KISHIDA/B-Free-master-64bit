@@ -61,13 +61,19 @@ if [[ ! -f "$ARCHIVE" ]]; then
   exit 1
 fi
 
-DUMP="$(objdump -d -C "$OBJ" 2>/dev/null || x86_64-elf-objdump -d -C "$OBJ")"
+# Unlinked .o tail-calls isCurrentThread as `jmp 0` + reloc. Plain
+# `objdump -d` will not print the name; use -r. always-true is mov/xor+ret.
+DUMP="$(objdump -d -r -C "$OBJ" 2>/dev/null || x86_64-elf-objdump -d -r -C "$OBJ")"
 if ! printf '%s\n' "$DUMP" | grep -q 'isThisThread'; then
   echo "[FAIL] objdump has no isThisThread in $OBJ" >&2
   exit 1
 fi
-if ! printf '%s\n' "$DUMP" | grep -q 'isCurrentThread'; then
-  echo "[FAIL] rebuilt object has no isCurrentThread call (still always-true?)" >&2
+if printf '%s\n' "$DUMP" | awk '/isThisThread/{p=1} p&&/isCurrentThread/{found=1} p&&/^$/{exit} END{exit !found}'; then
+  :
+elif printf '%s\n' "$DUMP" | grep -A8 'isThisThread' | grep -Eq 'e9 00 00 00 00'; then
+  echo "[ok] isThisThread is a reloc jmp (stock tail-call)"
+else
+  echo "[FAIL] rebuilt object looks like always-true isThisThread" >&2
   echo "$DUMP" | awk '/isThisThread/{p=1} p{print} p&&/ret/{c++; if(c>=2) exit}'
   exit 1
 fi
