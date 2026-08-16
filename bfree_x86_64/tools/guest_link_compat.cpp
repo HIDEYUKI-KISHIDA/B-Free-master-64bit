@@ -4099,6 +4099,21 @@ extern "C" void bfree_guest_qresource_sanitize(void)
     bfree_guest_resource_list_sanitize();
 }
 
+/* Gate 1: stock isThisThread() until the event loop. Never true during STAGE 5 qrc. */
+static int g_bfree_typeloader_main_ok;
+
+extern "C" void bfree_guest_set_typeloader_main_ok(int on)
+{
+    g_bfree_typeloader_main_ok = on ? 1 : 0;
+    bfree_guest_serial_lit("[desktop_qt] typeloader main ok=");
+    bfree_guest_serial_lit(on ? "1\n" : "0\n");
+}
+
+extern "C" int bfree_guest_typeloader_main_ok(void)
+{
+    return g_bfree_typeloader_main_ok;
+}
+
 extern "C" bool __real__Z21qRegisterResourceDataiPKhS0_S0_(int version, const unsigned char *tree,
                                                            const unsigned char *name,
                                                            const unsigned char *data);

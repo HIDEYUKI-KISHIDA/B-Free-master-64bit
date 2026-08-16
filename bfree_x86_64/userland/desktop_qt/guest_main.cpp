@@ -124,6 +124,9 @@ void bfree_guest_serial_step_raw(char step);
 void bfree_guest_rebind_musl_fs(void);
 void guest_mmap_session_entry(void);
 void bfree_guest_qt_coop_schedule(void);
+void bfree_guest_set_typeloader_main_ok(int on);
+int bfree_guest_typeloader_main_ok(void);
+const void *bfree_guest_qmlcache_unit_for_url(const char *url_utf8) __attribute__((weak));
 }
 
 static void guest_serial_puts(const char *s)
@@ -4814,8 +4817,8 @@ static void guest_controls_shell_parent_show_light(QQuickItem *root)
 #endif
 
 /* Wayland/GPU gate 1: QML IR Ready after the event loop, never on boot.
- * PreferSynchronous URL ctor hangs before qmlcache lookup. setData PFs.
- * Empty ctor + loadUrl(Asynchronous) of a Gate1-sized Window unit only. */
+ * Empty ctor + proven main-thread qmlcache HIT, then PreferSynchronous only
+ * after bfree_guest_set_typeloader_main_ok(1). Never always-true from boot. */
 static void guest_g1_post_loop_thin_qml(void)
 {
     if (g_g1_posted || !g_engine)
@@ -4825,23 +4828,19 @@ static void guest_g1_post_loop_thin_qml(void)
     guest_serial_puts("[desktop_qt] G1 empty ctor begin\n");
     g_g1_comp = new QQmlComponent(g_engine);
     guest_serial_puts("[desktop_qt] G1 empty ctor ok\n");
-    g_g1_comp->loadUrl(QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
-                       QQmlComponent::Asynchronous);
-    guest_serial_puts("[desktop_qt] G1 loadUrl async posted\n");
-    /* Async load stays Loading forever if the desk loop never processEvents.
-     * Pump only here, ExcludeUserInputEvents, bounded. If this hangs, last
-     * line is G1 pump spin=N without G1 pump ok. */
-    guest_serial_puts("[desktop_qt] G1 pump enter\n");
-    /* Type-loader is a QThread. This guest is cooperative pthread
-     * (libstdc++ threads=no): processEvents alone never runs the worker. */
-    for (int spin = 0; g_g1_comp->isLoading() && spin < 64; ++spin) {
-        guest_serial_puts("[desktop_qt] G1 pump spin=");
-        guest_serial_hex_u64((uint64_t)(unsigned)spin);
-        guest_serial_puts("\n");
-        bfree_guest_qt_coop_schedule();
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 2);
-        guest_serial_puts("[desktop_qt] G1 pump ok\n");
+    guest_serial_puts("[desktop_qt] G1 cache lookup enter\n");
+    if (bfree_guest_qmlcache_unit_for_url) {
+        const void *unit = bfree_guest_qmlcache_unit_for_url("qrc:/GuestGate1Window.qml");
+        if (unit)
+            guest_serial_puts("[desktop_qt] G1 cache unit ok\n");
+        else
+            guest_serial_puts("[desktop_qt] G1 cache unit miss\n");
     }
+    bfree_guest_set_typeloader_main_ok(1);
+    guest_serial_puts("[desktop_qt] G1 sync loadUrl begin\n");
+    g_g1_comp->loadUrl(QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
+                       QQmlComponent::PreferSynchronous);
+    guest_serial_puts("[desktop_qt] G1 sync loadUrl end\n");
     guest_serial_puts("[desktop_qt] G1 pump done status=");
     guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
     guest_serial_puts("\n");

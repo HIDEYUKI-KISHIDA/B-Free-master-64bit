@@ -149,3 +149,14 @@ no `CR2=8`, `skip DesktopShell.qml boot load`,
 `qmlcache HIT GuestGate1Window`, `G1 cache unit ok`, then
 live FB input (`desk open Terminal`, `wm close hit`).
 That is FB restore, not QML IR Ready / not Wayland.
+Known-good backup (do not overwrite):
+`$HOME/out/bfree-good-20260816/{libQt6Qml.a,desktop.elf,guest_resource_holder_va.h}`.
+Restore with `bfree_x86_64/tools/restore_bfree_good_20260816.sh`.
+Next Gate 1 experiment: runtime flag `bfree_guest_typeloader_main_ok`
+set only after the event loop, then `PreferSynchronous` for
+`GuestGate1Window` after the proven HIT. Never always-true from
+boot. Apply `tools/patch_qqmlthread_runtime_flag.sh` then
+`tools/force_rebuild_stock_qqmlthread.sh`, then VA-loop relink.
+Success serial: `typeloader main ok=1` then `G1 sync loadUrl end`
+then `G1 thin QML Ready`. If `qrc gui_shaders` / `CR2=8` or hang
+at `G1 sync loadUrl begin`, restore the backup.
