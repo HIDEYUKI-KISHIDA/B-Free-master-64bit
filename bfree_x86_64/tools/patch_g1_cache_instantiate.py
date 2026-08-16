@@ -78,7 +78,7 @@ OLD_CREATE_RE = re.compile(
 def main() -> None:
     path = find_file()
     src = path.read_text(encoding="utf-8", errors="replace")
-    if "G1 cache instantiate skip create" in src:
+    if "G1 cache instantiate skip create" in src and "guest_g1_instantiate_from_cached_unit(" in src:
         print("[ok] already skip create", path)
         return
     if "ExecutableCompilationUnit::create" in src or OLD_CREATE_RE.search(src):
