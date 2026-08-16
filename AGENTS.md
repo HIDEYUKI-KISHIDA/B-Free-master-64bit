@@ -170,7 +170,11 @@ Cache-instantiate experiment (no `loadUrl`, no `beginCreate`):
 `ExecutableCompilationUnit::create` takes
 `QQmlRefPointer<CompiledData::CompilationUnit>&&` plus
 `QV4::ExecutionEngine*` (`QQmlEnginePrivate::v4engine()`),
-not `unique_ptr` plus `QQmlEngine*`. Keep the good ISO; copy
-`desktop.elf` before relink. Do not rebuild Qml. Success:
-`G1 cache instantiate ok` then `G1 thin QML Ready`. Failure:
-restore `desktop.elf.good-running` or `$HOME/out/bfree-good-20260816`.
+not `unique_ptr` plus `QQmlEngine*`. Observed: that `create()`
+call hangs the guest. Do not retry `create()`, `loadUrl`,
+pumps, or boot `isThisThread` always-true. Restore
+`desktop.elf.good-running` (75322720) or
+`$HOME/out/bfree-good-20260816`. Next probe only:
+`tools/patch_g1_cache_skip_create.py` reads `qmlData` words
+and returns. Success serial: `G1 cache instantiate skip create`
+then `G1 qmlData w0=`. Do not rebuild Qml.

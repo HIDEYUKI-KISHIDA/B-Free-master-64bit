@@ -38,41 +38,20 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
         return;
     }
     guest_serial_puts("[desktop_qt] G1 cache instantiate data ok\n");
-    QQmlEnginePrivate *ep = QQmlEnginePrivate::get(g_engine);
-    if (!ep || !ep->v4engine()) {
-        guest_serial_puts("[desktop_qt] G1 cache instantiate v4 null\n");
-        g_g1_done = 1;
-        return;
-    }
-    QQmlRefPointer<QV4::CompiledData::CompilationUnit> cu(
-        new QV4::CompiledData::CompilationUnit);
-    cu->data = cached->qmlData;
-    cu->aotCompiledFunctions = cached->aotCompiledFunctions;
-    QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
-        QV4::ExecutableCompilationUnit::create(std::move(cu), ep->v4engine());
-    if (!exec) {
-        guest_serial_puts("[desktop_qt] G1 cache instantiate exec null\n");
-        g_g1_done = 1;
-        return;
-    }
-    guest_serial_puts("[desktop_qt] G1 cache instantiate exec ok\n");
-    QQmlComponentPrivate *priv = QQmlComponentPrivate::get(g_g1_comp);
-    if (!priv) {
-        guest_serial_puts("[desktop_qt] G1 cache instantiate priv null\n");
-        g_g1_done = 1;
-        return;
-    }
-    priv->compilationUnit = exec;
-    guest_serial_puts("[desktop_qt] G1 cache instantiate ok\n");
-    guest_serial_puts("[desktop_qt] G1 IR status=");
-    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
+    guest_serial_puts("[desktop_qt] G1 cache instantiate skip create\n");
+    guest_serial_puts("[desktop_qt] G1 qmlData=");
+    guest_serial_hex_u64((uint64_t)(uintptr_t)cached->qmlData);
     guest_serial_puts("\n");
-    if (g_g1_comp->isReady())
-        guest_serial_puts("[desktop_qt] G1 thin QML Ready\n");
-    else if (g_g1_comp->isError())
-        guest_serial_puts("[desktop_qt] G1 thin QML error\n");
-    else
-        guest_serial_puts("[desktop_qt] G1 thin QML not ready\n");
+    const quint32 *w = reinterpret_cast<const quint32 *>(cached->qmlData);
+    guest_serial_puts("[desktop_qt] G1 qmlData w0=");
+    guest_serial_hex_u64((uint64_t)w[0]);
+    guest_serial_puts(" w1=");
+    guest_serial_hex_u64((uint64_t)w[1]);
+    guest_serial_puts(" w2=");
+    guest_serial_hex_u64((uint64_t)w[2]);
+    guest_serial_puts(" w3=");
+    guest_serial_hex_u64((uint64_t)w[3]);
+    guest_serial_puts("\n");
     g_g1_done = 1;
 }
 
@@ -124,9 +103,12 @@ def main() -> None:
         path.write_text(src, encoding="utf-8")
         print("[ok] create() signature fixed", path)
         return
-    if "G1 cache instantiate enter" in src and "ep->v4engine()" in src:
-        print("[ok] already instantiated path", path)
+    if "G1 cache instantiate skip create" in src:
+        print("[ok] already skip create", path)
         return
+    if "ExecutableCompilationUnit::create" in src:
+        print("[err] create() still present; run patch_g1_cache_skip_create.py")
+        raise SystemExit(2)
     if "#include <private/qqmlcomponent_p.h>" not in src:
         needle = "#include <private/qwindow_p.h>\n"
         if needle not in src:
