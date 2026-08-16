@@ -178,3 +178,10 @@ pumps, or boot `isThisThread` always-true. Restore
 `tools/patch_g1_cache_skip_create.py` reads `qmlData` words
 and returns. Success serial: `G1 cache instantiate skip create`
 then `G1 qmlData w0=`. Do not rebuild Qml.
+A skip-create (or any `guest_main` relink) ISO that shows only
+`CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
+at STAGE 5, not a `qmlData` read fault. Restore
+`desktop.elf.good-running` first. Then
+`tools/converge_guest_resource_holder_va.sh` until `nm`
+equals the header before `build.sh`. Do not ISO until
+`[ok] holder converged`.
