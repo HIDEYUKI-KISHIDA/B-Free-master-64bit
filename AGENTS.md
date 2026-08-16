@@ -129,5 +129,15 @@ print that name. `strings desktop.elf` showing
 `G1 cache lookup enter` only proves `guest_main.o`. Relink
 `desktop` after the new archive; do not ISO the pre-rebuild
 75322720 ELF.
-Do not reintroduce a boot URL ctor. Use
+Observed after the 13:22 stock Qml + 13:26 relink: still PF at
+`qrc gui_shaders` / `CR2=0x8`, but RIP moved
+`0x3766BB9` → `0x3766989`. That is not the old always-true
+archive. Rebuilding `qqmlthread.cpp.o` shifts guest .text/BSS.
+`holder=0x62c41a0` in serial is the compile-time
+`BFREE_GUEST_QT_RESOURCE_HOLDER_VA`; `qresource registry n=0`
+is that address, not Qt's real list. After any Qml/desktop
+relink, run the VA loop (`tools/update_guest_resource_holder_va.sh`
+then rebuild `guest_main.o` + `guest_link_compat.o` + `desktop`)
+until `nm` holder equals the header. Do not rebuild Qml again
+to "fix" this PF. Do not reintroduce a boot URL ctor. Use
 `bfree_x86_64/tools/force_rebuild_stock_qqmlthread.sh` on WSL.
