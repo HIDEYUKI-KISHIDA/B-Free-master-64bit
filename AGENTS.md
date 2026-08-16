@@ -114,4 +114,14 @@ crashing `libQt6Qml.a` (always-true `isThisThread`) must be
 rebuilt after reverting `qqmlthread.cpp`, then copied to the
 prefix and the desktop ELF relinked. Same RIP `0x3766BB9` at
 `qrc gui_shaders` means the old Qml archive is still linked.
-Do not reintroduce a boot URL ctor.
+`cmake --build --target Qml` can print `ninja: no work to do`
+after a source revert if `qqmlthread.cpp.o` is still newer than
+the `.cpp` (WSL/mtime). That leaves the 11:06 always-true
+archive in place. Force the object: `rm` the `.o`, `touch` the
+`.cpp`, then rebuild. The build log must compile
+`qml/ftw/qqmlthread.cpp.o` (not "no work"). Prefix
+`lib/libQt6Qml.a` mtime must be newer than that always-true
+archive. `strings desktop.elf` showing `G1 cache lookup enter`
+only proves `guest_main.o`; it does not prove Qml was rebuilt.
+Do not reintroduce a boot URL ctor. Use
+`bfree_x86_64/tools/force_rebuild_stock_qqmlthread.sh` on WSL.
