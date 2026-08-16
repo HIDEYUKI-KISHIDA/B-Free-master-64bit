@@ -104,4 +104,8 @@ applied. Force `QQmlThread::isThisThread()` to return true, rebuild
 `lib/`, relink `desktop.elf`, then after the proven main-thread
 `qmlcache HIT` call `loadUrl(GuestGate1Window, PreferSynchronous)`
 only — never on boot. If serial stops at `G1 sync loadUrl begin`,
-the inline loader still hangs. Do not reintroduce a boot URL ctor.
+the inline loader still hangs. A global `isThisThread() { return true; }`
+caused `Page Fault CR2=0x8` around serial line 860 — before G1
+(~1176). Do not leave `isThisThread` always-true; gate it with a
+runtime flag set only after `entering event loop`. Do not
+reintroduce a boot URL ctor.
