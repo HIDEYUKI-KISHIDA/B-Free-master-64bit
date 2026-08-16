@@ -43,29 +43,44 @@ def ensure_extern(src: str) -> str:
     raise SystemExit("extern block marker not found")
 
 
+def line_serial_fn(line: str, fallback: str) -> str:
+    for name in ("guest_serial_puts", "guest_serial_write", "bfree_guest_serial_lit"):
+        if name + "(" in line:
+            return name
+    return fallback
+
+
 def patch_g1(src: str, fn: str) -> str:
     if "G1 sync loadUrl begin" in src and "bfree_guest_set_typeloader_main_ok(1)" in src:
         return src
+    lines = src.splitlines(keepends=True)
+    idx = None
+    for i, line in enumerate(lines):
+        if "G1 cache unit ok" in line or "G1 cache lookup enter" in line:
+            idx = i
+            if "G1 cache unit ok" in line:
+                break
+    if idx is None:
+        raise SystemExit("G1 cache unit/lookup site not found; not patching blindly")
+    use_fn = line_serial_fn(lines[idx], fn)
     insert = (
         f"    bfree_guest_set_typeloader_main_ok(1);\n"
-        f"    {fn}(\"[desktop_qt] G1 sync loadUrl begin\\n\");\n"
+        f"    {use_fn}(\"[desktop_qt] G1 sync loadUrl begin\\n\");\n"
         f"    g_g1_comp->loadUrl(QUrl(QStringLiteral(\"qrc:/GuestGate1Window.qml\")),\n"
         f"                       QQmlComponent::PreferSynchronous);\n"
-        f"    {fn}(\"[desktop_qt] G1 sync loadUrl end\\n\");\n"
+        f"    {use_fn}(\"[desktop_qt] G1 sync loadUrl end\\n\");\n"
     )
-    # HIT-only local tree: stop returning after cache unit ok.
-    old_done = (
-        f'    {fn}("[desktop_qt] G1 cache unit ok\\n");\n'
-        "    g_g1_done = 1;\n"
-        "    return;\n"
-    )
-    new_done = f'    {fn}("[desktop_qt] G1 cache unit ok\\n");\n' + insert
-    if old_done in src:
-        return src.replace(old_done, new_done, 1)
-    marker = f'    {fn}("[desktop_qt] G1 cache unit ok\\n");\n'
-    if marker in src and "G1 sync loadUrl begin" not in src:
-        return src.replace(marker, marker + insert, 1)
-    raise SystemExit("G1 cache unit ok site not found; not patching blindly")
+    # Drop an immediate done/return after the HIT so sync loadUrl can run.
+    j = idx + 1
+    while j < len(lines) and j <= idx + 6:
+        stripped = lines[j].strip()
+        if stripped in ("g_g1_done = 1;", "return;"):
+            lines[j] = ""
+            j += 1
+            continue
+        break
+    lines.insert(j, insert)
+    return "".join(lines)
 
 
 COMPAT_CANDIDATES = [
@@ -121,6 +136,7 @@ def patch_compat() -> None:
 
 
 def main() -> None:
+    patch_compat()
     path = find_file()
     src = path.read_text(encoding="utf-8", errors="replace")
     fn = serial_fn(src)
@@ -128,7 +144,6 @@ def main() -> None:
     src = patch_g1(src, fn)
     path.write_text(src, encoding="utf-8")
     print("[ok]", path)
-    patch_compat()
 
 
 if __name__ == "__main__":
