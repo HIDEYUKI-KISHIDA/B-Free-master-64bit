@@ -275,8 +275,13 @@ clear. Observed after magenta: `wl shm mmap=0x3c00000` then
 `#GP` vector `0xD` at `movaps` (`bytes@RIP=0f 29 …`).
 Heap mmap worked; GCC `-O2` emitted SSE because the stub
 Makefile lacked `-mno-sse`. Build with
-`-mno-sse -mno-mmx -mno-3dnow -mno-80387`. Same-process
-client (PID1 `exec` would replace the compositor). Not host `tron_gui_server`. Not the icon desk.
+`-mno-sse -mno-mmx -mno-3dnow -mno-80387`. Observed after
+that: QEMU magenta clear + centered cyan rectangle with a
+white edge (in-process `wl_shm` commit blit). That is guest
+Wayland **wire + shm pixels**, not a second client ELF, not
+`WAYLAND_DISPLAY` / AF_UNIX, not host `tron_gui_server`, not
+the icon desk. Same-process client (PID1 `exec` would replace
+the compositor). Not host `tron_gui_server`. Not the icon desk.
 Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
