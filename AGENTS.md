@@ -297,7 +297,7 @@ after the magenta fill. Transport is now **AF_UNIX**
 `/tmp/wayland-0` (bind 49 / listen 50 / connect 42 / accept 43),
 not a pipe. vfork child `connect()`s; in-process connect is
 the fallback. Success serial: `[wl] listen ok` then
-`[wl] client accepted` then `wayland desk chrome blit`.
+`[wl] client accepted` then `wayland native desk blit`.
 That is S1 toward 本デスク (compositor owns the socket).
 S2 source whitelist (`desktop.elf` in `sys_linux_execve`) may
 live in `syscall.c`, but **do not** `make -C kernel` and map
