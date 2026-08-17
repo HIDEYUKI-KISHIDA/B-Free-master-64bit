@@ -210,7 +210,10 @@ product `DesktopShell.qml`, not `beginCreate`, not Wayland.
 Keep `desktop.elf.g1-ready` (75331080, holder `0x62c6160`) as the
 proven Gate 1 thin QML Ready ELF. Do not overwrite it.
 `ExecutableCompilationUnit::create()`. Do not unskip Wayland
-until a later gate.
+until a later gate. Next probe: `tools/patch_g1_begincreate.py`
+calls `beginCreate` only (no `completeCreate`). Success serial:
+`G1 beginCreate end` then `G1 beginCreate obj=`. On hang/PF
+restore `desktop.elf.g1-ready`. Do not unskip Wayland.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore

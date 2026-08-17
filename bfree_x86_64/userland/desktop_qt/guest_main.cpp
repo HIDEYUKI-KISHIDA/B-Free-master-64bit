@@ -4884,9 +4884,19 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
     guest_serial_puts("[desktop_qt] G1 IR status=");
     guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
     guest_serial_puts("\n");
-    if (g_g1_comp->isReady())
+    if (g_g1_comp->isReady()) {
         guest_serial_puts("[desktop_qt] G1 thin QML Ready\n");
-    else if (g_g1_comp->isError())
+        guest_serial_puts("[desktop_qt] G1 beginCreate begin\n");
+        QObject *obj = g_g1_comp->beginCreate(g_engine->rootContext());
+        guest_serial_puts("[desktop_qt] G1 beginCreate end\n");
+        if (!obj)
+            guest_serial_puts("[desktop_qt] G1 beginCreate null\n");
+        else {
+            guest_serial_puts("[desktop_qt] G1 beginCreate obj=");
+            guest_serial_hex_u64((uint64_t)(uintptr_t)obj);
+            guest_serial_puts("\n");
+        }
+    } else if (g_g1_comp->isError())
         guest_serial_puts("[desktop_qt] G1 thin QML error\n");
     else
         guest_serial_puts("[desktop_qt] G1 thin QML not ready\n");
