@@ -1,4 +1,5 @@
-# Guest compositor.elf stub (PID1 only with a separate GUI_FIRST kernel).
+# Guest compositor.elf stub. Do not rebuild the daily kernel for hello.
+# First proof: clone daily ISO and register this ELF as init.elf (PID1, INIT role).
 # Daily ISO stays BFREE_BOOT_GUI_FIRST=0 + desktop.elf g1-start0.
 .PHONY: all clean
 .DEFAULT_GOAL := all

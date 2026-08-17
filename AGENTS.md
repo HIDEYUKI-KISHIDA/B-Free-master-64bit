@@ -257,11 +257,18 @@ AF_UNIX). Host hello-world observed: `tron_gui_server` +
 `xdg_wm_base`, `wl_seat` bfree-seat0, 1024×768). That is Linux
 host compositor, not guest `desktop.elf` / not QEMU. Guest H
 path: `userland/compositor_stub` → `compositor.elf` (syscall 24
-serial hello). Never `BFREE_BOOT_GUI_FIRST=1` on the daily
-kernel; that PID1-replaces init and drops the FB desk if the
-stub is missing. Experimental boot uses a **copied**
-`kernel-gui-first.elf` plus a second GRUB entry. Do not
-`PROFILE=RELEASE` (`BFREE_WAYLAND_INPUT_STRICT=1`
+serial hello). First proof does **not** rebuild the kernel and
+does **not** set `BFREE_BOOT_GUI_FIRST=1`. Clone daily
+`bfree.iso` to `bfree-compositor-stub.iso` with
+`tools/build_compositor_stub_iso.sh`: same `g1-desk` kernel,
+GUI menuentry loads compositor bytes as `init.elf`. Success
+serial is `[compositor] guest stub hello` (E820 count 1).
+The icon desk will not appear on that ISO (no `desktop.elf`
+exec). Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
+includes nr 24 for a later GUI_FIRST kernel; do not build that
+into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
+at VMM/`sparse-pt` here; do not retry that as the hello path.
+Do not `PROFILE=RELEASE` (`BFREE_WAYLAND_INPUT_STRICT=1`
 starves APP input). If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
