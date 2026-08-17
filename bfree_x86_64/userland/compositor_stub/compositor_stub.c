@@ -3,10 +3,9 @@
  * Do not set BFREE_BOOT_GUI_FIRST on the daily kernel.
  */
 #define BFREE_FB0_FD 0x2000
-#define MAP_ANONYMOUS 0x20
 #define WL_SHM_FORMAT_XRGB8888 1
-#define WL_SURF_W 400
-#define WL_SURF_H 300
+#define WL_SURF_W 480
+#define WL_SURF_H 320
 
 struct fbinfo {
     void *addr;
@@ -285,8 +284,8 @@ void _start(void)
     static const char wlok[] = "[compositor] wayland shm blit\n";
     struct fbinfo info;
     struct wl_state st;
+    static unsigned int shm_pool[WL_SURF_W * WL_SURF_H];
     long mapped;
-    long pool;
     unsigned char msg[256];
     unsigned int msglen;
     unsigned int i;
@@ -327,17 +326,17 @@ void _start(void)
     fill_rect(st.fb, st.fb_pitch, st.fb_w, st.fb_h, 0, 0, st.fb_w, st.fb_h, 0x00FF00FFUL);
     serial(fillok, sizeof(fillok) - 1);
 
+    /* Do not anonymous-mmap the pool: INIT PID1 heap mmap was the hang
+     * after magenta (no [wl] lines). ELF BSS is mapped via p_memsz. */
     pool_bytes = (unsigned int)(WL_SURF_W * WL_SURF_H * 4);
-    pool = sys6(26, 0, (long)pool_bytes, 3, MAP_ANONYMOUS, -1, 0);
-    serial_hex("wl shm mmap=", pool);
-    if (pool < 0) {
-        for (;;) {
-        }
-    }
-    st.pool = (unsigned char *)pool;
+    st.pool = (unsigned char *)(void *)shm_pool;
     st.pool_size = pool_bytes;
+    serial_hex("wl shm static=", (long)(unsigned long)st.pool);
     for (i = 0; i < (pool_bytes / 4U); i++) {
-        ((unsigned int *)st.pool)[i] = 0x0000FFFFUL; /* cyan client buffer */
+        unsigned int x = i % WL_SURF_W;
+        unsigned int y = i / WL_SURF_W;
+        unsigned int edge = (x < 8U || y < 8U || x >= (WL_SURF_W - 8U) || y >= (WL_SURF_H - 8U));
+        shm_pool[i] = edge ? 0x00FFFFFFUL : 0x0000FFFFUL;
     }
 
     msglen = wl_client_build(msg);
