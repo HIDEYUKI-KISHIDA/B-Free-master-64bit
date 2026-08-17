@@ -252,7 +252,11 @@ guest. Do not unskip Wayland. Approach 2 (compositor-first) is
 Keep `g1-start0`. Host path is `make -C gui_server` then
 `tron_gui_server` (Linux), not guest `desktop.elf`. Guest
 `compositor.elf` is a separate ABI port (COMPOSITOR role ≠ musl
-AF_UNIX). Do not `PROFILE=RELEASE` (`BFREE_WAYLAND_INPUT_STRICT=1`
+AF_UNIX). Host hello-world observed: `tron_gui_server` +
+`wayland-info` → `interop check: PASSED` (`wl_compositor` v4,
+`xdg_wm_base`, `wl_seat` bfree-seat0, 1024×768). That is Linux
+host compositor, not guest `desktop.elf` / not QEMU. Do not
+`PROFILE=RELEASE` (`BFREE_WAYLAND_INPUT_STRICT=1`
 starves APP input). If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
