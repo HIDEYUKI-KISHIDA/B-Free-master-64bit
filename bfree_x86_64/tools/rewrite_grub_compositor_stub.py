@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Rewrite GRUB so the GUI (desktop.elf) entry loads compositor.elf as init.elf.
+"""Rewrite GRUB GUI entries for the stub ISO.
 
-Daily kernel stays BFREE_BOOT_GUI_FIRST=0 and still looks for PID1 name init.elf.
-The compositor stub bytes are registered under that name. Do not rebuild kernel.
+PID1 stays named init.elf (daily kernel). Bytes are init_tramp.elf.
+compositor.elf is a second module so exec_initrd can load it.
 """
 from __future__ import annotations
 
 import re
 import sys
+
+INIT_LINE = "module2 /boot/init_tramp.elf init.elf"
+COMP_LINE = "module2 /boot/compositor.elf compositor.elf"
 
 
 def rewrite_grub(text: str) -> str:
@@ -18,7 +21,7 @@ def rewrite_grub(text: str) -> str:
         if "desktop.elf" in part:
             part, n = re.subn(
                 r"module2\s+\S+\s+init\.elf",
-                "module2 /boot/compositor.elf init.elf",
+                INIT_LINE + "\n    " + COMP_LINE,
                 part,
             )
             changed += n
@@ -27,7 +30,7 @@ def rewrite_grub(text: str) -> str:
     if changed == 0:
         text2, n = re.subn(
             r"module2\s+/boot/initrd\.img\s+init\.elf(\r?\n)(\s*)module2\s+/boot/desktop\.elf\s+desktop\.elf",
-            r"module2 /boot/compositor.elf init.elf\1\2module2 /boot/desktop.elf desktop.elf",
+            INIT_LINE + r"\1\2" + COMP_LINE + r"\1\2module2 /boot/desktop.elf desktop.elf",
             text,
         )
         changed = n

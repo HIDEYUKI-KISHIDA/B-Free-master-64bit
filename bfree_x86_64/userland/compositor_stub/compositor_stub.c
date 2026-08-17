@@ -1,6 +1,7 @@
-/* Freestanding guest compositor. In-process Wayland wire + wl_shm blit.
- * Not Linux tron_gui_server. Not a second client ELF (PID1 cannot fork here).
- * Do not set BFREE_BOOT_GUI_FIRST on the daily kernel.
+/* Freestanding guest compositor. Reached via init_tramp exec_initrd (APP role).
+ * Parent = server, vfork child = client. Pipe carries Wayland requests.
+ * Shared AS (vfork) so the child's wl_shm pixels are visible to the parent.
+ * Not Linux tron_gui_server. Do not set BFREE_BOOT_GUI_FIRST on the daily kernel.
  */
 #define BFREE_FB0_FD 0x2000
 #define WL_SHM_FORMAT_XRGB8888 1
@@ -282,6 +283,9 @@ void _start(void)
     static const char hello[] = "[compositor] guest stub hello\n";
     static const char fillok[] = "[compositor] guest stub fb fill\n";
     static const char wlok[] = "[compositor] wayland shm blit\n";
+    static const char childm[] = "[wl] vfork child\n";
+    static const char parentm[] = "[wl] vfork parent\n";
+    static const char fallback[] = "[wl] vfork fallback in-process\n";
     struct fbinfo info;
     struct wl_state st;
     static unsigned int shm_pool[WL_SURF_W * WL_SURF_H];
@@ -290,6 +294,9 @@ void _start(void)
     unsigned int msglen;
     unsigned int i;
     unsigned int pool_bytes;
+    int fds[2];
+    long pid;
+    long nread;
 
     serial(hello, sizeof(hello) - 1);
 
@@ -301,7 +308,8 @@ void _start(void)
     info.pad[0] = info.pad[1] = info.pad[2] = 0;
     info.ready = 0;
     (void)sys6(1001, (long)&info, 0, 0, 0, 0, 0);
-    mapped = sys6(26, 0, 0, 3, 1, BFREE_FB0_FD, 0);
+    /* APP role: Linux mmap is nr 9. Native 26 is msync here. */
+    mapped = sys6(9, 0, 0, 3, 1, BFREE_FB0_FD, 0);
     serial_hex("fb mmap=", mapped);
     if (mapped < 0 || info.ready == 0 || info.width == 0 || info.height == 0 ||
         info.pitch == 0) {
@@ -326,22 +334,56 @@ void _start(void)
     fill_rect(st.fb, st.fb_pitch, st.fb_w, st.fb_h, 0, 0, st.fb_w, st.fb_h, 0x00FF00FFUL);
     serial(fillok, sizeof(fillok) - 1);
 
-    /* Do not anonymous-mmap the pool: INIT PID1 heap mmap was the hang
-     * after magenta (no [wl] lines). ELF BSS is mapped via p_memsz. */
     pool_bytes = (unsigned int)(WL_SURF_W * WL_SURF_H * 4);
     st.pool = (unsigned char *)(void *)shm_pool;
     st.pool_size = pool_bytes;
     serial_hex("wl shm static=", (long)(unsigned long)st.pool);
-    for (i = 0; i < (pool_bytes / 4U); i++) {
-        unsigned int x = i % WL_SURF_W;
-        unsigned int y = i / WL_SURF_W;
-        unsigned int edge = (x < 8U || y < 8U || x >= (WL_SURF_W - 8U) || y >= (WL_SURF_H - 8U));
-        shm_pool[i] = edge ? 0x00FFFFFFUL : 0x0000FFFFUL;
+
+    fds[0] = fds[1] = -1;
+    if (sys6(22, (long)fds, 0, 0, 0, 0, 0) != 0) {
+        fds[0] = fds[1] = -1;
+    }
+    pid = sys6(58, 0, 0, 0, 0, 0, 0);
+    serial_hex("wl vfork=", pid);
+
+    if (pid == 0) {
+        serial(childm, sizeof(childm) - 1);
+        for (i = 0; i < (pool_bytes / 4U); i++) {
+            unsigned int x = i % WL_SURF_W;
+            unsigned int y = i / WL_SURF_W;
+            unsigned int edge = (x < 8U || y < 8U || x >= (WL_SURF_W - 8U) ||
+                                 y >= (WL_SURF_H - 8U));
+            shm_pool[i] = edge ? 0x00FFFFFFUL : 0x0000FFFFUL;
+        }
+        msglen = wl_client_build(msg);
+        if (fds[1] >= 0) {
+            (void)sys6(1, (long)fds[1], (long)msg, (long)msglen, 0, 0, 0);
+        }
+        (void)sys6(60, 0, 0, 0, 0, 0, 0);
+        for (;;) {
+        }
     }
 
-    msglen = wl_client_build(msg);
-    serial_hex("wl bytes=", (long)msglen);
-    wl_dispatch(&st, msg, msglen);
+    if (pid > 0 && fds[0] >= 0) {
+        serial(parentm, sizeof(parentm) - 1);
+        nread = sys6(0, (long)fds[0], (long)msg, 256, 0, 0, 0);
+        serial_hex("wl bytes=", nread);
+        if (nread > 0) {
+            wl_dispatch(&st, msg, (unsigned int)nread);
+        }
+    } else {
+        serial(fallback, sizeof(fallback) - 1);
+        for (i = 0; i < (pool_bytes / 4U); i++) {
+            unsigned int x = i % WL_SURF_W;
+            unsigned int y = i / WL_SURF_W;
+            unsigned int edge = (x < 8U || y < 8U || x >= (WL_SURF_W - 8U) ||
+                                 y >= (WL_SURF_H - 8U));
+            shm_pool[i] = edge ? 0x00FFFFFFUL : 0x0000FFFFUL;
+        }
+        msglen = wl_client_build(msg);
+        serial_hex("wl bytes=", (long)msglen);
+        wl_dispatch(&st, msg, msglen);
+    }
     if (st.committed) {
         serial(wlok, sizeof(wlok) - 1);
     }
