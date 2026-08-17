@@ -232,9 +232,11 @@ Restore `desktop.elf.g1-populate`. Ready+populate stands. Not Wayland.
 Do not retry `beginCreate`. Qt 6.8 `beginCreate` uses
 `priv->start` (default **-1**) and `state.creator()->create(start)`.
 The empty-component attach never sets `start` / `url` / `typeData`.
-Next toward Wayland: `tools/patch_g1_dump_priv.py` prints
-`G1 start=`, `G1 typeData null|ok`, `G1 url empty|ok`, `G1 ctx=`
-after populate. No `beginCreate`. On PF restore `g1-populate`.
+Observed dump after populate (`holder=0x62c6160`): `G1 start=0xffffffff`
+(-1), `G1 typeData null`, `G1 url empty`, `G1 ctx=0x424dc68` (live).
+No `CR2`. Next toward Wayland: set `priv->start = 0` and
+`priv->url` from the cache unit (`qrc:/GuestGate1Window.qml`), print
+again, still no `beginCreate`. On PF restore `g1-populate`.
 Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
