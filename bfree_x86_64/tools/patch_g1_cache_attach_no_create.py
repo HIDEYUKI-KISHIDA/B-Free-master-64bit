@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Attach ExecutableCompilationUnit via create(cu, nullptr).
+"""Attach via ExecutionEngine::executableCompilationUnit (public).
 
-Ctor is private; exec->data does not exist. Do not call create(cu, v4engine()).
+ExecutableCompilationUnit::create is private. Do not call it.
+Do not call create(cu, v4engine()).
 """
 from __future__ import annotations
 
@@ -16,48 +17,24 @@ CANDIDATES = [
     Path.cwd() / "bfree_x86_64/userland/desktop_qt/guest_main.cpp",
 ]
 
-NEW_RE = re.compile(
-    r"[ \t]*guest_serial_puts\(\"\[desktop_qt\] G1 cache exec begin\\n\"\);\r?\n"
-    r"[ \t]*QQmlRefPointer<QV4::ExecutableCompilationUnit> exec\(\r?\n"
-    r"[ \t]*new QV4::ExecutableCompilationUnit\);\r?\n"
-    r"[ \t]*guest_serial_puts\(\"\[desktop_qt\] G1 cache exec new ok\\n\"\);\r?\n"
-    r"[ \t]*exec->data = cached->qmlData;\r?\n"
-    r"[ \t]*exec->aotCompiledFunctions = cached->aotCompiledFunctions;\r?\n"
-    r"[ \t]*guest_serial_puts\(\"\[desktop_qt\] G1 cache exec data ok\\n\"\);\r?\n"
+NULLENGINE_RE = re.compile(
+    r"[ \t]*guest_serial_puts\(\"\[desktop_qt\] G1 cache exec create nullengine begin\\n\"\);\r?\n"
+    r"[ \t]*QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =\r?\n"
+    r"[ \t]*QV4::ExecutableCompilationUnit::create\(std::move\(cu\), nullptr\);\r?\n"
+    r"[ \t]*guest_serial_puts\(\"\[desktop_qt\] G1 cache exec create nullengine ok\\n\"\);\r?\n"
 )
 
-NULLENGINE = r'''    guest_serial_puts("[desktop_qt] G1 cache exec create nullengine begin\n");
-    QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
-        QV4::ExecutableCompilationUnit::create(std::move(cu), nullptr);
-    guest_serial_puts("[desktop_qt] G1 cache exec create nullengine ok\n");
-'''
-
-CU_TAIL_RE = re.compile(
-    r"([ \t]*guest_serial_puts\(\"\[desktop_qt\] G1 cache cu data=\"\);\r?\n"
-    r"[ \t]*guest_serial_hex_u64\(\(uint64_t\)\(uintptr_t\)cu->data\);\r?\n"
-    r"[ \t]*guest_serial_puts\(\"\\n\"\);\r?\n)"
-    r"[ \t]*g_g1_done = 1;\r?\n"
-)
-
-ATTACH = NULLENGINE + r'''    QQmlComponentPrivate *priv = QQmlComponentPrivate::get(g_g1_comp);
-    if (!priv) {
-        guest_serial_puts("[desktop_qt] G1 cache priv null\n");
+ENGINE = r'''    guest_serial_puts("[desktop_qt] G1 cache exec engine begin\n");
+    QQmlEnginePrivate *ep = QQmlEnginePrivate::get(g_engine);
+    if (!ep || !ep->v4engine()) {
+        guest_serial_puts("[desktop_qt] G1 cache exec v4 null\n");
         g_g1_done = 1;
         return;
     }
-    guest_serial_puts("[desktop_qt] G1 cache priv ok\n");
-    priv->compilationUnit = exec;
-    guest_serial_puts("[desktop_qt] G1 cache attach ok\n");
-    guest_serial_puts("[desktop_qt] G1 IR status=");
-    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
-    guest_serial_puts("\n");
-    if (g_g1_comp->isReady())
-        guest_serial_puts("[desktop_qt] G1 thin QML Ready\n");
-    else if (g_g1_comp->isError())
-        guest_serial_puts("[desktop_qt] G1 thin QML error\n");
-    else
-        guest_serial_puts("[desktop_qt] G1 thin QML not ready\n");
-    g_g1_done = 1;
+    guest_serial_puts("[desktop_qt] G1 cache exec engine call\n");
+    QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
+        ep->v4engine()->executableCompilationUnit(std::move(cu));
+    guest_serial_puts("[desktop_qt] G1 cache exec engine ok\n");
 '''
 
 
@@ -72,24 +49,17 @@ def find_file() -> Path:
 def main() -> None:
     path = find_file()
     src = path.read_text(encoding="utf-8", errors="replace")
-    if "create(std::move(cu), nullptr)" in src:
-        print("[ok] already nullengine create", path)
+    if "executableCompilationUnit(std::move(cu))" in src:
+        print("[ok] already engine wrap", path)
         return
-    if "v4engine()" in src and "ExecutableCompilationUnit::create" in src:
-        raise SystemExit("create(cu, v4engine()) present; refuse")
-    if NEW_RE.search(src):
-        src = NEW_RE.sub(lambda _m: NULLENGINE, src, count=1)
+    if "ExecutableCompilationUnit::create" in src and not NULLENGINE_RE.search(src):
+        raise SystemExit("private create() still present; refuse v4engine create")
+    if NULLENGINE_RE.search(src):
+        src = NULLENGINE_RE.sub(lambda _m: ENGINE, src, count=1)
         path.write_text(src, encoding="utf-8")
-        print("[ok] nullengine create", path)
+        print("[ok] engine wrap", path)
         return
-    if "G1 cache cu data=" not in src:
-        raise SystemExit("cu-only site not found")
-    m = CU_TAIL_RE.search(src)
-    if not m:
-        raise SystemExit("cu tail not found")
-    src = src[: m.end(1)] + ATTACH + src[m.end() :]
-    path.write_text(src, encoding="utf-8")
-    print("[ok] attach nullengine", path)
+    raise SystemExit("nullengine site not found")
 
 
 if __name__ == "__main__":

@@ -4861,10 +4861,17 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
     guest_serial_puts("[desktop_qt] G1 cache cu data=");
     guest_serial_hex_u64((uint64_t)(uintptr_t)cu->data);
     guest_serial_puts("\n");
-    guest_serial_puts("[desktop_qt] G1 cache exec create nullengine begin\n");
+    guest_serial_puts("[desktop_qt] G1 cache exec engine begin\n");
+    QQmlEnginePrivate *ep = QQmlEnginePrivate::get(g_engine);
+    if (!ep || !ep->v4engine()) {
+        guest_serial_puts("[desktop_qt] G1 cache exec v4 null\n");
+        g_g1_done = 1;
+        return;
+    }
+    guest_serial_puts("[desktop_qt] G1 cache exec engine call\n");
     QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
-        QV4::ExecutableCompilationUnit::create(std::move(cu), nullptr);
-    guest_serial_puts("[desktop_qt] G1 cache exec create nullengine ok\n");
+        ep->v4engine()->executableCompilationUnit(std::move(cu));
+    guest_serial_puts("[desktop_qt] G1 cache exec engine ok\n");
     QQmlComponentPrivate *priv = QQmlComponentPrivate::get(g_g1_comp);
     if (!priv) {
         guest_serial_puts("[desktop_qt] G1 cache priv null\n");

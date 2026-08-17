@@ -199,11 +199,10 @@ The hang is specifically `ExecutableCompilationUnit::create()`.
 On hang/PF restore `desktop.elf.skip-create`. Keep a
 `desktop.elf.cu-only` copy of this ELF. Do not retry `create()`.
 Next: `tools/patch_g1_cache_attach_no_create.py`.
-`ExecutableCompilationUnit` ctor is private and has no `data`
-member. Use `create(std::move(cu), nullptr)` — not
-`create(cu, v4engine())`. Success serial:
-`G1 cache exec create nullengine begin` then `nullengine ok`
-then `G1 cache attach ok`. On hang restore `desktop.elf.cu-only`.
+`ExecutableCompilationUnit::create` is private in Qt 6.8.
+Use public `ExecutionEngine::executableCompilationUnit(cu)`.
+Success serial: `G1 cache exec engine call` then `engine ok` then
+`attach ok`. On hang restore `desktop.elf.cu-only`.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore
