@@ -177,7 +177,13 @@ pumps, or boot `isThisThread` always-true. Restore
 `$HOME/out/bfree-good-20260816`. Next probe only:
 `tools/patch_g1_cache_skip_create.py` reads `qmlData` words
 and returns. Success serial: `G1 cache instantiate skip create`
-then `G1 qmlData w0=`. Do not rebuild Qml.
+then `G1 qmlData w0=`. Observed on the 75326984 ELF
+(`holder=0x62c5160`): `instantiate enter`, `data ok`,
+`skip create`, `qmlData=0x3bda680`,
+`w0=0x63347671 w1=0x61746164 w2=0x42 w3=0x00060800`
+(`qv4cdata`, Qt 6.8.0). Desk still lives. That is a readable
+cache unit, not IR Ready and not Wayland. Do not retry
+`create()`. Do not rebuild Qml.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore
