@@ -234,9 +234,14 @@ Do not retry `beginCreate`. Qt 6.8 `beginCreate` uses
 The empty-component attach never sets `start` / `url` / `typeData`.
 Observed dump after populate (`holder=0x62c6160`): `G1 start=0xffffffff`
 (-1), `G1 typeData null`, `G1 url empty`, `G1 ctx=0x424dc68` (live).
-No `CR2`. Next toward Wayland: set `priv->start = 0` and
-`priv->url` from the cache unit (`qrc:/GuestGate1Window.qml`), print
-again, still no `beginCreate`. On PF restore `g1-populate`.
+No `CR2`. After `priv->start = 0` and
+`priv->url = qrc:/GuestGate1Window.qml`: `G1 start=0`, `G1 url ok`,
+`G1 typeData null` still, `G1 ctx` live, no `CR2`. Keep that as a
+print-only ELF; do not overwrite `g1-populate`. Next toward Wayland:
+`beginCreate` only with `start=0` and url set. `typeData` may stay
+null (cache-unit path uses `compilationUnit` + `start`, not TypeLoader).
+On PF restore `g1-populate`. Do not retry Ready-only or start=-1
+`beginCreate`.
 Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
