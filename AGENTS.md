@@ -267,10 +267,22 @@ serial is `[compositor] guest stub hello` then
 `guest stub fb fill` (E820 count 1). Observed: QEMU full-screen
 magenta on `bfree-compositor-stub.iso` after GRUB rewrite of
 all `desktop.elf` menuentries (daily ISO has several; requiring
-exactly one rewrite left a byte-identical copy). Magenta fill is
-compositor owning the framebuffer, **not** Wayland protocol.
-The icon desk will not appear on that ISO (no `desktop.elf`
-exec). Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
+exactly one rewrite left a byte-identical copy). Magenta fill is compositor owning the framebuffer. Next guest
+slice is in-process Wayland wire (`get_registry` / `bind` /
+`create_surface` / `create_pool` / `create_buffer` / `attach` /
+`commit`) plus a cyan `wl_shm` rectangle on that magenta
+clear. Observed after magenta: `wl shm mmap=0x3c00000` then
+`#GP` vector `0xD` at `movaps` (`bytes@RIP=0f 29 …`).
+Heap mmap worked; GCC `-O2` emitted SSE because the stub
+Makefile lacked `-mno-sse`. Build with
+`-mno-sse -mno-mmx -mno-3dnow -mno-80387`. Observed after
+that: QEMU magenta clear + centered cyan rectangle with a
+white edge (in-process `wl_shm` commit blit). That is guest
+Wayland **wire + shm pixels**, not a second client ELF, not
+`WAYLAND_DISPLAY` / AF_UNIX, not host `tron_gui_server`, not
+the icon desk. Same-process client (PID1 `exec` would replace
+the compositor). Not host `tron_gui_server`. Not the icon desk.
+Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
 at VMM/`sparse-pt` here; do not retry that as the hello path.
