@@ -257,14 +257,16 @@ AF_UNIX). Host hello-world observed: `tron_gui_server` +
 `xdg_wm_base`, `wl_seat` bfree-seat0, 1024×768). That is Linux
 host compositor, not guest `desktop.elf` / not QEMU. Guest H
 path: `userland/compositor_stub` → `compositor.elf` (syscall 24
-serial hello). First proof does **not** rebuild the kernel and
-does **not** set `BFREE_BOOT_GUI_FIRST=1`. Clone daily
-`bfree.iso` to `bfree-compositor-stub.iso` with
+serial hello, then FB magenta fill via mmap). First proof does
+**not** rebuild the kernel and does **not** set
+`BFREE_BOOT_GUI_FIRST=1`. Clone daily `bfree.iso` to
+`bfree-compositor-stub.iso` with
 `tools/build_compositor_stub_iso.sh`: same `g1-desk` kernel,
 GUI menuentry loads compositor bytes as `init.elf`. Success
-serial is `[compositor] guest stub hello` (E820 count 1).
-The icon desk will not appear on that ISO (no `desktop.elf`
-exec). Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
+serial is `[compositor] guest stub hello` then
+`guest stub fb fill` (E820 count 1). Magenta fill is compositor
+owning the framebuffer, **not** Wayland protocol. The icon desk
+will not appear on that ISO (no `desktop.elf` exec). Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
 at VMM/`sparse-pt` here; do not retry that as the hello path.
