@@ -271,8 +271,9 @@ exactly one rewrite left a byte-identical copy). Magenta fill is compositor owni
 slice is in-process Wayland wire (`get_registry` / `bind` /
 `create_surface` / `create_pool` / `create_buffer` / `attach` /
 `commit`) plus a cyan `wl_shm` rectangle on that magenta
-clear. Same-process client (PID1 `exec` would replace the
-compositor). Not host `tron_gui_server`. Not the icon desk.
+clear. Do not anonymous-mmap the shm pool on INIT PID1
+(heap mmap hung after magenta; use ELF BSS). Same-process
+client (PID1 `exec` would replace the compositor). Not host `tron_gui_server`. Not the icon desk.
 Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
