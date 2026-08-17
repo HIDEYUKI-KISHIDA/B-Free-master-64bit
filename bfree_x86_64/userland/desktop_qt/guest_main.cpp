@@ -4861,6 +4861,31 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
     guest_serial_puts("[desktop_qt] G1 cache cu data=");
     guest_serial_hex_u64((uint64_t)(uintptr_t)cu->data);
     guest_serial_puts("\n");
+    guest_serial_puts("[desktop_qt] G1 cache exec begin\n");
+    QQmlRefPointer<QV4::ExecutableCompilationUnit> exec(
+        new QV4::ExecutableCompilationUnit);
+    guest_serial_puts("[desktop_qt] G1 cache exec new ok\n");
+    exec->data = cached->qmlData;
+    exec->aotCompiledFunctions = cached->aotCompiledFunctions;
+    guest_serial_puts("[desktop_qt] G1 cache exec data ok\n");
+    QQmlComponentPrivate *priv = QQmlComponentPrivate::get(g_g1_comp);
+    if (!priv) {
+        guest_serial_puts("[desktop_qt] G1 cache priv null\n");
+        g_g1_done = 1;
+        return;
+    }
+    guest_serial_puts("[desktop_qt] G1 cache priv ok\n");
+    priv->compilationUnit = exec;
+    guest_serial_puts("[desktop_qt] G1 cache attach ok\n");
+    guest_serial_puts("[desktop_qt] G1 IR status=");
+    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
+    guest_serial_puts("\n");
+    if (g_g1_comp->isReady())
+        guest_serial_puts("[desktop_qt] G1 thin QML Ready\n");
+    else if (g_g1_comp->isError())
+        guest_serial_puts("[desktop_qt] G1 thin QML error\n");
+    else
+        guest_serial_puts("[desktop_qt] G1 thin QML not ready\n");
     g_g1_done = 1;
 }
 
