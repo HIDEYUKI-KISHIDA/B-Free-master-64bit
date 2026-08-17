@@ -4894,6 +4894,20 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
             guest_serial_puts("[desktop_qt] G1 runtimeStrings=");
             guest_serial_hex_u64((uint64_t)(uintptr_t)exec->runtimeStrings);
             guest_serial_puts("\n");
+            guest_serial_puts("[desktop_qt] G1 start=");
+            guest_serial_hex_u64((uint64_t)(uint32_t)priv->start);
+            guest_serial_puts("\n");
+            if (!priv->typeData)
+                guest_serial_puts("[desktop_qt] G1 typeData null\n");
+            else
+                guest_serial_puts("[desktop_qt] G1 typeData ok\n");
+            if (priv->url.isEmpty())
+                guest_serial_puts("[desktop_qt] G1 url empty\n");
+            else
+                guest_serial_puts("[desktop_qt] G1 url ok\n");
+            guest_serial_puts("[desktop_qt] G1 ctx=");
+            guest_serial_hex_u64((uint64_t)(uintptr_t)g_engine->rootContext());
+            guest_serial_puts("\n");
         }
     } else if (g_g1_comp->isError())
         guest_serial_puts("[desktop_qt] G1 thin QML error\n");
