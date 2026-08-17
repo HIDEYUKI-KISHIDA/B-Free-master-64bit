@@ -213,7 +213,9 @@ proven Gate 1 thin QML Ready ELF. Do not overwrite it.
 until a later gate. Next probe: `tools/patch_g1_begincreate.py`
 calls `beginCreate` only (no `completeCreate`). Success serial:
 `G1 beginCreate end` then `G1 beginCreate obj=`. On hang/PF
-restore `desktop.elf.g1-ready`. Do not unskip Wayland.
+restore `desktop.elf.g1-ready`. Observed: `G1 thin QML Ready`
+then `G1 beginCreate begin` then `CR2=0xC`. Do not retry
+`beginCreate`. Ready stands. Do not unskip Wayland.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore
