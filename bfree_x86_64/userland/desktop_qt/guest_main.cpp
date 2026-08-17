@@ -4821,7 +4821,7 @@ static void guest_controls_shell_parent_show_light(QQuickItem *root)
 }
 #endif
 
-/* HIT cache unit: populate() then beginCreate only. No completeCreate / loadUrl. */
+/* HIT cache unit: attach exec then populate() only. No beginCreate / loadUrl. */
 static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
 {
     guest_serial_puts("[desktop_qt] G1 cache instantiate enter\n");
@@ -4894,20 +4894,6 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
             guest_serial_puts("[desktop_qt] G1 runtimeStrings=");
             guest_serial_hex_u64((uint64_t)(uintptr_t)exec->runtimeStrings);
             guest_serial_puts("\n");
-            if (!exec->runtimeStrings) {
-                guest_serial_puts("[desktop_qt] G1 beginCreate skip (no runtimeStrings)\n");
-            } else {
-                guest_serial_puts("[desktop_qt] G1 beginCreate begin\n");
-                QObject *obj = g_g1_comp->beginCreate(g_engine->rootContext());
-                guest_serial_puts("[desktop_qt] G1 beginCreate end\n");
-                if (!obj)
-                    guest_serial_puts("[desktop_qt] G1 beginCreate null\n");
-                else {
-                    guest_serial_puts("[desktop_qt] G1 beginCreate obj=");
-                    guest_serial_hex_u64((uint64_t)(uintptr_t)obj);
-                    guest_serial_puts("\n");
-                }
-            }
         }
     } else if (g_g1_comp->isError())
         guest_serial_puts("[desktop_qt] G1 thin QML error\n");
