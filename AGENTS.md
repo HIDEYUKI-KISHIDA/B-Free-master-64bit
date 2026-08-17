@@ -191,7 +191,11 @@ Do not overwrite either. Next Gate 1 probe:
 `QV4::CompiledData::CompilationUnit` and assigns `qmlData`.
 It does not call `ExecutableCompilationUnit::create()`.
 Success serial: `G1 cache cu begin` then `G1 cache cu ok`.
-On hang/PF restore `desktop.elf.skip-create`.
+Observed: `cu begin`, `cu ok`, `cu data=0x3bda6e0` (same as
+`qmlData`). `new CompilationUnit` and assigning `data` work.
+The hang is specifically `ExecutableCompilationUnit::create()`.
+On hang/PF restore `desktop.elf.skip-create`. Keep a
+`desktop.elf.cu-only` copy of this ELF. Do not retry `create()`.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore
