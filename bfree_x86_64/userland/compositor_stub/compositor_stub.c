@@ -1,5 +1,6 @@
 /* Freestanding guest compositor. Reached via init_tramp exec_initrd (APP role).
- * Parent = server, vfork child = client. Pipe carries Wayland requests.
+ * APP Linux sockets: 41 socket, 49 bind, 50 listen, 42 connect, 43 accept.
+ * Listen on AF_UNIX /tmp/wayland-0. vfork child connect()s; pipe is gone.
  * Shared AS (vfork) so the child's wl_shm pixels are visible to the parent.
  * Not Linux tron_gui_server. Do not set BFREE_BOOT_GUI_FIRST on the daily kernel.
  */
@@ -9,6 +10,17 @@
 #define MAP_ANONYMOUS 0x20
 #define PROT_READ 1
 #define PROT_WRITE 2
+#define AF_UNIX 1
+#define SOCK_STREAM 1
+#define SYS_READ 0
+#define SYS_WRITE 1
+#define SYS_SOCKET 41
+#define SYS_CONNECT 42
+#define SYS_ACCEPT 43
+#define SYS_BIND 49
+#define SYS_LISTEN 50
+#define SYS_VFORK 58
+#define SYS_EXIT 60
 /* Cap only the mmap length. Do not put this in BSS — 1024x768 NOBITS hung load_elf. */
 #define WL_SURF_MAX_W 1024
 #define WL_SURF_MAX_H 768
@@ -338,6 +350,67 @@ static unsigned wl_client_build(unsigned char *m, unsigned int w, unsigned int h
     return o;
 }
 
+/* Kernel bind/connect read sun_path from sockaddr+2. No filesystem node. */
+static unsigned wl_unix_addr(unsigned char *raw)
+{
+    static const char path[] = "/tmp/wayland-0";
+    unsigned i = 0;
+    raw[0] = (unsigned char)AF_UNIX;
+    raw[1] = 0;
+    while (path[i] != 0) {
+        raw[2U + i] = (unsigned char)path[i];
+        i++;
+    }
+    raw[2U + i] = 0;
+    return 2U + i + 1U;
+}
+
+static long wl_listen_unix(void)
+{
+    unsigned char addr[32];
+    unsigned int alen;
+    long fd;
+    long rc;
+    alen = wl_unix_addr(addr);
+    fd = sys6(SYS_SOCKET, AF_UNIX, SOCK_STREAM, 0, 0, 0, 0);
+    serial_hex("wl socket=", fd);
+    if (fd < 0) {
+        return fd;
+    }
+    rc = sys6(SYS_BIND, fd, (long)(unsigned long)addr, (long)alen, 0, 0, 0);
+    serial_hex("wl bind=", rc);
+    if (rc != 0) {
+        return rc;
+    }
+    rc = sys6(SYS_LISTEN, fd, 1, 0, 0, 0, 0);
+    serial_hex("wl listen=", rc);
+    if (rc != 0) {
+        return rc;
+    }
+    serial("[wl] listen ok\n", 15);
+    return fd;
+}
+
+static long wl_connect_unix(void)
+{
+    unsigned char addr[32];
+    unsigned int alen;
+    long fd;
+    long rc;
+    alen = wl_unix_addr(addr);
+    fd = sys6(SYS_SOCKET, AF_UNIX, SOCK_STREAM, 0, 0, 0, 0);
+    serial_hex("wl cli sock=", fd);
+    if (fd < 0) {
+        return fd;
+    }
+    rc = sys6(SYS_CONNECT, fd, (long)(unsigned long)addr, (long)alen, 0, 0, 0);
+    serial_hex("wl connect=", rc);
+    if (rc != 0) {
+        return rc;
+    }
+    return fd;
+}
+
 void _start(void)
 {
     static const char hello[] = "[compositor] guest stub hello\n";
@@ -345,8 +418,9 @@ void _start(void)
     static const char wlok[] = "[compositor] wayland desk chrome blit\n";
     static const char childm[] = "[wl] vfork child\n";
     static const char parentm[] = "[wl] vfork parent\n";
-    static const char fallback[] = "[wl] vfork fallback in-process\n";
+    static const char fallback[] = "[wl] unix fallback in-process\n";
     static const char deskm[] = "[wl] desk chrome\n";
+    static const char accepm[] = "[wl] client accepted\n";
     struct fbinfo info;
     struct wl_state st;
     unsigned int surf_w;
@@ -356,7 +430,9 @@ void _start(void)
     unsigned char msg[256];
     unsigned int msglen;
     unsigned int pool_bytes;
-    int fds[2];
+    long listen_fd;
+    long cli_fd;
+    long acc_fd;
     long pid;
     long nread;
 
@@ -418,40 +494,69 @@ void _start(void)
     serial_hex("wl surf w=", (long)surf_w);
     serial_hex("wl surf h=", (long)surf_h);
 
-    fds[0] = fds[1] = -1;
-    if (sys6(22, (long)fds, 0, 0, 0, 0, 0) != 0) {
-        fds[0] = fds[1] = -1;
+    listen_fd = wl_listen_unix();
+    cli_fd = -1;
+    acc_fd = -1;
+    pid = -1;
+    if (listen_fd >= 0) {
+        pid = sys6(SYS_VFORK, 0, 0, 0, 0, 0, 0);
+        serial_hex("wl vfork=", pid);
     }
-    pid = sys6(58, 0, 0, 0, 0, 0, 0);
-    serial_hex("wl vfork=", pid);
 
     if (pid == 0) {
         serial(childm, sizeof(childm) - 1);
         draw_desk_chrome((unsigned int *)(void *)st.pool, surf_w, surf_h);
         serial(deskm, sizeof(deskm) - 1);
+        cli_fd = wl_connect_unix();
         msglen = wl_client_build(msg, surf_w, surf_h);
-        if (fds[1] >= 0) {
-            (void)sys6(1, (long)fds[1], (long)msg, (long)msglen, 0, 0, 0);
+        if (cli_fd >= 0) {
+            (void)sys6(SYS_WRITE, cli_fd, (long)(unsigned long)msg, (long)msglen, 0, 0, 0);
         }
-        (void)sys6(60, 0, 0, 0, 0, 0, 0);
+        (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
         for (;;) {
         }
     }
 
-    if (pid > 0 && fds[0] >= 0) {
+    if (pid > 0 && listen_fd >= 0) {
         serial(parentm, sizeof(parentm) - 1);
-        nread = sys6(0, (long)fds[0], (long)msg, 256, 0, 0, 0);
-        serial_hex("wl bytes=", nread);
-        if (nread > 0) {
-            wl_dispatch(&st, msg, (unsigned int)nread);
+        acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
+        serial_hex("wl accept=", acc_fd);
+        if (acc_fd >= 0) {
+            serial(accepm, sizeof(accepm) - 1);
+            nread = sys6(SYS_READ, acc_fd, (long)(unsigned long)msg, 256, 0, 0, 0);
+            serial_hex("wl bytes=", nread);
+            if (nread > 0) {
+                wl_dispatch(&st, msg, (unsigned int)nread);
+            }
         }
-    } else {
+    }
+
+    if (!st.committed) {
         serial(fallback, sizeof(fallback) - 1);
         draw_desk_chrome((unsigned int *)(void *)st.pool, surf_w, surf_h);
         serial(deskm, sizeof(deskm) - 1);
-        msglen = wl_client_build(msg, surf_w, surf_h);
-        serial_hex("wl bytes=", (long)msglen);
-        wl_dispatch(&st, msg, msglen);
+        if (listen_fd >= 0) {
+            cli_fd = wl_connect_unix();
+            acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
+            serial_hex("wl accept=", acc_fd);
+            msglen = wl_client_build(msg, surf_w, surf_h);
+            if (cli_fd >= 0) {
+                (void)sys6(SYS_WRITE, cli_fd, (long)(unsigned long)msg, (long)msglen, 0, 0, 0);
+            }
+            if (acc_fd >= 0) {
+                serial(accepm, sizeof(accepm) - 1);
+                nread = sys6(SYS_READ, acc_fd, (long)(unsigned long)msg, 256, 0, 0, 0);
+                serial_hex("wl bytes=", nread);
+                if (nread > 0) {
+                    wl_dispatch(&st, msg, (unsigned int)nread);
+                }
+            }
+        }
+        if (!st.committed) {
+            msglen = wl_client_build(msg, surf_w, surf_h);
+            serial_hex("wl bytes=", (long)msglen);
+            wl_dispatch(&st, msg, msglen);
+        }
     }
     if (st.committed) {
         serial(wlok, sizeof(wlok) - 1);
