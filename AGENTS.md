@@ -229,6 +229,12 @@ Next: `tools/patch_g1_begincreate_after_populate.py` calls
 `CR2=0xC` — same fault as Ready-only. `populate()` does **not**
 fix `beginCreate`. Do not retry `beginCreate` / `completeCreate`.
 Restore `desktop.elf.g1-populate`. Ready+populate stands. Not Wayland.
+Do not retry `beginCreate`. Qt 6.8 `beginCreate` uses
+`priv->start` (default **-1**) and `state.creator()->create(start)`.
+The empty-component attach never sets `start` / `url` / `typeData`.
+Next toward Wayland: `tools/patch_g1_dump_priv.py` prints
+`G1 start=`, `G1 typeData null|ok`, `G1 url empty|ok`, `G1 ctx=`
+after populate. No `beginCreate`. On PF restore `g1-populate`.
 Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
