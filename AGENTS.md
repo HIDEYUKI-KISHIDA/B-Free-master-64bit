@@ -207,7 +207,8 @@ Observed attach path: `v4engine()->executableCompilationUnit(cu)` then
 `G1 IR status=1`, `G1 thin QML Ready`. That is Gate 1 thin
 QML Ready for `GuestGate1Window` cache unit. It is not
 product `DesktopShell.qml`, not `beginCreate`, not Wayland.
-Keep `desktop.elf.g1-ready`. Do not retry private
+Keep `desktop.elf.g1-ready` (75331080, holder `0x62c6160`) as the
+proven Gate 1 thin QML Ready ELF. Do not overwrite it.
 `ExecutableCompilationUnit::create()`. Do not unskip Wayland
 until a later gate.
 A skip-create (or any `guest_main` relink) ISO that shows only
