@@ -271,8 +271,11 @@ exactly one rewrite left a byte-identical copy). Magenta fill is compositor owni
 slice is in-process Wayland wire (`get_registry` / `bind` /
 `create_surface` / `create_pool` / `create_buffer` / `attach` /
 `commit`) plus a cyan `wl_shm` rectangle on that magenta
-clear. Do not anonymous-mmap the shm pool on INIT PID1
-(heap mmap hung after magenta; use ELF BSS). Same-process
+clear. Observed after magenta: `wl shm mmap=0x3c00000` then
+`#GP` vector `0xD` at `movaps` (`bytes@RIP=0f 29 …`).
+Heap mmap worked; GCC `-O2` emitted SSE because the stub
+Makefile lacked `-mno-sse`. Build with
+`-mno-sse -mno-mmx -mno-3dnow -mno-80387`. Same-process
 client (PID1 `exec` would replace the compositor). Not host `tron_gui_server`. Not the icon desk.
 Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
