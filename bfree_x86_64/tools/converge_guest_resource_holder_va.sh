@@ -3,7 +3,14 @@
 # Never deletes desktop.elf.good-running. Refuses a stub-sized desktop.
 # Does not rebuild Qml. Run from bfree_x86_64.
 set -eu
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -d userland/desktop_qt ]; then
+  ROOT="$(pwd)"
+elif [ -d "$(dirname "$0")/../userland/desktop_qt" ]; then
+  ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+else
+  echo "[converge] run from bfree_x86_64 (userland/desktop_qt missing)" >&2
+  exit 1
+fi
 DESK="$ROOT/userland/desktop_qt"
 MIN_QT_ELF=10000000
 
