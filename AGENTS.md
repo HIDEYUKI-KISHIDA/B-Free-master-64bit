@@ -240,8 +240,8 @@ No `CR2`. After `priv->start = 0` and
 print-only ELF; do not overwrite `g1-populate`. Next toward Wayland:
 `beginCreate` only with `start=0` and url set. `typeData` may stay
 null (cache-unit path uses `compilationUnit` + `start`, not TypeLoader).
-On PF restore `g1-populate`. Do not retry Ready-only or start=-1
-`beginCreate`.
+On PF restore `desktop.elf.g1-start0` (or `g1-populate` for daily).
+Do not retry Ready-only or start=-1 `beginCreate`. No `completeCreate`.
 Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
