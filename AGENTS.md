@@ -186,7 +186,12 @@ cache unit, not IR Ready and not Wayland. Do not retry
 `create()`. Do not rebuild Qml. Keep
 `desktop.elf.good-running` (75322720, holder `0x62c4160`)
 and `desktop.elf.skip-create` (75326984, holder `0x62c5160`).
-Do not overwrite either.
+Do not overwrite either. Next Gate 1 probe:
+`tools/patch_g1_cache_cu_only.py` constructs
+`QV4::CompiledData::CompilationUnit` and assigns `qmlData`.
+It does not call `ExecutableCompilationUnit::create()`.
+Success serial: `G1 cache cu begin` then `G1 cache cu ok`.
+On hang/PF restore `desktop.elf.skip-create`.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore

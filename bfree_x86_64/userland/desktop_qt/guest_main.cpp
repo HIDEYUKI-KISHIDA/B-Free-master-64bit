@@ -4852,6 +4852,15 @@ static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
     guest_serial_puts(" w3=");
     guest_serial_hex_u64((uint64_t)w[3]);
     guest_serial_puts("\n");
+    guest_serial_puts("[desktop_qt] G1 cache cu begin\n");
+    QQmlRefPointer<QV4::CompiledData::CompilationUnit> cu(
+        new QV4::CompiledData::CompilationUnit);
+    cu->data = cached->qmlData;
+    cu->aotCompiledFunctions = cached->aotCompiledFunctions;
+    guest_serial_puts("[desktop_qt] G1 cache cu ok\n");
+    guest_serial_puts("[desktop_qt] G1 cache cu data=");
+    guest_serial_hex_u64((uint64_t)(uintptr_t)cu->data);
+    guest_serial_puts("\n");
     g_g1_done = 1;
 }
 
