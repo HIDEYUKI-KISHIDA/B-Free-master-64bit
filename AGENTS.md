@@ -299,15 +299,15 @@ not a pipe. vfork child `connect()`s; in-process connect is
 the fallback. Success serial: `[wl] listen ok` then
 `[wl] client accepted` then `wayland desk chrome blit`.
 That is S1 toward 本デスク (compositor owns the socket).
-S2: `sys_linux_execve` must map basename `desktop.elf` to the
-initrd module (else execve loads busybox). After chrome blit,
-vfork child `execve("desktop.elf")`. Rebuild kernel **without**
-`BFREE_BOOT_GUI_FIRST`. Map the new `kernel.elf` into the stub
-ISO only. Never overwrite `kernel.elf.g1-desk` or daily
-`bfree.iso`. Success serial: `[wl] execve desktop.elf` then
-`[ELF] exec transfer desktop.elf` (not busybox) then
-`[desktop_qt] main entry`. desktop.elf still uses bfree QPA
-and may paint over chrome until S4. Not product
+S2 source whitelist (`desktop.elf` in `sys_linux_execve`) may
+live in `syscall.c`, but **do not** `make -C kernel` and map
+that ELF onto the stub ISO. Observed: from-source
+`kernel.elf.s2-execve` + `-no-reboot` → QEMU exits immediately,
+serial empty (no `[init]`). That is the same class as the
+VMM/`sparse-pt` hang. Stub ISO must keep the daily `g1-desk`
+kernel. Never overwrite `kernel.elf.g1-desk` or daily
+`bfree.iso`. Do not `execve("desktop.elf")` from the stub
+until a bootable patched kernel exists. Not product
 `DesktopShell.qml`. Daily `bfree.iso` still has the
 FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that

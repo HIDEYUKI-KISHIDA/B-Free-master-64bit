@@ -20,7 +20,6 @@
 #define SYS_BIND 49
 #define SYS_LISTEN 50
 #define SYS_VFORK 58
-#define SYS_EXECVE 59
 #define SYS_EXIT 60
 /* Cap only the mmap length. Do not put this in BSS — 1024x768 NOBITS hung load_elf. */
 #define WL_SURF_MAX_W 1024
@@ -412,31 +411,6 @@ static long wl_connect_unix(void)
     return fd;
 }
 
-/* APP nr 59. Needs kernel execve map to name desktop.elf (else busybox). */
-static long wl_execve_desktop(void)
-{
-    static const char path[] = "desktop.elf";
-    static char arg0[] = "desktop.elf";
-    static char e0[] = "QT_QPA_PLATFORM=bfree";
-    static char e1[] = "HOME=/root";
-    static char e2[] = "USER=root";
-    static char e3[] = "PATH=/bin:/usr/bin:.";
-    static char e4[] = "WAYLAND_DISPLAY=wayland-0";
-    const char *argv[2];
-    const char *envp[6];
-    argv[0] = arg0;
-    argv[1] = 0;
-    envp[0] = e0;
-    envp[1] = e1;
-    envp[2] = e2;
-    envp[3] = e3;
-    envp[4] = e4;
-    envp[5] = 0;
-    serial("[wl] execve desktop.elf\n", 24);
-    return sys6(SYS_EXECVE, (long)(unsigned long)path, (long)(unsigned long)argv,
-                (long)(unsigned long)envp, 0, 0, 0);
-}
-
 void _start(void)
 {
     static const char hello[] = "[compositor] guest stub hello\n";
@@ -586,15 +560,6 @@ void _start(void)
     }
     if (st.committed) {
         serial(wlok, sizeof(wlok) - 1);
-        pid = sys6(SYS_VFORK, 0, 0, 0, 0, 0, 0);
-        serial_hex("wl execve vfork=", pid);
-        if (pid == 0) {
-            nread = wl_execve_desktop();
-            serial_hex("wl execve=", nread);
-            (void)sys6(SYS_EXIT, 1, 0, 0, 0, 0, 0);
-            for (;;) {
-            }
-        }
     }
     for (;;) {
     }
