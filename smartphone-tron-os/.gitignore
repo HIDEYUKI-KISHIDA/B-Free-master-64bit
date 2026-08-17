@@ -1,0 +1,5 @@
+kernel/build/
+third_party/
+*.o
+*.elf
+*.Image
