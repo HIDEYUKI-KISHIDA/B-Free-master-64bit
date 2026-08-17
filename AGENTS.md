@@ -262,7 +262,11 @@ serial hello, then FB magenta fill via mmap). First proof does
 `BFREE_BOOT_GUI_FIRST=1`. Clone daily `bfree.iso` to
 `bfree-compositor-stub.iso` with
 `tools/build_compositor_stub_iso.sh`: same `g1-desk` kernel,
-GUI menuentry loads compositor bytes as `init.elf`. Success
+GUI menuentry loads `init_tramp.elf` as `init.elf` and
+`compositor.elf` as its own module. Trampoline `exec_initrd`
+sets APP so `vfork`+pipe work (INIT cannot `fork`; Linux 57
+is not on the native switch). Parent is the server, child is
+the client (shared AS). Success
 serial is `[compositor] guest stub hello` then
 `guest stub fb fill` (E820 count 1). Observed: QEMU full-screen
 magenta on `bfree-compositor-stub.iso` after GRUB rewrite of
@@ -280,8 +284,15 @@ that: QEMU magenta clear + centered cyan rectangle with a
 white edge (in-process `wl_shm` commit blit). That is guest
 Wayland **wire + shm pixels**, not a second client ELF, not
 `WAYLAND_DISPLAY` / AF_UNIX, not host `tron_gui_server`, not
-the icon desk. Same-process client (PID1 `exec` would replace
-the compositor). Not host `tron_gui_server`. Not the icon desk.
+the icon desk. Two-process path: `init_tramp.elf` as PID1
+then APP `vfork` (child writes Wayland bytes on a pipe, parent
+dispatches + blits). If `vfork` fails, in-process fallback.
+Observed: `[init] exec compositor.elf`, `wl vfork=0` +
+`[wl] vfork child`, `wl vfork=0x2` + `[wl] vfork parent`,
+then `get_registry`…`commit` and `wayland shm blit`. No
+`PANIC`. Magenta + cyan rectangle is parent blit of the
+child's `wl_shm`. Not `WAYLAND_DISPLAY` / AF_UNIX, not the
+icon desk. Not host `tron_gui_server`. Not the icon desk.
 Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
