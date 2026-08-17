@@ -5,8 +5,8 @@
  */
 #define BFREE_FB0_FD 0x2000
 #define WL_SHM_FORMAT_XRGB8888 1
-#define WL_SURF_MAX_W 1024
-#define WL_SURF_MAX_H 768
+#define WL_SURF_MAX_W 640
+#define WL_SURF_MAX_H 400
 
 struct fbinfo {
     void *addr;

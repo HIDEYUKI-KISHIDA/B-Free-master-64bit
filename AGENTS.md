@@ -291,10 +291,11 @@ Observed: `[init] exec compositor.elf`, `wl vfork=0` +
 `[wl] vfork child`, `wl vfork=0x2` + `[wl] vfork parent`,
 then `get_registry`…`commit` and `wayland shm blit`. No
 `PANIC`. Next toward 本デスク: the vfork child paints
-full-FB desk chrome (icon squares + taskbar) into `wl_shm`;
-the parent blits it. Not product `DesktopShell.qml`. Not
-`WAYLAND_DISPLAY` / AF_UNIX. Daily `bfree.iso` still has the
-FB icon desk. Not host `tron_gui_server`. Not the icon desk.
+desk chrome (icon squares + taskbar) into a 640×400 `wl_shm`
+(not a 1024×768 / 3MiB BSS: that load left the white splash
+and no `[init]` serial). Parent blits at (0,0). Not product
+`DesktopShell.qml`. Not `WAYLAND_DISPLAY` / AF_UNIX. Daily
+`bfree.iso` still has the FB icon desk. Not host `tron_gui_server`. Not the icon desk.
 Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
