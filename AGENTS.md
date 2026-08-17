@@ -240,8 +240,13 @@ No `CR2`. After `priv->start = 0` and
 print-only ELF; do not overwrite `g1-populate`. Next toward Wayland:
 `beginCreate` only with `start=0` and url set. `typeData` may stay
 null (cache-unit path uses `compilationUnit` + `start`, not TypeLoader).
-On PF restore `desktop.elf.g1-start0` (or `g1-populate` for daily).
-Do not retry Ready-only or start=-1 `beginCreate`. No `completeCreate`.
+Observed: `G1 start=0`, `G1 url ok`, `G1 ctx` live, `G1 typeData null`,
+then `G1 beginCreate begin`, then `CR2=0xC`. **start=0 does not fix
+beginCreate.** Do not retry `beginCreate` / `completeCreate` on this
+empty-component + attached CU. Restore `desktop.elf.g1-start0`.
+Daily ISO remains `g1-populate`. Object create still needs type
+resolution (`typeData`); TypeLoader/`loadUrl` is a dead path on this
+guest. Do not unskip Wayland.
 Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
