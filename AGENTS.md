@@ -286,7 +286,13 @@ Wayland **wire + shm pixels**, not a second client ELF, not
 `WAYLAND_DISPLAY` / AF_UNIX, not host `tron_gui_server`, not
 the icon desk. Two-process path: `init_tramp.elf` as PID1
 then APP `vfork` (child writes Wayland bytes on a pipe, parent
-dispatches + blits). If `vfork` fails, in-process fallback. Not host `tron_gui_server`. Not the icon desk.
+dispatches + blits). If `vfork` fails, in-process fallback.
+Observed: `[init] exec compositor.elf`, `wl vfork=0` +
+`[wl] vfork child`, `wl vfork=0x2` + `[wl] vfork parent`,
+then `get_registry`…`commit` and `wayland shm blit`. No
+`PANIC`. Magenta + cyan rectangle is parent blit of the
+child's `wl_shm`. Not `WAYLAND_DISPLAY` / AF_UNIX, not the
+icon desk. Not host `tron_gui_server`. Not the icon desk.
 Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
