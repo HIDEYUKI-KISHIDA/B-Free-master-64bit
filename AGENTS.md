@@ -229,7 +229,53 @@ Next: `tools/patch_g1_begincreate_after_populate.py` calls
 `CR2=0xC` — same fault as Ready-only. `populate()` does **not**
 fix `beginCreate`. Do not retry `beginCreate` / `completeCreate`.
 Restore `desktop.elf.g1-populate`. Ready+populate stands. Not Wayland.
-Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
+Do not retry `beginCreate`. Qt 6.8 `beginCreate` uses
+`priv->start` (default **-1**) and `state.creator()->create(start)`.
+The empty-component attach never sets `start` / `url` / `typeData`.
+Observed dump after populate (`holder=0x62c6160`): `G1 start=0xffffffff`
+(-1), `G1 typeData null`, `G1 url empty`, `G1 ctx=0x424dc68` (live).
+No `CR2`. After `priv->start = 0` and
+`priv->url = qrc:/GuestGate1Window.qml`: `G1 start=0`, `G1 url ok`,
+`G1 typeData null` still, `G1 ctx` live, no `CR2`. Keep that as a
+print-only ELF; do not overwrite `g1-populate`. Next toward Wayland:
+`beginCreate` only with `start=0` and url set. `typeData` may stay
+null (cache-unit path uses `compilationUnit` + `start`, not TypeLoader).
+Observed: `G1 start=0`, `G1 url ok`, `G1 ctx` live, `G1 typeData null`,
+then `G1 beginCreate begin`, then `CR2=0xC`. **start=0 does not fix
+beginCreate.** Do not retry `beginCreate` / `completeCreate` on this
+empty-component + attached CU. Restore `desktop.elf.g1-start0`.
+Daily ISO remains `g1-populate`. Object create still needs type
+resolution (`typeData`); TypeLoader/`loadUrl` is a dead path on this
+guest. Do not unskip Wayland. Approach 2 (compositor-first) is
+**not** `BFREE_BOOT_GUI_FIRST=1` on the daily kernel: missing
+`compositor.elf` drops PID1 to `shell.elf` and kills the FB desk.
+Keep `g1-start0`. Host path is `make -C gui_server` then
+`tron_gui_server` (Linux), not guest `desktop.elf`. Guest
+`compositor.elf` is a separate ABI port (COMPOSITOR role ≠ musl
+AF_UNIX). Host hello-world observed: `tron_gui_server` +
+`wayland-info` → `interop check: PASSED` (`wl_compositor` v4,
+`xdg_wm_base`, `wl_seat` bfree-seat0, 1024×768). That is Linux
+host compositor, not guest `desktop.elf` / not QEMU. Guest H
+path: `userland/compositor_stub` → `compositor.elf` (syscall 24
+serial hello, then FB magenta fill via mmap). First proof does
+**not** rebuild the kernel and does **not** set
+`BFREE_BOOT_GUI_FIRST=1`. Clone daily `bfree.iso` to
+`bfree-compositor-stub.iso` with
+`tools/build_compositor_stub_iso.sh`: same `g1-desk` kernel,
+GUI menuentry loads compositor bytes as `init.elf`. Success
+serial is `[compositor] guest stub hello` then
+`guest stub fb fill` (E820 count 1). Observed: QEMU full-screen
+magenta on `bfree-compositor-stub.iso` after GRUB rewrite of
+all `desktop.elf` menuentries (daily ISO has several; requiring
+exactly one rewrite left a byte-identical copy). Magenta fill is
+compositor owning the framebuffer, **not** Wayland protocol.
+The icon desk will not appear on that ISO (no `desktop.elf`
+exec). Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
+includes nr 24 for a later GUI_FIRST kernel; do not build that
+into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
+at VMM/`sparse-pt` here; do not retry that as the hello path.
+Do not `PROFILE=RELEASE` (`BFREE_WAYLAND_INPUT_STRICT=1`
+starves APP input). If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
 A skip-create (or any `guest_main` relink) ISO that shows only
