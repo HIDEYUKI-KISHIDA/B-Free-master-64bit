@@ -37,6 +37,11 @@
 #include <QQuickWindow>
 #include <private/qquickrectangle_p.h>
 #include <private/qwindow_p.h>
+#include <private/qqmlcomponent_p.h>
+#include <private/qqmlengine_p.h>
+#include <private/qv4compileddata_p.h>
+#include <private/qv4executablecompilationunit_p.h>
+#include <QtQml/qqmlprivate.h>
 #if defined(BFREE_GUEST_LINK_CONTROLS)
 #include <QtQuickTemplates2/private/qquickabstractbutton_p.h>
 #include <QtQuickTemplates2/private/qquickbutton_p.h>
@@ -124,6 +129,9 @@ void bfree_guest_serial_step_raw(char step);
 void bfree_guest_rebind_musl_fs(void);
 void guest_mmap_session_entry(void);
 void bfree_guest_qt_coop_schedule(void);
+void bfree_guest_set_typeloader_main_ok(int on);
+int bfree_guest_typeloader_main_ok(void);
+const void *bfree_guest_qmlcache_unit_for_url(const char *url_utf8) __attribute__((weak));
 }
 
 static void guest_serial_puts(const char *s)
@@ -4813,9 +4821,88 @@ static void guest_controls_shell_parent_show_light(QQuickItem *root)
 }
 #endif
 
-/* Wayland/GPU gate 1: QML IR Ready after the event loop, never on boot.
- * PreferSynchronous URL ctor hangs before qmlcache lookup. setData PFs.
- * Empty ctor + loadUrl(Asynchronous) of a Gate1-sized Window unit only. */
+/* HIT cache unit: attach exec then populate() only. No beginCreate / loadUrl. */
+static void guest_g1_instantiate_from_cached_unit(const void *unit_raw)
+{
+    guest_serial_puts("[desktop_qt] G1 cache instantiate enter\n");
+    if (!g_g1_comp || !g_engine || !unit_raw) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate args null\n");
+        g_g1_done = 1;
+        return;
+    }
+    const auto *cached = static_cast<const QQmlPrivate::CachedQmlUnit *>(unit_raw);
+    if (!cached->qmlData) {
+        guest_serial_puts("[desktop_qt] G1 cache instantiate qmlData null\n");
+        g_g1_done = 1;
+        return;
+    }
+    guest_serial_puts("[desktop_qt] G1 cache instantiate data ok\n");
+    guest_serial_puts("[desktop_qt] G1 cache instantiate skip create\n");
+    guest_serial_puts("[desktop_qt] G1 qmlData=");
+    guest_serial_hex_u64((uint64_t)(uintptr_t)cached->qmlData);
+    guest_serial_puts("\n");
+    const quint32 *w = reinterpret_cast<const quint32 *>(cached->qmlData);
+    guest_serial_puts("[desktop_qt] G1 qmlData w0=");
+    guest_serial_hex_u64((uint64_t)w[0]);
+    guest_serial_puts(" w1=");
+    guest_serial_hex_u64((uint64_t)w[1]);
+    guest_serial_puts(" w2=");
+    guest_serial_hex_u64((uint64_t)w[2]);
+    guest_serial_puts(" w3=");
+    guest_serial_hex_u64((uint64_t)w[3]);
+    guest_serial_puts("\n");
+    guest_serial_puts("[desktop_qt] G1 cache cu begin\n");
+    QQmlRefPointer<QV4::CompiledData::CompilationUnit> cu(
+        new QV4::CompiledData::CompilationUnit);
+    cu->data = cached->qmlData;
+    cu->aotCompiledFunctions = cached->aotCompiledFunctions;
+    guest_serial_puts("[desktop_qt] G1 cache cu ok\n");
+    guest_serial_puts("[desktop_qt] G1 cache cu data=");
+    guest_serial_hex_u64((uint64_t)(uintptr_t)cu->data);
+    guest_serial_puts("\n");
+    guest_serial_puts("[desktop_qt] G1 cache exec engine begin\n");
+    QQmlEnginePrivate *ep = QQmlEnginePrivate::get(g_engine);
+    if (!ep || !ep->v4engine()) {
+        guest_serial_puts("[desktop_qt] G1 cache exec v4 null\n");
+        g_g1_done = 1;
+        return;
+    }
+    guest_serial_puts("[desktop_qt] G1 cache exec engine call\n");
+    QQmlRefPointer<QV4::ExecutableCompilationUnit> exec =
+        ep->v4engine()->executableCompilationUnit(std::move(cu));
+    guest_serial_puts("[desktop_qt] G1 cache exec engine ok\n");
+    QQmlComponentPrivate *priv = QQmlComponentPrivate::get(g_g1_comp);
+    if (!priv) {
+        guest_serial_puts("[desktop_qt] G1 cache priv null\n");
+        g_g1_done = 1;
+        return;
+    }
+    guest_serial_puts("[desktop_qt] G1 cache priv ok\n");
+    priv->compilationUnit = exec;
+    guest_serial_puts("[desktop_qt] G1 cache attach ok\n");
+    guest_serial_puts("[desktop_qt] G1 IR status=");
+    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
+    guest_serial_puts("\n");
+    if (g_g1_comp->isReady()) {
+        guest_serial_puts("[desktop_qt] G1 thin QML Ready\n");
+        if (!exec) {
+            guest_serial_puts("[desktop_qt] G1 populate exec null\n");
+        } else {
+            guest_serial_puts("[desktop_qt] G1 populate begin\n");
+            exec->populate();
+            guest_serial_puts("[desktop_qt] G1 populate ok\n");
+            guest_serial_puts("[desktop_qt] G1 runtimeStrings=");
+            guest_serial_hex_u64((uint64_t)(uintptr_t)exec->runtimeStrings);
+            guest_serial_puts("\n");
+        }
+    } else if (g_g1_comp->isError())
+        guest_serial_puts("[desktop_qt] G1 thin QML error\n");
+    else
+        guest_serial_puts("[desktop_qt] G1 thin QML not ready\n");
+    g_g1_done = 1;
+}
+
+/* Wayland/GPU gate 1: after event loop, HIT then instantiate. Never loadUrl. */
 static void guest_g1_post_loop_thin_qml(void)
 {
     if (g_g1_posted || !g_engine)
@@ -4825,26 +4912,17 @@ static void guest_g1_post_loop_thin_qml(void)
     guest_serial_puts("[desktop_qt] G1 empty ctor begin\n");
     g_g1_comp = new QQmlComponent(g_engine);
     guest_serial_puts("[desktop_qt] G1 empty ctor ok\n");
-    g_g1_comp->loadUrl(QUrl(QStringLiteral("qrc:/GuestGate1Window.qml")),
-                       QQmlComponent::Asynchronous);
-    guest_serial_puts("[desktop_qt] G1 loadUrl async posted\n");
-    /* Async load stays Loading forever if the desk loop never processEvents.
-     * Pump only here, ExcludeUserInputEvents, bounded. If this hangs, last
-     * line is G1 pump spin=N without G1 pump ok. */
-    guest_serial_puts("[desktop_qt] G1 pump enter\n");
-    /* Type-loader is a QThread. This guest is cooperative pthread
-     * (libstdc++ threads=no): processEvents alone never runs the worker. */
-    for (int spin = 0; g_g1_comp->isLoading() && spin < 64; ++spin) {
-        guest_serial_puts("[desktop_qt] G1 pump spin=");
-        guest_serial_hex_u64((uint64_t)(unsigned)spin);
-        guest_serial_puts("\n");
-        bfree_guest_qt_coop_schedule();
-        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 2);
-        guest_serial_puts("[desktop_qt] G1 pump ok\n");
+    guest_serial_puts("[desktop_qt] G1 cache lookup enter\n");
+    const void *unit = nullptr;
+    if (bfree_guest_qmlcache_unit_for_url)
+        unit = bfree_guest_qmlcache_unit_for_url("qrc:/GuestGate1Window.qml");
+    if (unit) {
+        guest_serial_puts("[desktop_qt] G1 cache unit ok\n");
+        guest_g1_instantiate_from_cached_unit(unit);
+    } else {
+        guest_serial_puts("[desktop_qt] G1 cache unit miss\n");
+        g_g1_done = 1;
     }
-    guest_serial_puts("[desktop_qt] G1 pump done status=");
-    guest_serial_hex_u64((uint64_t)(unsigned)g_g1_comp->status());
-    guest_serial_puts("\n");
 }
 
 static void guest_g1_post_loop_thin_qml_poll(void)

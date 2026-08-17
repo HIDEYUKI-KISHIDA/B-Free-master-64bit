@@ -149,3 +149,98 @@ no `CR2=8`, `skip DesktopShell.qml boot load`,
 `qmlcache HIT GuestGate1Window`, `G1 cache unit ok`, then
 live FB input (`desk open Terminal`, `wm close hit`).
 That is FB restore, not QML IR Ready / not Wayland.
+Known-good backup (do not overwrite):
+`$HOME/out/bfree-good-20260816/{libQt6Qml.a,desktop.elf,guest_resource_holder_va.h}`.
+Restore with `bfree_x86_64/tools/restore_bfree_good_20260816.sh`.
+Next Gate 1 experiment: runtime flag `bfree_guest_typeloader_main_ok`
+set only after the event loop, then `PreferSynchronous` for
+`GuestGate1Window` after the proven HIT. Never always-true from
+boot. Apply `tools/patch_qqmlthread_runtime_flag.sh` then
+`tools/force_rebuild_stock_qqmlthread.sh`, then VA-loop relink.
+Success serial: `typeloader main ok=1` then `G1 sync loadUrl end`
+then `G1 thin QML Ready`. Observed after the post-loop flag +
+`PreferSynchronous`: 64× `G1 pump ok`, `status=2`, then
+`G1 thin QML timeout (still Loading)`. No `CR2=8`. The runtime
+flag does not finish the type-loader; more `loadUrl` / pump is
+the same dead path. Next Gate 1 must instantiate the cached
+unit without `QQmlTypeLoader` / `loadUrl`. Restore the
+2026-08-16 backup for the working FB desk.
+Cache-instantiate experiment (no `loadUrl`, no `beginCreate`):
+`tools/patch_g1_cache_instantiate.py`. Qt 6.8
+`ExecutableCompilationUnit::create` takes
+`QQmlRefPointer<CompiledData::CompilationUnit>&&` plus
+`QV4::ExecutionEngine*` (`QQmlEnginePrivate::v4engine()`),
+not `unique_ptr` plus `QQmlEngine*`. Observed: that `create()`
+call hangs the guest. Do not retry `create()`, `loadUrl`,
+pumps, or boot `isThisThread` always-true. Restore
+`desktop.elf.good-running` (75322720) or
+`$HOME/out/bfree-good-20260816`. Next probe only:
+`tools/patch_g1_cache_skip_create.py` reads `qmlData` words
+and returns. Success serial: `G1 cache instantiate skip create`
+then `G1 qmlData w0=`. Observed on the 75326984 ELF
+(`holder=0x62c5160`): `instantiate enter`, `data ok`,
+`skip create`, `qmlData=0x3bda680`,
+`w0=0x63347671 w1=0x61746164 w2=0x42 w3=0x00060800`
+(`qv4cdata`, Qt 6.8.0). Desk still lives. That is a readable
+cache unit, not IR Ready and not Wayland. Do not retry
+`create()`. Do not rebuild Qml. Keep
+`desktop.elf.good-running` (75322720, holder `0x62c4160`)
+and `desktop.elf.skip-create` (75326984, holder `0x62c5160`).
+Keep `desktop.elf.cu-only` (75326984, holder `0x62c5160`) as the
+proven CompilationUnit construct+assign ELF. Do not overwrite
+any of the three. Next Gate 1 probe:
+`tools/patch_g1_cache_cu_only.py` constructs
+`QV4::CompiledData::CompilationUnit` and assigns `qmlData`.
+It does not call `ExecutableCompilationUnit::create()`.
+Success serial: `G1 cache cu begin` then `G1 cache cu ok`.
+Observed: `cu begin`, `cu ok`, `cu data=0x3bda6e0` (same as
+`qmlData`). `new CompilationUnit` and assigning `data` work.
+The hang is specifically `ExecutableCompilationUnit::create()`.
+On hang/PF restore `desktop.elf.skip-create`. Keep a
+`desktop.elf.cu-only` copy of this ELF. Do not retry `create()`.
+Next: `tools/patch_g1_cache_attach_no_create.py`.
+`ExecutableCompilationUnit::create` is private in Qt 6.8.
+Use public `ExecutionEngine::executableCompilationUnit(cu)`.
+Observed attach path: `v4engine()->executableCompilationUnit(cu)` then
+`priv->compilationUnit = exec`. Serial (`holder=0x62c6160`,
+75331080 ELF): `exec engine ok`, `attach ok`,
+`G1 IR status=1`, `G1 thin QML Ready`. That is Gate 1 thin
+QML Ready for `GuestGate1Window` cache unit. It is not
+product `DesktopShell.qml`, not `beginCreate`, not Wayland.
+Keep `desktop.elf.g1-ready` (75331080, holder `0x62c6160`) as the
+proven Gate 1 thin QML Ready ELF. Do not overwrite it.
+`ExecutableCompilationUnit::create()`. Do not unskip Wayland
+until a later gate. `tools/patch_g1_begincreate.py` called
+`beginCreate` only (no `completeCreate`). Observed: `G1 thin QML Ready`
+then `G1 beginCreate begin` then `CR2=0xC`. That was
+**without** `populate()`. Do not retry `beginCreate` on the
+Ready-only ELF. Qt 6.8 `executableCompilationUnit()` does not
+call `populate()` (`runtimeStrings` stays null). Observed after
+`tools/patch_g1_populate.py` (holder `0x62c6160`, 75331080 ELF):
+`G1 thin QML Ready`, `G1 populate begin`, `G1 populate ok`,
+`G1 runtimeStrings=0x436b188` (non-zero). No `CR2`. Keep
+`desktop.elf.g1-populate` as this ELF. Do not overwrite
+`g1-ready` or `g1-populate`. This is still not
+`beginCreate`, not product `DesktopShell.qml`, not Wayland.
+Next: `tools/patch_g1_begincreate_after_populate.py` calls
+`beginCreate` only after `G1 populate ok` and non-null
+`runtimeStrings`. No `completeCreate`. Observed: `G1 populate ok`,
+`G1 runtimeStrings=0x436b188`, then `G1 beginCreate begin`, then
+`CR2=0xC` — same fault as Ready-only. `populate()` does **not**
+fix `beginCreate`. Do not retry `beginCreate` / `completeCreate`.
+Restore `desktop.elf.g1-populate`. Ready+populate stands. Not Wayland.
+Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
+is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
+only when they match; do not loop-rebuild on a match.
+A skip-create (or any `guest_main` relink) ISO that shows only
+`CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
+at STAGE 5, not a `qmlData` read fault. Restore
+`desktop.elf.good-running` first. Then
+`tools/converge_guest_resource_holder_va.sh` until `nm`
+equals the header before `build.sh`. Do not ISO until
+`[ok] holder converged`. The converge script must not
+delete `desktop.elf`; if `desktop` is under 10MB it is a
+stub (`Qt guest not linked`). Restore
+`desktop.elf.good-running` and do not `build.sh`. Always
+pass `BFREE_QT_GUEST_LINKED=1 BFREE_MVP_GUEST_QML=1`.
+Do not run `build_iso_desktop_shell.sh`.
