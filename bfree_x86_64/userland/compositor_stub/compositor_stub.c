@@ -5,8 +5,13 @@
  */
 #define BFREE_FB0_FD 0x2000
 #define WL_SHM_FORMAT_XRGB8888 1
-#define WL_SURF_MAX_W 640
-#define WL_SURF_MAX_H 400
+#define MAP_PRIVATE 0x02
+#define MAP_ANONYMOUS 0x20
+#define PROT_READ 1
+#define PROT_WRITE 2
+/* Cap only the mmap length. Do not put this in BSS — 1024x768 NOBITS hung load_elf. */
+#define WL_SURF_MAX_W 1024
+#define WL_SURF_MAX_H 768
 
 struct fbinfo {
     void *addr;
@@ -229,6 +234,8 @@ static void draw_desk_chrome(unsigned int *p, unsigned int w, unsigned int h)
     unsigned int bar = (h > 48U) ? 48U : (h / 6U);
     unsigned int iy;
     unsigned int ix;
+    unsigned int gapx;
+    unsigned int gapy;
     pool_rect(p, w, h, 0, 0, w, h, 0x0094A3B8UL);
     pool_rect(p, w, h, 0, h - bar, w, bar, 0x00101828UL);
     pool_rect(p, w, h, 8, h - bar + 8, 72, bar > 16U ? bar - 16U : bar, 0x003D5C9EUL);
@@ -236,9 +243,11 @@ static void draw_desk_chrome(unsigned int *p, unsigned int w, unsigned int h)
     if (w > 96U) {
         pool_rect(p, w, h, w - 88, h - bar + 12, 72, bar > 24U ? bar - 24U : 8U, 0x00202838UL);
     }
+    gapx = (w >= 800U) ? 140U : 76U;
+    gapy = (h >= 600U) ? 110U : 76U;
     for (i = 0; i < 15U; i++) {
-        ix = 28U + (i % 6U) * 76U;
-        iy = 28U + (i / 6U) * 76U;
+        ix = 36U + (i % 6U) * gapx;
+        iy = 36U + (i / 6U) * gapy;
         if (ix + 56U < w && iy + 56U + bar < h) {
             pool_rect(p, w, h, ix, iy, 56, 56, icons[i]);
         }
@@ -340,10 +349,10 @@ void _start(void)
     static const char deskm[] = "[wl] desk chrome\n";
     struct fbinfo info;
     struct wl_state st;
-    static unsigned int shm_pool[WL_SURF_MAX_W * WL_SURF_MAX_H];
     unsigned int surf_w;
     unsigned int surf_h;
     long mapped;
+    long shm_map;
     unsigned char msg[256];
     unsigned int msglen;
     unsigned int pool_bytes;
@@ -396,9 +405,16 @@ void _start(void)
         surf_h = WL_SURF_MAX_H;
     }
     pool_bytes = surf_w * surf_h * 4U;
-    st.pool = (unsigned char *)(void *)shm_pool;
+    /* APP Linux mmap nr 9. Heap path already mapped 0x3c00000 for 480x320. */
+    shm_map = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    serial_hex("wl shm mmap=", shm_map);
+    if (shm_map < 0x1000) {
+        for (;;) {
+        }
+    }
+    st.pool = (unsigned char *)(unsigned long)shm_map;
     st.pool_size = pool_bytes;
-    serial_hex("wl shm static=", (long)(unsigned long)st.pool);
     serial_hex("wl surf w=", (long)surf_w);
     serial_hex("wl surf h=", (long)surf_h);
 
@@ -411,7 +427,7 @@ void _start(void)
 
     if (pid == 0) {
         serial(childm, sizeof(childm) - 1);
-        draw_desk_chrome(shm_pool, surf_w, surf_h);
+        draw_desk_chrome((unsigned int *)(void *)st.pool, surf_w, surf_h);
         serial(deskm, sizeof(deskm) - 1);
         msglen = wl_client_build(msg, surf_w, surf_h);
         if (fds[1] >= 0) {
@@ -431,7 +447,7 @@ void _start(void)
         }
     } else {
         serial(fallback, sizeof(fallback) - 1);
-        draw_desk_chrome(shm_pool, surf_w, surf_h);
+        draw_desk_chrome((unsigned int *)(void *)st.pool, surf_w, surf_h);
         serial(deskm, sizeof(deskm) - 1);
         msglen = wl_client_build(msg, surf_w, surf_h);
         serial_hex("wl bytes=", (long)msglen);
