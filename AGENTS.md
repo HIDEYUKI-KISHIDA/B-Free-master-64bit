@@ -186,7 +186,9 @@ cache unit, not IR Ready and not Wayland. Do not retry
 `create()`. Do not rebuild Qml. Keep
 `desktop.elf.good-running` (75322720, holder `0x62c4160`)
 and `desktop.elf.skip-create` (75326984, holder `0x62c5160`).
-Do not overwrite either. Next Gate 1 probe:
+Keep `desktop.elf.cu-only` (75326984, holder `0x62c5160`) as the
+proven CompilationUnit construct+assign ELF. Do not overwrite
+any of the three. Next Gate 1 probe:
 `tools/patch_g1_cache_cu_only.py` constructs
 `QV4::CompiledData::CompilationUnit` and assigns `qmlData`.
 It does not call `ExecutableCompilationUnit::create()`.
