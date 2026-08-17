@@ -212,13 +212,21 @@ proven Gate 1 thin QML Ready ELF. Do not overwrite it.
 `ExecutableCompilationUnit::create()`. Do not unskip Wayland
 until a later gate. `tools/patch_g1_begincreate.py` called
 `beginCreate` only (no `completeCreate`). Observed: `G1 thin QML Ready`
-then `G1 beginCreate begin` then `CR2=0xC`. Do not retry
-`beginCreate`. Ready stands. Qt 6.8 `executableCompilationUnit()`
-does not call `populate()` (`runtimeStrings` stays null). Next:
-`tools/patch_g1_populate.py` — `exec->populate()` only, no
-`beginCreate` / `completeCreate` / `loadUrl`. Success serial:
-`G1 populate ok` then `G1 runtimeStrings=` (non-zero). On hang/PF
-restore `desktop.elf.g1-ready`. Do not unskip Wayland.
+then `G1 beginCreate begin` then `CR2=0xC`. That was
+**without** `populate()`. Do not retry `beginCreate` on the
+Ready-only ELF. Qt 6.8 `executableCompilationUnit()` does not
+call `populate()` (`runtimeStrings` stays null). Observed after
+`tools/patch_g1_populate.py` (holder `0x62c6160`, 75331080 ELF):
+`G1 thin QML Ready`, `G1 populate begin`, `G1 populate ok`,
+`G1 runtimeStrings=0x436b188` (non-zero). No `CR2`. Keep
+`desktop.elf.g1-populate` as this ELF. Do not overwrite
+`g1-ready` or `g1-populate`. This is still not
+`beginCreate`, not product `DesktopShell.qml`, not Wayland.
+A later probe may call `beginCreate` **after** proven
+`G1 populate ok` only. On PF restore `desktop.elf.g1-populate`.
+Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
+is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
+only when they match; do not loop-rebuild on a match.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore
