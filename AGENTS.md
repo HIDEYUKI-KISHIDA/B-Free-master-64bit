@@ -264,9 +264,13 @@ serial hello, then FB magenta fill via mmap). First proof does
 `tools/build_compositor_stub_iso.sh`: same `g1-desk` kernel,
 GUI menuentry loads compositor bytes as `init.elf`. Success
 serial is `[compositor] guest stub hello` then
-`guest stub fb fill` (E820 count 1). Magenta fill is compositor
-owning the framebuffer, **not** Wayland protocol. The icon desk
-will not appear on that ISO (no `desktop.elf` exec). Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
+`guest stub fb fill` (E820 count 1). Observed: QEMU full-screen
+magenta on `bfree-compositor-stub.iso` after GRUB rewrite of
+all `desktop.elf` menuentries (daily ISO has several; requiring
+exactly one rewrite left a byte-identical copy). Magenta fill is
+compositor owning the framebuffer, **not** Wayland protocol.
+The icon desk will not appear on that ISO (no `desktop.elf`
+exec). Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
 at VMM/`sparse-pt` here; do not retry that as the hello path.
