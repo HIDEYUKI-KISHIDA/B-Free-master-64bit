@@ -201,8 +201,15 @@ On hang/PF restore `desktop.elf.skip-create`. Keep a
 Next: `tools/patch_g1_cache_attach_no_create.py`.
 `ExecutableCompilationUnit::create` is private in Qt 6.8.
 Use public `ExecutionEngine::executableCompilationUnit(cu)`.
-Success serial: `G1 cache exec engine call` then `engine ok` then
-`attach ok`. On hang restore `desktop.elf.cu-only`.
+Observed attach path: `v4engine()->executableCompilationUnit(cu)` then
+`priv->compilationUnit = exec`. Serial (`holder=0x62c6160`,
+75331080 ELF): `exec engine ok`, `attach ok`,
+`G1 IR status=1`, `G1 thin QML Ready`. That is Gate 1 thin
+QML Ready for `GuestGate1Window` cache unit. It is not
+product `DesktopShell.qml`, not `beginCreate`, not Wayland.
+Keep `desktop.elf.g1-ready`. Do not retry private
+`ExecutableCompilationUnit::create()`. Do not unskip Wayland
+until a later gate.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore
