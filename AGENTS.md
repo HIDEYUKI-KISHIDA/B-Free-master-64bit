@@ -290,9 +290,11 @@ dispatches + blits). If `vfork` fails, in-process fallback.
 Observed: `[init] exec compositor.elf`, `wl vfork=0` +
 `[wl] vfork child`, `wl vfork=0x2` + `[wl] vfork parent`,
 then `get_registry`…`commit` and `wayland shm blit`. No
-`PANIC`. Magenta + cyan rectangle is parent blit of the
-child's `wl_shm`. Not `WAYLAND_DISPLAY` / AF_UNIX, not the
-icon desk. Not host `tron_gui_server`. Not the icon desk.
+`PANIC`. Next toward 本デスク: the vfork child paints
+full-FB desk chrome (icon squares + taskbar) into `wl_shm`;
+the parent blits it. Not product `DesktopShell.qml`. Not
+`WAYLAND_DISPLAY` / AF_UNIX. Daily `bfree.iso` still has the
+FB icon desk. Not host `tron_gui_server`. Not the icon desk.
 Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
