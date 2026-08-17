@@ -307,7 +307,13 @@ serial empty (no `[init]`). That is the same class as the
 VMM/`sparse-pt` hang. Stub ISO must keep the daily `g1-desk`
 kernel. Never overwrite `kernel.elf.g1-desk` or daily
 `bfree.iso`. Do not `execve("desktop.elf")` from the stub
-until a bootable patched kernel exists. Not product
+until a bootable patched kernel exists. The Wayland
+client on `g1-desk` is the vfork child: it `connect()`s
+`/tmp/wayland-0` and paints the daily EX/VW desk
+lookalike into `wl_shm`. That is steps 1–2 without a
+second ELF. Do **not** drop `QT_QPA_PLATFORM=bfree` on
+daily `bfree.iso` (step 3) until that stub is the boot
+desk. Not product
 `DesktopShell.qml`. Daily `bfree.iso` still has the
 FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
