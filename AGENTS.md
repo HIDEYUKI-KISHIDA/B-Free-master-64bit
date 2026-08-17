@@ -246,7 +246,14 @@ beginCreate.** Do not retry `beginCreate` / `completeCreate` on this
 empty-component + attached CU. Restore `desktop.elf.g1-start0`.
 Daily ISO remains `g1-populate`. Object create still needs type
 resolution (`typeData`); TypeLoader/`loadUrl` is a dead path on this
-guest. Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
+guest. Do not unskip Wayland. Approach 2 (compositor-first) is
+**not** `BFREE_BOOT_GUI_FIRST=1` on the daily kernel: missing
+`compositor.elf` drops PID1 to `shell.elf` and kills the FB desk.
+Keep `g1-start0`. Host path is `make -C gui_server` then
+`tron_gui_server` (Linux), not guest `desktop.elf`. Guest
+`compositor.elf` is a separate ABI port (COMPOSITOR role ≠ musl
+AF_UNIX). Do not `PROFILE=RELEASE` (`BFREE_WAYLAND_INPUT_STRICT=1`
+starves APP input). If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
 A skip-create (or any `guest_main` relink) ISO that shows only
