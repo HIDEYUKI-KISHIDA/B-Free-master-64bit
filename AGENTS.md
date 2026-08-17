@@ -183,7 +183,10 @@ then `G1 qmlData w0=`. Observed on the 75326984 ELF
 `w0=0x63347671 w1=0x61746164 w2=0x42 w3=0x00060800`
 (`qv4cdata`, Qt 6.8.0). Desk still lives. That is a readable
 cache unit, not IR Ready and not Wayland. Do not retry
-`create()`. Do not rebuild Qml.
+`create()`. Do not rebuild Qml. Keep
+`desktop.elf.good-running` (75322720, holder `0x62c4160`)
+and `desktop.elf.skip-create` (75326984, holder `0x62c5160`).
+Do not overwrite either.
 A skip-create (or any `guest_main` relink) ISO that shows only
 `CR2=8` and no `skip DesktopShell` / HIT is a holder VA miss
 at STAGE 5, not a `qmlData` read fault. Restore
