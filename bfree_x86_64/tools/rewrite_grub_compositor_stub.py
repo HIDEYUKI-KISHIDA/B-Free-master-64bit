@@ -11,7 +11,7 @@ import sys
 
 
 def rewrite_grub(text: str) -> str:
-    parts = re.split(r"(?=menuentry\s)", text)
+    parts = re.split(r"(?=menuentry\s)", text, flags=re.IGNORECASE)
     changed = 0
     out = []
     for part in parts:
@@ -20,16 +20,20 @@ def rewrite_grub(text: str) -> str:
                 r"module2\s+\S+\s+init\.elf",
                 "module2 /boot/compositor.elf init.elf",
                 part,
-                count=1,
             )
             changed += n
         out.append(part)
-    if changed != 1:
-        raise ValueError(
-            "expected exactly one init.elf module in a desktop.elf menuentry, got %d"
-            % changed
+    text2 = "".join(out)
+    if changed == 0:
+        text2, n = re.subn(
+            r"module2\s+/boot/initrd\.img\s+init\.elf(\r?\n)(\s*)module2\s+/boot/desktop\.elf\s+desktop\.elf",
+            r"module2 /boot/compositor.elf init.elf\1\2module2 /boot/desktop.elf desktop.elf",
+            text,
         )
-    return "".join(out)
+        changed = n
+    if changed < 1:
+        raise ValueError("no desktop.elf menuentry with an init.elf module")
+    return text2
 
 
 def main(argv: list[str]) -> int:
