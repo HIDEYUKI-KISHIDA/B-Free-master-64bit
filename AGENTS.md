@@ -224,9 +224,11 @@ call `populate()` (`runtimeStrings` stays null). Observed after
 `beginCreate`, not product `DesktopShell.qml`, not Wayland.
 Next: `tools/patch_g1_begincreate_after_populate.py` calls
 `beginCreate` only after `G1 populate ok` and non-null
-`runtimeStrings`. No `completeCreate`. Success serial:
-`G1 beginCreate end` then `G1 beginCreate obj=`. On hang/PF
-restore `desktop.elf.g1-populate` (not Ready-only).
+`runtimeStrings`. No `completeCreate`. Observed: `G1 populate ok`,
+`G1 runtimeStrings=0x436b188`, then `G1 beginCreate begin`, then
+`CR2=0xC` — same fault as Ready-only. `populate()` does **not**
+fix `beginCreate`. Do not retry `beginCreate` / `completeCreate`.
+Restore `desktop.elf.g1-populate`. Ready+populate stands. Not Wayland.
 Do not unskip Wayland. If `tools/converge_guest_resource_holder_va.sh`
 is missing locally, print `nm` holder vs `HOLDER_VA` and ISO
 only when they match; do not loop-rebuild on a match.
