@@ -322,16 +322,22 @@ The stub now paints an X11 `left_ptr` / Windows-style arrow
 (hotspot tip) via `sys_poll_input_event` (nr 0, BSS slot):
 `[wl] cursor arrow`, then type=3 mouse moves it. Icon click
 paints a lookalike window on the compositor FB (`[wl] desk open`).
-The Wayland client now sends **two `xdg_toplevel`s** from **hello.elf**
-(named module, not `desktop.elf`): fullscreen desk chrome (icons +
-Start bar, title `bar`) and a 480×320 app window (title `xdg`).
-g1-desk vfiles are 16KB so hello.elf cannot share a full-desk shm
-file. It sends the Wayland wire on AF_UNIX; the compositor paints the
-pool then blits. Success serial: `[wl] hello.elf client`,
-`[wl] hello.elf wire`, `[wl] bind xdg_wm_base`, `[wl] get_toplevel desk`,
-`[wl] bind xdg_wm_base`, `[wl] get_toplevel desk`,
+The Wayland client now sends **two `xdg_toplevel`s** from **p8test.elf**
+(`qt_wl_client.elf`, g1-desk named module, **not** `desktop.elf`):
+fullscreen desk chrome (icons + Start bar, title `bar`) and a
+480×320 app window (title `qt`, painted `Qt` / `wayland`).
+Compositor `execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland`
+(no bfree inject — that is only for `desktop.elf`). `hello.elf` is
+the fallback if p8test execve returns. This is **not**
+`QGuiApplication` / qtwayland (guest Qt prefix and wayland QPA
+are absent). g1-desk vfiles are 16KB so the client cannot share a
+full-desk shm file. It sends the Wayland wire on AF_UNIX; the
+compositor paints the pool then blits. Success serial:
+`[wl] execve p8test.elf`, `[qt] p8test.elf wayland client`,
+`[qt] QT_QPA_PLATFORM=wayland`, `[qt] p8test.elf wire`,
 `[wl] xdg desk commit`, `[wl] xdg toplevel commit`,
-`[compositor] xdg-shell window`. Cursor, Start panel, and
+`[compositor] xdg-shell window`. Do not print
+`wl execve p8test=` (that means exec returned). Cursor, Start panel, and
 lookalike apps stay **software FB** overlays
 (5×7 glyphs, no GPU, no Qt scene graph). The bar/icons themselves
 are the fullscreen xdg desk surface, not extra compositor paint.
@@ -366,12 +372,13 @@ VMM/`sparse-pt` hang. Stub ISO must keep the daily `g1-desk`
 kernel. Never overwrite `kernel.elf.g1-desk` or daily
 `bfree.iso`. Do not `execve("desktop.elf")` from the stub
 until a bootable patched kernel exists. The Wayland client on
-`g1-desk` is **hello.elf** (named Multiboot module): compositor
-`vfork`+`execve("/hello.elf")`. hello.elf sends the Wayland wire;
-the compositor paints the pool (vfile shm is 16KB). Not `desktop.elf`.
+`g1-desk` is **p8test.elf** (`qt_wl_client.elf`): compositor
+`vfork`+`execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland`.
+Not `desktop.elf`. Not `QGuiApplication`. `hello.elf` is fallback.
 Do **not** drop `QT_QPA_PLATFORM=bfree` on
-daily `bfree.iso` (step 3) until that stub is the boot
-desk. Not product
+daily `bfree.iso` until that stub is the boot
+desk. Stub ISO: `BFREE_ISO` may be `bfree-desk.iso` when daily
+`bfree.iso` is absent. Not product
 `DesktopShell.qml`. Daily `bfree.iso` still has the
 FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that

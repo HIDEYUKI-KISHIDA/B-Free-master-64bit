@@ -1,5 +1,6 @@
 # init_tramp.elf = PID1 (INIT). compositor.elf = APP after exec_initrd.
-# wl_client.elf is mapped as hello.elf on the stub ISO (g1-desk named module).
+# wl_client.elf is mapped as hello.elf (fallback). qt_wl_client.elf is mapped
+# as p8test.elf — g1-desk named module, no QT_QPA_PLATFORM=bfree inject.
 # Do not rebuild the daily kernel. Do not BFREE_BOOT_GUI_FIRST.
 .PHONY: all clean
 .DEFAULT_GOAL := all
@@ -9,7 +10,7 @@ CFLAGS = -ffreestanding -fno-pic -fno-stack-protector -O2 -Wall -mno-sse -mno-mm
 LD_COMP = -nostdlib -static -Wl,-Ttext-segment=0x500000 -Wl,-z,norelro -e _start
 LD_INIT = -nostdlib -static -Wl,-Ttext-segment=0x400000 -Wl,-z,norelro -e _start
 
-all: compositor.elf init_tramp.elf wl_client.elf
+all: compositor.elf init_tramp.elf wl_client.elf qt_wl_client.elf
 
 compositor.elf: compositor_stub.c
 	$(CC) $(CFLAGS) $(LD_COMP) -o $@ $<
@@ -20,9 +21,14 @@ wl_client.elf: compositor_stub.c
 	$(CC) $(CFLAGS) -DWL_AS_CLIENT $(LD_INIT) -o $@ $<
 	file $@ || true
 
+# Qt Wayland client slot: same wire, QT_QPA_PLATFORM=wayland. Not desktop.elf.
+qt_wl_client.elf: compositor_stub.c
+	$(CC) $(CFLAGS) -DWL_AS_CLIENT -DWL_QT_CLIENT $(LD_INIT) -o $@ $<
+	file $@ || true
+
 init_tramp.elf: init_trampoline.c
 	$(CC) $(CFLAGS) $(LD_INIT) -o $@ $<
 	file $@ || true
 
 clean:
-	rm -f compositor.elf init_tramp.elf wl_client.elf
+	rm -f compositor.elf init_tramp.elf wl_client.elf qt_wl_client.elf
