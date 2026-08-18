@@ -6,7 +6,8 @@
  * Icon click paints a lookalike window on the compositor FB. Terminal/Explorer
  * vfork+pipe+execve busybox.elf (g1-desk maps unknown names to busybox; do not
  * execve desktop.elf — that steals FB via QT_QPA_PLATFORM=bfree or becomes
- * busybox). Desk chrome is one wl_shm surface; windows/cursor/Start are FB.
+ * busybox). Desk chrome is one wl_shm surface; windows/cursor/Start are FB
+ * overlays (not Wayland surfaces, not Qt). Do not leave a magenta FB underlay.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
 #define BFREE_FB0_FD 0x2000
@@ -177,6 +178,54 @@ static void blit_shm(struct wl_state *st)
     st->committed = 1;
 }
 
+static void blit_shm_rect(struct wl_state *st, int x0, int y0, int rw, int rh)
+{
+    int y;
+    int x;
+    int x1;
+    int y1;
+    if (!st->fb || !st->pool || !st->attached || st->buf_format != WL_SHM_FORMAT_XRGB8888) {
+        return;
+    }
+    if (rw <= 0 || rh <= 0) {
+        return;
+    }
+    if (x0 < 0) {
+        rw += x0;
+        x0 = 0;
+    }
+    if (y0 < 0) {
+        rh += y0;
+        y0 = 0;
+    }
+    if (x0 >= (int)st->fb_w || y0 >= (int)st->fb_h) {
+        return;
+    }
+    if (x0 + rw > (int)st->fb_w) {
+        rw = (int)st->fb_w - x0;
+    }
+    if (y0 + rh > (int)st->fb_h) {
+        rh = (int)st->fb_h - y0;
+    }
+    if (rw <= 0 || rh <= 0) {
+        return;
+    }
+    x1 = x0 + rw;
+    y1 = y0 + rh;
+    for (y = y0; y < y1; y++) {
+        unsigned int *dst;
+        unsigned int *src;
+        if ((unsigned)y >= st->buf_h) {
+            break;
+        }
+        dst = (unsigned int *)(st->fb + (unsigned long)y * st->fb_pitch);
+        src = (unsigned int *)(st->pool + st->buf_off + (unsigned long)y * st->buf_stride);
+        for (x = x0; x < x1 && (unsigned)x < st->buf_w; x++) {
+            dst[x] = src[x];
+        }
+    }
+}
+
 /* Same layout as kernel bfree_raw_input_event_t. BSS — nr 0 vs Linux read
  * needs a mapped ptr >= 0x100000. Stack &ev has been unreliable. */
 struct poll_ev {
@@ -226,7 +275,8 @@ struct stub_win {
     int rw;
     int rh;
     unsigned out_n;
-    char out[360];
+    unsigned scroll;
+    char out[720];
 };
 static struct stub_win g_wins[WIN_MAX];
 static int g_win_n;
@@ -254,6 +304,7 @@ static unsigned g_tlen;
 #define HIT_TITLE 4
 #define HIT_SE 5
 #define HIT_CLIENT 6
+#define HIT_SCROLL 7
 #define WIN_MIN_W 280
 #define WIN_MIN_H 180
 
@@ -263,6 +314,8 @@ static void win_close(int wi);
 static void desk_present(struct wl_state *st);
 static long run_busybox(char *out, unsigned cap, unsigned *out_n, const char *a1, const char *a2);
 static void buf_put(char *d, unsigned cap, unsigned *n, const char *s, unsigned sn);
+static unsigned term_count_rows(const char *s, unsigned n);
+static int term_max_lines(const struct stub_win *w);
 
 static unsigned cstr_n(const char *s)
 {
@@ -576,6 +629,9 @@ static int hit_part(int wi, int mx, int my)
     if (!w->maximized && mx >= w->x + w->w - 16 && my >= w->y + w->h - 16) {
         return HIT_SE;
     }
+    if (w->app == 2 && mx >= w->x + w->w - 14 && my >= w->y + WIN_TITLE_H) {
+        return HIT_SCROLL;
+    }
     return HIT_CLIENT;
 }
 
@@ -666,7 +722,7 @@ static void wm_begin(int mode, int wi, int mx, int my)
         return;
     }
     w = &g_wins[wi];
-    if (w->maximized && mode >= 2) {
+    if (w->maximized && mode == 2) {
         return;
     }
     g_wm_mode = mode;
@@ -678,7 +734,13 @@ static void wm_begin(int mode, int wi, int mx, int my)
     g_wm_ow = w->w;
     g_wm_oh = w->h;
     win_raise(wi);
-    serial(mode == 1 ? "[wl] wm drag\n" : "[wl] wm resize\n", mode == 1 ? 13 : 15);
+    if (mode == 1) {
+        serial("[wl] wm drag\n", 13);
+    } else if (mode == 2) {
+        serial("[wl] wm resize\n", 15);
+    } else {
+        serial("[wl] term scroll\n", 17);
+    }
 }
 
 static void wm_apply(int mx, int my)
@@ -698,6 +760,33 @@ static void wm_apply(int mx, int my)
     } else if (g_wm_mode == 2) {
         w->w = g_wm_ow + dx;
         w->h = g_wm_oh + dy;
+    } else if (g_wm_mode == 3) {
+        int maxl;
+        unsigned nline;
+        unsigned total;
+        unsigned maxsc;
+        int track_h;
+        int rel;
+        maxl = term_max_lines(w);
+        nline = term_count_rows(w->out, w->out_n);
+        total = nline + 1U;
+        maxsc = total > (unsigned)maxl ? total - (unsigned)maxl : 0;
+        track_h = w->h - WIN_TITLE_H;
+        if (track_h < 1) {
+            track_h = 1;
+        }
+        rel = my - (w->y + WIN_TITLE_H);
+        if (rel < 0) {
+            rel = 0;
+        }
+        if (rel > track_h) {
+            rel = track_h;
+        }
+        w->scroll = maxsc ? (unsigned)rel * maxsc / (unsigned)track_h : 0;
+        if (w->scroll > maxsc) {
+            w->scroll = maxsc;
+        }
+        return;
     }
     win_clamp(w);
 }
@@ -797,6 +886,26 @@ static unsigned term_skip_rows(const char *s, unsigned n, unsigned skip)
     return i;
 }
 
+static int term_max_lines(const struct stub_win *w)
+{
+    int maxl = (w->h - WIN_TITLE_H - 22) / 14;
+    if (maxl < 1) {
+        maxl = 1;
+    }
+    if (maxl > 28) {
+        maxl = 28;
+    }
+    return maxl;
+}
+
+static void term_follow(struct stub_win *w)
+{
+    unsigned nline = term_count_rows(w->out, w->out_n);
+    unsigned total = nline + 1U;
+    int maxl = term_max_lines(w);
+    w->scroll = total > (unsigned)maxl ? total - (unsigned)maxl : 0;
+}
+
 static void term_run(struct stub_win *w)
 {
     char cmd[24];
@@ -845,6 +954,7 @@ static void term_run(struct stub_win *w)
     buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, "|", 1);
     g_tlen = 0;
     g_tline[0] = 0;
+    term_follow(w);
     serial("[wl] term run\n", 14);
 }
 
@@ -869,6 +979,7 @@ static void term_key(struct wl_state *st, unsigned k)
         if (g_tlen > 0) {
             g_tlen--;
             g_tline[g_tlen] = 0;
+            term_follow(w);
             desk_present(st);
         }
         return;
@@ -876,6 +987,7 @@ static void term_key(struct wl_state *st, unsigned k)
     if (k >= 32U && k < 127U && g_tlen + 1U < sizeof g_tline) {
         g_tline[g_tlen++] = (char)k;
         g_tline[g_tlen] = 0;
+        term_follow(w);
         desk_present(st);
     }
 }
@@ -1088,6 +1200,7 @@ static void win_open(int app)
     serial("\n", 1);
     g_wins[slot].out_n = 0;
     g_wins[slot].out[0] = 0;
+    g_wins[slot].scroll = 0;
     g_tlen = 0;
     g_tline[0] = 0;
     if (app == 0) {
@@ -1144,28 +1257,22 @@ static void paint_one_win(struct wl_state *st, int wi)
                   (unsigned)(w->x + bw), (unsigned)(w->y + WIN_TITLE_H), (unsigned)(w->w - 2 * bw),
                   (unsigned)(w->h - WIN_TITLE_H - bw), 0x000D1B2AUL);
         {
-            int py;
+            int top;
             int maxl;
             unsigned nline;
-            unsigned skip;
-            unsigned nvis;
+            unsigned total;
+            unsigned maxsc;
             unsigned off;
             unsigned row;
             unsigned cols;
             char prompt[56];
             unsigned p = 0;
-            py = w->y + w->h - 20;
-            if (py < w->y + WIN_TITLE_H + 12) {
-                py = w->y + WIN_TITLE_H + 12;
-            }
-            maxl = (py - (w->y + WIN_TITLE_H + 8)) / 14;
-            if (maxl < 0) {
-                maxl = 0;
-            }
-            if (maxl > 24) {
-                maxl = 24;
-            }
-            cols = (unsigned)((w->w - 24) / 6);
+            int sb_x;
+            int sb_y;
+            int sb_h;
+            top = w->y + WIN_TITLE_H + 10;
+            maxl = term_max_lines(w);
+            cols = (unsigned)((w->w - 32) / 6);
             if (cols < 8U) {
                 cols = 8U;
             }
@@ -1173,14 +1280,14 @@ static void paint_one_win(struct wl_state *st, int wi)
                 cols = 80U;
             }
             nline = term_count_rows(w->out, w->out_n);
-            skip = 0;
-            if (nline > (unsigned)maxl) {
-                skip = nline - (unsigned)maxl;
+            total = nline + 1U;
+            maxsc = total > (unsigned)maxl ? total - (unsigned)maxl : 0;
+            if (w->scroll > maxsc) {
+                w->scroll = maxsc;
             }
-            nvis = nline - skip;
-            off = term_skip_rows(w->out, w->out_n, skip);
+            off = term_skip_rows(w->out, w->out_n, w->scroll);
             row = 0;
-            while (off < w->out_n && row < nvis) {
+            while (off < w->out_n && row < (unsigned)maxl && w->scroll + row < nline) {
                 char hist[81];
                 unsigned k = 0;
                 while (off < w->out_n && w->out[off] != '|') {
@@ -1195,22 +1302,47 @@ static void paint_one_win(struct wl_state *st, int wi)
                 hist[k] = 0;
                 if (k > 0) {
                     fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12,
-                            py - 14 * (int)(nvis - row), hist, 0x004ADE80UL, 1);
+                            top + (int)row * 14, hist, 0x004ADE80UL, 1);
                     row++;
                 }
             }
-            prompt[p++] = '#';
-            prompt[p++] = ' ';
-            {
-                unsigned i;
-                for (i = 0; i < g_tlen && p + 1U < sizeof prompt && p < cols; i++) {
-                    prompt[p++] = g_tline[i];
+            if (w->scroll + row >= nline && row < (unsigned)maxl) {
+                prompt[p++] = '#';
+                prompt[p++] = ' ';
+                {
+                    unsigned i;
+                    for (i = 0; i < g_tlen && p + 1U < sizeof prompt && p < cols; i++) {
+                        prompt[p++] = g_tline[i];
+                    }
                 }
+                prompt[p] = 0;
+                fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12,
+                        top + (int)row * 14, prompt, 0x00E2E8F0UL, 1);
+                fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                          (unsigned)(w->x + 12 + (int)p * 6), (unsigned)(top + (int)row * 14),
+                          8, 12, 0x00E2E8F0UL);
             }
-            prompt[p] = 0;
-            fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12, py, prompt, 0x00E2E8F0UL, 1);
+            sb_x = w->x + w->w - 12;
+            sb_y = w->y + WIN_TITLE_H + 2;
+            sb_h = w->h - WIN_TITLE_H - 8;
+            if (sb_h < 16) {
+                sb_h = 16;
+            }
             fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
-                      (unsigned)(w->x + 12 + (int)p * 6), (unsigned)py, 8, 12, 0x00E2E8F0UL);
+                      (unsigned)sb_x, (unsigned)sb_y, 8, (unsigned)sb_h, 0x00152538UL);
+            if (maxsc > 0) {
+                int th = (int)((unsigned)sb_h * (unsigned)maxl / total);
+                int ty;
+                if (th < 12) {
+                    th = 12;
+                }
+                if (th > sb_h) {
+                    th = sb_h;
+                }
+                ty = sb_y + (int)((unsigned)(sb_h - th) * w->scroll / maxsc);
+                fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                          (unsigned)sb_x, (unsigned)ty, 8, (unsigned)th, 0x0064748BUL);
+            }
         }
     } else if (app == 0) {
         client_y = w->y + WIN_TITLE_H;
@@ -1338,11 +1470,54 @@ static void paint_windows(struct wl_state *st)
     paint_start(st);
 }
 
+#define DIRTY_MAX 8
+static int g_dirty_x[DIRTY_MAX];
+static int g_dirty_y[DIRTY_MAX];
+static int g_dirty_w[DIRTY_MAX];
+static int g_dirty_h[DIRTY_MAX];
+static int g_dirty_n;
+
+static void dirty_add(int x, int y, int w, int h)
+{
+    if (g_dirty_n >= DIRTY_MAX || w <= 0 || h <= 0) {
+        return;
+    }
+    g_dirty_x[g_dirty_n] = x;
+    g_dirty_y[g_dirty_n] = y;
+    g_dirty_w[g_dirty_n] = w;
+    g_dirty_h[g_dirty_n] = h;
+    g_dirty_n++;
+}
+
 static void desk_present(struct wl_state *st)
 {
+    int i;
+    int bar;
     cursor_hide(st);
-    blit_shm(st);
+    if (g_dirty_n == 0) {
+        blit_shm(st);
+    } else {
+        for (i = 0; i < g_dirty_n; i++) {
+            blit_shm_rect(st, g_dirty_x[i], g_dirty_y[i], g_dirty_w[i], g_dirty_h[i]);
+        }
+    }
+    g_dirty_n = 0;
     paint_windows(st);
+    for (i = 0; i < WIN_MAX; i++) {
+        if (g_wins[i].open && !g_wins[i].minimized) {
+            dirty_add(g_wins[i].x, g_wins[i].y, g_wins[i].w + 5, g_wins[i].h + 7);
+        }
+    }
+    if (g_start_open) {
+        int x;
+        int y;
+        int pw;
+        int ph;
+        start_geom(st->fb_w, st->fb_h, &x, &y, &pw, &ph);
+        dirty_add(x, y, pw, ph);
+    }
+    bar = (int)desk_bar(st->fb_h);
+    dirty_add(0, (int)st->fb_h - bar, (int)st->fb_w, bar);
     cursor_place(st, g_mx, g_my);
 }
 
@@ -1413,6 +1588,12 @@ static void desk_click(struct wl_state *st, int mx, int my)
         }
         if (part == HIT_SE) {
             wm_begin(2, wi, mx, my);
+            desk_present(st);
+            return;
+        }
+        if (part == HIT_SCROLL) {
+            wm_begin(3, wi, mx, my);
+            wm_apply(mx, my);
             desk_present(st);
             return;
         }
@@ -2051,7 +2232,9 @@ void _start(void)
     st.attached = 0;
     st.committed = 0;
 
-    fill_rect(st.fb, st.fb_pitch, st.fb_w, st.fb_h, 0, 0, st.fb_w, st.fb_h, 0x00FF00FFUL);
+    /* Desk wallpaper color — not magenta. Magenta under the desk flashes
+     * through full-FB present / cursor restore. Proof-of-life fill is over. */
+    fill_rect(st.fb, st.fb_pitch, st.fb_w, st.fb_h, 0, 0, st.fb_w, st.fb_h, 0x007A8FA8UL);
     serial(fillok, sizeof(fillok) - 1);
 
     surf_w = st.fb_w;
