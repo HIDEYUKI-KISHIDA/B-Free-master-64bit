@@ -1377,6 +1377,10 @@ int vmm_clone_user_address_space(page_table_t *src, page_table_t *dst)
 
 // カーネル用ページテーブルインスタンス
 
+/* Diagnostic only. 0 = skip fork fingerprint. Defined here so --no-undefined links. */
+uint8_t g_bfree_shell_text_fp[4];
+int g_bfree_shell_text_fp_valid;
+
 page_table_t kernel_page_table __attribute__((aligned(4096), section(".bfree_page_table")));
 
 

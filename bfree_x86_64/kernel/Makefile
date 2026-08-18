@@ -88,8 +88,9 @@ USER_HELLO_LD := $(USER_HELLO_DIR)/user_hello.ld
 USER_HELLO_EMBED := sysmain/user_hello_elf.c
 USER_HELLO_EMBED_TOOL := ../tools/embed_binary.py
 
-ASMS := ../multiboot2_header.S \
-	$(wildcard sysmain/*.S) \
+# Multiboot2 header lives in sysmain/sysdepend/x86_64/reset.S.
+# Do not require the uncommitted ../multiboot2_header.S.
+ASMS := $(wildcard sysmain/*.S) \
 	$(wildcard sysdepend/cpu/x86_64/*.S) \
 	sysmain/sysdepend/x86_64/reset.S
 
@@ -109,8 +110,12 @@ endif
 
 OBJS := $(sort $(SRCS:.c=.o) $(ASMS:.S=.o))
 
-all: $(USER_HELLO_EMBED) kernel.elf kernel.bin
+# Committed sysmain/user_hello_elf.c is enough. Only rebuild the embed
+# when userland/embedded/user_hello.S exists (maintainer tree).
+all: kernel.elf kernel.bin
 
+# Only rebuild the committed embed when the assembler sources exist.
+ifneq ($(wildcard $(USER_HELLO_SRC)),)
 $(USER_HELLO_OBJ): $(USER_HELLO_SRC)
 >$(AS) $(CFLAGS) -c $< -o $@
 
@@ -119,6 +124,7 @@ $(USER_HELLO_ELF): $(USER_HELLO_OBJ) $(USER_HELLO_LD)
 
 $(USER_HELLO_EMBED): $(USER_HELLO_ELF) $(USER_HELLO_EMBED_TOOL)
 >$(PYTHON) $(USER_HELLO_EMBED_TOOL) $(USER_HELLO_ELF) $@ user_hello_elf
+endif
 
 sysmain/syscall_handler.o: sysmain/syscall_handler.c
 >$(CC) $(CFLAGS) -mno-sse -mno-mmx -mno-3dnow -mno-80387 -c $< -o $@
