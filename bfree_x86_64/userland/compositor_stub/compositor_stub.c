@@ -226,7 +226,7 @@ struct stub_win {
     int rw;
     int rh;
     unsigned out_n;
-    char out[200];
+    char out[360];
 };
 static struct stub_win g_wins[WIN_MAX];
 static int g_win_n;
@@ -734,6 +734,69 @@ static int hit_task_slot(int mx, int my)
     return -1;
 }
 
+static void out_make_room(char *d, unsigned cap, unsigned *n, unsigned need)
+{
+    while (*n + need + 1U >= cap && *n > 0) {
+        unsigned i = 0;
+        while (i < *n && d[i] != '|') {
+            i++;
+        }
+        if (i < *n) {
+            i++;
+        }
+        if (i == 0) {
+            i = 1;
+        }
+        {
+            unsigned k;
+            for (k = 0; k + i < *n; k++) {
+                d[k] = d[k + i];
+            }
+            *n -= i;
+            d[*n] = 0;
+        }
+    }
+}
+
+static unsigned term_count_rows(const char *s, unsigned n)
+{
+    unsigned i = 0;
+    unsigned rows = 0;
+    while (i < n) {
+        unsigned k = 0;
+        while (i < n && s[i] != '|') {
+            k++;
+            i++;
+        }
+        if (i < n && s[i] == '|') {
+            i++;
+        }
+        if (k > 0) {
+            rows++;
+        }
+    }
+    return rows;
+}
+
+static unsigned term_skip_rows(const char *s, unsigned n, unsigned skip)
+{
+    unsigned i = 0;
+    while (skip && i < n) {
+        unsigned k = 0;
+        while (i < n && s[i] != '|') {
+            k++;
+            i++;
+        }
+        if (i < n && s[i] == '|') {
+            i++;
+        }
+        if (k > 0) {
+            skip--;
+        }
+    }
+    return i;
+}
+
 static void term_run(struct stub_win *w)
 {
     char cmd[24];
@@ -758,20 +821,30 @@ static void term_run(struct stub_win *w)
         arg[a++] = g_tline[i++];
     }
     arg[a] = 0;
-    g_tlen = 0;
-    g_tline[0] = 0;
     if (c == 0) {
+        g_tlen = 0;
+        g_tline[0] = 0;
         return;
     }
     a2 = a ? arg : 0;
     if (cmd[0] == 'l' && cmd[1] == 's' && cmd[2] == 0 && !a2) {
         a2 = "/";
     }
+    out_make_room(w->out, (unsigned)sizeof w->out, &w->out_n, c + a + 4U);
+    buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, "# ", 2);
+    buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, cmd, c);
+    if (a) {
+        buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, " ", 1);
+        buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, arg, a);
+    }
+    buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, "|", 1);
     tmp[0] = 0;
     (void)run_busybox(tmp, (unsigned)sizeof tmp, &n, cmd, a2);
-    w->out_n = 0;
-    w->out[0] = 0;
+    out_make_room(w->out, (unsigned)sizeof w->out, &w->out_n, n + 1U);
     buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, tmp, n);
+    buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, "|", 1);
+    g_tlen = 0;
+    g_tline[0] = 0;
     serial("[wl] term run\n", 14);
 }
 
@@ -1071,41 +1144,73 @@ static void paint_one_win(struct wl_state *st, int wi)
                   (unsigned)(w->x + bw), (unsigned)(w->y + WIN_TITLE_H), (unsigned)(w->w - 2 * bw),
                   (unsigned)(w->h - WIN_TITLE_H - bw), 0x000D1B2AUL);
         {
-            unsigned off = 0;
-            int line = 0;
+            int py;
+            int maxl;
+            unsigned nline;
+            unsigned skip;
+            unsigned nvis;
+            unsigned off;
+            unsigned row;
+            unsigned cols;
             char prompt[56];
             unsigned p = 0;
-            while (off < w->out_n && line < 14) {
-                char row[41];
+            py = w->y + w->h - 20;
+            if (py < w->y + WIN_TITLE_H + 12) {
+                py = w->y + WIN_TITLE_H + 12;
+            }
+            maxl = (py - (w->y + WIN_TITLE_H + 8)) / 14;
+            if (maxl < 0) {
+                maxl = 0;
+            }
+            if (maxl > 24) {
+                maxl = 24;
+            }
+            cols = (unsigned)((w->w - 24) / 6);
+            if (cols < 8U) {
+                cols = 8U;
+            }
+            if (cols > 80U) {
+                cols = 80U;
+            }
+            nline = term_count_rows(w->out, w->out_n);
+            skip = 0;
+            if (nline > (unsigned)maxl) {
+                skip = nline - (unsigned)maxl;
+            }
+            nvis = nline - skip;
+            off = term_skip_rows(w->out, w->out_n, skip);
+            row = 0;
+            while (off < w->out_n && row < nvis) {
+                char hist[81];
                 unsigned k = 0;
-                while (k < 40U && off < w->out_n) {
-                    char c = w->out[off++];
-                    if (c == '|') {
-                        break;
+                while (off < w->out_n && w->out[off] != '|') {
+                    if (k + 1U < cols && k + 1U < sizeof hist) {
+                        hist[k++] = w->out[off];
                     }
-                    row[k++] = c;
+                    off++;
                 }
-                row[k] = 0;
+                if (off < w->out_n && w->out[off] == '|') {
+                    off++;
+                }
+                hist[k] = 0;
                 if (k > 0) {
                     fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12,
-                            w->y + WIN_TITLE_H + 10 + line * 14, row, 0x004ADE80UL, 1);
+                            py - 14 * (int)(nvis - row), hist, 0x004ADE80UL, 1);
+                    row++;
                 }
-                line++;
             }
             prompt[p++] = '#';
             prompt[p++] = ' ';
             {
                 unsigned i;
-                for (i = 0; i < g_tlen && p + 1U < sizeof prompt; i++) {
+                for (i = 0; i < g_tlen && p + 1U < sizeof prompt && p < cols; i++) {
                     prompt[p++] = g_tline[i];
                 }
             }
             prompt[p] = 0;
-            fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12,
-                    w->y + WIN_TITLE_H + 10 + line * 14, prompt, 0x00E2E8F0UL, 1);
+            fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12, py, prompt, 0x00E2E8F0UL, 1);
             fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
-                      (unsigned)(w->x + 12 + (int)p * 6), (unsigned)(w->y + WIN_TITLE_H + 10 + line * 14),
-                      8, 12, 0x00E2E8F0UL);
+                      (unsigned)(w->x + 12 + (int)p * 6), (unsigned)py, 8, 12, 0x00E2E8F0UL);
         }
     } else if (app == 0) {
         client_y = w->y + WIN_TITLE_H;
