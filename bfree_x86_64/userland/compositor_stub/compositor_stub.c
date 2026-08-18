@@ -2356,66 +2356,40 @@ static long wl_connect_unix(void)
     return fd;
 }
 
-static unsigned char *wl_shm_attach(unsigned int pool_bytes, int *shared_out)
+static long wl_write_all(long fd, const unsigned char *p, unsigned n)
 {
-    static const char path[] = "/tmp/wl-shm";
-    long fd;
-    long mapped;
-
-    *shared_out = 0;
-    mapped = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
-                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    serial_hex("wl shm mmap=", mapped);
-    if (mapped < 0x1000) {
-        return 0;
+    unsigned off = 0;
+    while (off < n) {
+        unsigned chunk = n - off;
+        long w;
+        if (chunk > 4096U) {
+            chunk = 4096U;
+        }
+        w = sys6(SYS_WRITE, fd, (long)(unsigned long)(p + off), (long)chunk, 0, 0, 0);
+        if (w <= 0) {
+            return w < 0 ? w : -1;
+        }
+        off += (unsigned)w;
     }
-    fd = sys6(SYS_OPEN, (long)(unsigned long)path, (long)(O_RDWR | O_CREAT | O_TRUNC), 0666,
-              0, 0, 0);
-    serial_hex("wl shm open=", fd);
-    if (fd < 0) {
-        fd = sys6(SYS_MEMFD, (long)(unsigned long)path, 0, 0, 0, 0, 0);
-        serial_hex("wl memfd=", fd);
-    }
-    if (fd < 0) {
-        return (unsigned char *)(unsigned long)mapped;
-    }
-    (void)sys6(SYS_FTRUNCATE, fd, (long)pool_bytes, 0, 0, 0, 0);
-    (void)sys6(SYS_DUP2, fd, WL_SHM_FD, 0, 0, 0, 0);
-    if (fd != WL_SHM_FD) {
-        (void)sys6(SYS_CLOSE, fd, 0, 0, 0, 0, 0);
-    }
-    *shared_out = 1;
-    return (unsigned char *)(unsigned long)mapped;
+    return (long)n;
 }
 
-static void wl_shm_put_geom(unsigned char *pool, unsigned int dw, unsigned int dh,
-                            unsigned int aw, unsigned int ah)
+static long wl_read_all(long fd, unsigned char *p, unsigned n)
 {
-    put_u32(pool, 0x314C5742u);
-    put_u32(pool + 4, dw);
-    put_u32(pool + 8, dh);
-    put_u32(pool + 12, aw);
-    put_u32(pool + 16, ah);
-}
-
-static void wl_shm_get_geom(unsigned char *pool, unsigned int *dw, unsigned int *dh,
-                            unsigned int *aw, unsigned int *ah)
-{
-    if (get_u32(pool) != 0x314C5742u) {
-        return;
+    unsigned off = 0;
+    while (off < n) {
+        unsigned chunk = n - off;
+        long r;
+        if (chunk > 4096U) {
+            chunk = 4096U;
+        }
+        r = sys6(SYS_READ, fd, (long)(unsigned long)(p + off), (long)chunk, 0, 0, 0);
+        if (r <= 0) {
+            return r < 0 ? r : (long)off;
+        }
+        off += (unsigned)r;
     }
-    *dw = get_u32(pool + 4);
-    *dh = get_u32(pool + 8);
-    *aw = get_u32(pool + 12);
-    *ah = get_u32(pool + 16);
-}
-
-static void wl_shm_pull(unsigned char *pool, unsigned int nbytes)
-{
-    long n;
-    (void)sys6(8, WL_SHM_FD, 0, 0, 0, 0, 0); /* lseek SEEK_SET */
-    n = sys6(SYS_READ, WL_SHM_FD, (long)(unsigned long)pool, (long)nbytes, 0, 0, 0);
-    serial_hex("wl shm pull=", n);
+    return (long)n;
 }
 
 static void paint_client_pool(unsigned char *pool, unsigned int dw, unsigned int dh,
@@ -2438,12 +2412,14 @@ void _start(void)
     long mapped;
     long cli_fd;
     unsigned char msg[512];
+    unsigned char hdr[4];
     unsigned int msglen;
     unsigned char *pool;
 
     serial(hello, sizeof(hello) - 1);
-    pool_bytes = (unsigned int)WL_SURF_MAX_W * (unsigned int)WL_SURF_MAX_H * 4U + 480U * 320U * 4U;
-    mapped = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, WL_SHM_FD, 0);
+    pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
+    mapped = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
+                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     serial_hex("wl cli mmap=", mapped);
     if (mapped < 0x1000) {
         (void)sys6(SYS_EXIT, 1, 0, 0, 0, 0, 0);
@@ -2451,22 +2427,20 @@ void _start(void)
         }
     }
     pool = (unsigned char *)(unsigned long)mapped;
-    wl_shm_get_geom(pool, &desk_w, &desk_h, &app_w, &app_h);
-    if (desk_w == 0 || desk_h == 0 || desk_w > WL_SURF_MAX_W || desk_h > WL_SURF_MAX_H) {
-        desk_w = 1024;
-        desk_h = 768;
-        app_w = 480;
-        app_h = 320;
-    }
     serial_hex("wl cli w=", (long)desk_w);
     serial_hex("wl cli h=", (long)desk_h);
     paint_client_pool(pool, desk_w, desk_h, app_w, app_h);
-    (void)sys6(SYS_MSYNC, mapped, (long)pool_bytes, MS_SYNC, 0, 0, 0);
     serial(paintm, sizeof(paintm) - 1);
     cli_fd = wl_connect_unix();
     msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
     if (cli_fd >= 0) {
-        (void)sys6(SYS_WRITE, cli_fd, (long)(unsigned long)msg, (long)msglen, 0, 0, 0);
+        put_u32(hdr, msglen);
+        (void)wl_write_all(cli_fd, hdr, 4);
+        (void)wl_write_all(cli_fd, msg, msglen);
+        put_u32(hdr, pool_bytes);
+        (void)wl_write_all(cli_fd, hdr, 4);
+        (void)wl_write_all(cli_fd, pool, pool_bytes);
+        serial("[wl] hello.elf pixels\n", 22);
     }
     (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
     for (;;) {
@@ -2503,7 +2477,6 @@ void _start(void)
     long pid;
     long nread;
     unsigned int map_bytes;
-    int shm_shared;
     long exec_rc;
 
     serial(hello, sizeof(hello) - 1);
@@ -2562,23 +2535,19 @@ void _start(void)
     app_w = 480;
     app_h = 320;
     pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
-    /* Cap the file at max so hello.elf can mmap fd 8 without knowing fb size. */
     map_bytes =
         (unsigned int)WL_SURF_MAX_W * (unsigned int)WL_SURF_MAX_H * 4U + 480U * 320U * 4U;
-    shm_shared = 0;
-    st.pool = wl_shm_attach(map_bytes, &shm_shared);
-    if (!st.pool) {
-        for (;;) {
+    {
+        long shm_map = sys6(9, 0, (long)map_bytes, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        serial_hex("wl shm mmap=", shm_map);
+        if (shm_map < 0x1000) {
+            for (;;) {
+            }
         }
+        st.pool = (unsigned char *)(unsigned long)shm_map;
     }
     st.pool_size = pool_bytes;
-    wl_shm_put_geom(st.pool, desk_w, desk_h, app_w, app_h);
-    if (shm_shared) {
-        (void)sys6(8, WL_SHM_FD, 0, 0, 0, 0, 0);
-        (void)sys6(SYS_WRITE, WL_SHM_FD, (long)(unsigned long)st.pool, 20, 0, 0, 0);
-        (void)sys6(8, WL_SHM_FD, 0, 0, 0, 0, 0);
-    }
-    serial_hex("wl shm shared=", (long)shm_shared);
     serial_hex("wl desk w=", (long)desk_w);
     serial_hex("wl desk h=", (long)desk_h);
 
@@ -2592,21 +2561,25 @@ void _start(void)
     }
 
     if (pid == 0) {
+        unsigned char hdr[4];
         serial(childm, sizeof(childm) - 1);
-        if (shm_shared) {
-            serial("[wl] execve hello.elf\n", 22);
-            hello_argv[0] = hello_path;
-            hello_argv[1] = 0;
-            exec_rc = sys6(SYS_EXECVE, (long)(unsigned long)hello_path,
-                           (long)(unsigned long)hello_argv, 0, 0, 0, 0);
-            serial_hex("wl execve hello=", exec_rc);
-        }
+        serial("[wl] execve hello.elf\n", 22);
+        hello_argv[0] = hello_path;
+        hello_argv[1] = 0;
+        exec_rc = sys6(SYS_EXECVE, (long)(unsigned long)hello_path,
+                       (long)(unsigned long)hello_argv, 0, 0, 0, 0);
+        serial_hex("wl execve hello=", exec_rc);
         paint_client_pool(st.pool, desk_w, desk_h, app_w, app_h);
         serial(deskm, sizeof(deskm) - 1);
         cli_fd = wl_connect_unix();
         msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
         if (cli_fd >= 0) {
-            (void)sys6(SYS_WRITE, cli_fd, (long)(unsigned long)msg, (long)msglen, 0, 0, 0);
+            put_u32(hdr, msglen);
+            (void)wl_write_all(cli_fd, hdr, 4);
+            (void)wl_write_all(cli_fd, msg, msglen);
+            put_u32(hdr, pool_bytes);
+            (void)wl_write_all(cli_fd, hdr, 4);
+            (void)wl_write_all(cli_fd, st.pool, pool_bytes);
         }
         (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
         for (;;) {
@@ -2614,19 +2587,31 @@ void _start(void)
     }
 
     if (pid > 0 && listen_fd >= 0) {
+        unsigned char hdr[4];
+        unsigned int wlen;
+        unsigned int plen;
         serial(parentm, sizeof(parentm) - 1);
         acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
         serial_hex("wl accept=", acc_fd);
         if (acc_fd >= 0) {
             serial(accepm, sizeof(accepm) - 1);
-            nread = sys6(SYS_READ, acc_fd, (long)(unsigned long)msg, 512, 0, 0, 0);
-            serial_hex("wl bytes=", nread);
-            (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
-            if (shm_shared) {
-                wl_shm_pull(st.pool, map_bytes);
-            }
-            if (nread > 0) {
-                wl_dispatch(&st, msg, (unsigned int)nread);
+            nread = wl_read_all(acc_fd, hdr, 4);
+            wlen = (nread == 4) ? get_u32(hdr) : 0;
+            if (wlen > 0 && wlen <= 512) {
+                nread = wl_read_all(acc_fd, msg, wlen);
+                serial_hex("wl bytes=", nread);
+                nread = wl_read_all(acc_fd, hdr, 4);
+                plen = (nread == 4) ? get_u32(hdr) : 0;
+                serial_hex("wl pix n=", (long)plen);
+                if (plen > 0 && plen <= map_bytes) {
+                    nread = wl_read_all(acc_fd, st.pool, plen);
+                    serial_hex("wl pix r=", nread);
+                    st.pool_size = plen;
+                }
+                (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
+                if (wlen > 0) {
+                    wl_dispatch(&st, msg, wlen);
+                }
             }
         }
     }
