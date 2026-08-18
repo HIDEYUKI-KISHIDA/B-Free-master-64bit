@@ -2856,6 +2856,14 @@ void _start(void)
         unsigned int wlen;
         serial(used_vfork ? vparentm : parentm,
                used_vfork ? (sizeof(vparentm) - 1) : (sizeof(parentm) - 1));
+        /* fork AS-copy parks the child until the parent blocks on wait/pipe.
+         * accept() busy-halts and does not yield, so waitpid first. The
+         * client must exit after the first shm/wire (C p8test and
+         * QGuiApplication hello both do). A live Qt exec() loop needs a
+         * later accept-yield; do not waitpid-forever for that. */
+        if (!used_vfork) {
+            (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
+        }
         acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
         serial_hex("wl accept=", acc_fd);
         if (acc_fd >= 0) {
@@ -2870,8 +2878,6 @@ void _start(void)
                     unsigned int app_bytes = app_w * app_h * 4U;
                     long got = wl_shm_get(st.pool + desk_w * desk_h * 4U, app_bytes);
                     serial_hex("wl shm get=", got);
-                    (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, WNOHANG, 0, 0,
-                               0);
                     if (got == (long)app_bytes) {
                         serial(shmok, sizeof(shmok) - 1);
                     } else {

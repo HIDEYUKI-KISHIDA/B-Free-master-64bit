@@ -328,8 +328,11 @@ fullscreen desk chrome (icons + Start bar, title `bar`) and a
 480×320 app window. Compositor `fork` (Linux nr **57**, AS-copy) then
 `execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland` (no bfree inject —
 that is only for `desktop.elf`). vfork (nr 58) is the fallback if fork
-fails. Parent `accept`s while the child lives (do not `waitpid` before
-`shm_get`; `WNOHANG` after). `hello.elf` is the fallback if p8test
+fails. Parent `waitpid` (blocking) after `fork` so the parked child actually
+runs — `accept()` busy-halts and does **not** coop-yield on g1-desk.
+The first `QGuiApplication` hello **exits after the first flush**
+(same as the C client). A live `exec()` loop would freeze the parent
+in `waitpid`; that needs an accept-yield later. `hello.elf` is the fallback if p8test
 execve returns. Cloud / trees without the guest Qt prefix still map the
 C `qt_wl_client.elf` as p8test (serial `[qt] p8test.elf wayland client`).
 When `bash tools/build_qt_wl_hello.sh` can link, `qt_wl_hello.elf`
