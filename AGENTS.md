@@ -290,16 +290,66 @@ dispatches + blits). If `vfork` fails, in-process fallback.
 Observed: `[init] exec compositor.elf`, `wl vfork=0` +
 `[wl] vfork child`, `wl vfork=0x2` + `[wl] vfork parent`,
 then `get_registry`…`commit` and `wayland shm blit`. No
-`PANIC`. Next toward 本デスク: the vfork child paints
-desk chrome (icon squares + taskbar) into `wl_shm`.
-A 1024×768 / 3MiB **BSS** hung `load_elf` (white splash, no
-`[init]` serial). 640×400 BSS worked (magenta leftover around
-a top-left gray chrome). Full FB uses **anonymous mmap**
-(Linux nr 9, `MAP_ANONYMOUS`) after the magenta fill, not BSS.
-Parent blits at (0,0). Not product
-`DesktopShell.qml`. Not `WAYLAND_DISPLAY` / AF_UNIX. Daily
-`bfree.iso` still has the FB icon desk. Not host `tron_gui_server`. Not the icon desk.
-Daily `bfree.iso` still has the FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
+`PANIC`. Desk chrome is a 15-tile + taskbar `wl_shm` blit
+(not product `DesktopShell.qml`). A 1024×768 / 3MiB **BSS**
+hung `load_elf`. Full FB uses **anonymous mmap** (Linux nr 9)
+after the magenta fill. Transport is now **AF_UNIX**
+`/tmp/wayland-0` (bind 49 / listen 50 / connect 42 / accept 43),
+not a pipe. vfork child `connect()`s; in-process connect is
+the fallback. Success serial: `[wl] listen ok` then
+`[wl] client accepted` then `wayland native desk blit`.
+After that blit the stub used to hang with **no pointer**. Daily
+FB desk used a software **crosshair** (`guest_desk_draw_cursor`).
+Host `DesktopShell.qml` never shipped a custom sprite — Qt
+`ArrowCursor` is the Ubuntu/Yaru (or Adwaita) **system** pointer.
+Linux vs Windows arrows differ by theme, not by kernel ABI.
+The stub now paints an X11 `left_ptr` / Windows-style arrow
+(hotspot tip) via `sys_poll_input_event` (nr 0, BSS slot):
+`[wl] cursor arrow`, then type=3 mouse moves it. Icon click
+paints a lookalike window on the compositor FB (`[wl] desk open`).
+Desk wallpaper/icons/taskbar go through **one** `wl_shm` surface
+then blit. That is the only guest Wayland (wire + shm pixels).
+Cursor, Start panel, and windows are **software FB** overlays
+(5×7 glyphs, no GPU, no Qt scene graph, not Wayland surfaces).
+Host `DesktopShell.qml` Start/Explorer are QML; this stub is not
+that. Do **not** polish the lookalike Explorer as the product —
+practical file UI needs guest **Qt** (`desktop.elf` as a Wayland
+client). Do **not** port that as GTK. Do **not** `execve("desktop.elf")`
+on `g1-desk` (unknown names become busybox, or `QT_QPA_PLATFORM=bfree`
+steals FB). Do **not** replace daily `bfree.iso` with the stub ISO
+until that Qt client can run; making 仮 chrome into 本デスク first
+is the compositor socket + shm path, not more FB widgets.
+Terminal writes from the **top**; when the client fills, old lines
+scroll off the top and a right-edge scrollbar brings them back.
+Do not pin the `# ` prompt to the empty bottom. Enter runs busybox
+(`ls /`, `echo hi`). Magenta FB fill was S0 proof-of-life; leaving
+it under the desk flashes on present (cursor under / full blit).
+Fill/restore with the desk wallpaper color and dirty-rect blit
+from shm. Terminal/Explorer `vfork`+pipe+`execve("/busybox.elf")`
+and paint captured stdout. That is a
+real busybox process, not `desktop.elf`. From-source kernel on the
+stub ISO still kills QEMU. 本デスク still needs a **bootable**
+kernel that execs `desktop.elf` as a Wayland client (not bfree QPA). QEMU hides the
+host cursor when grabbed (`Ctrl+Alt+G`); the guest must paint
+its own. Still not `desktop.elf` / not product QML.
+That is S1 toward 本デスク (compositor owns the socket).
+S2 source whitelist (`desktop.elf` in `sys_linux_execve`) may
+live in `syscall.c`, but **do not** `make -C kernel` and map
+that ELF onto the stub ISO. Observed: from-source
+`kernel.elf.s2-execve` + `-no-reboot` → QEMU exits immediately,
+serial empty (no `[init]`). That is the same class as the
+VMM/`sparse-pt` hang. Stub ISO must keep the daily `g1-desk`
+kernel. Never overwrite `kernel.elf.g1-desk` or daily
+`bfree.iso`. Do not `execve("desktop.elf")` from the stub
+until a bootable patched kernel exists. The Wayland
+client on `g1-desk` is the vfork child: it `connect()`s
+`/tmp/wayland-0` and paints the daily EX/VW desk
+lookalike into `wl_shm`. That is steps 1–2 without a
+second ELF. Do **not** drop `QT_QPA_PLATFORM=bfree` on
+daily `bfree.iso` (step 3) until that stub is the boot
+desk. Not product
+`DesktopShell.qml`. Daily `bfree.iso` still has the
+FB icon desk. Never overwrite daily `bfree.iso`. COMPOSITOR allowlist
 includes nr 24 for a later GUI_FIRST kernel; do not build that
 into daily `kernel.elf`. A from-source GUI_FIRST kernel hung
 at VMM/`sparse-pt` here; do not retry that as the hello path.
