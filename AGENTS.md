@@ -299,11 +299,15 @@ not a pipe. vfork child `connect()`s; in-process connect is
 the fallback. Success serial: `[wl] listen ok` then
 `[wl] client accepted` then `wayland native desk blit`.
 After that blit the stub used to hang with **no pointer**. Daily
-desk draws a software crosshair via `sys_poll_input_event` (nr 0,
-BSS slot). The stub now does the same on FB after commit:
-`[wl] cursor on`, then type=3 mouse moves the crosshair. QEMU
-hides the host cursor when grabbed (`Ctrl+Alt+G`); the guest
-must paint its own. Still not `desktop.elf` / not product QML.
+FB desk used a software **crosshair** (`guest_desk_draw_cursor`).
+Host `DesktopShell.qml` never shipped a custom sprite — Qt
+`ArrowCursor` is the Ubuntu/Yaru (or Adwaita) **system** pointer.
+Linux vs Windows arrows differ by theme, not by kernel ABI.
+The stub now paints an X11 `left_ptr` / Windows-style arrow
+(hotspot tip) via `sys_poll_input_event` (nr 0, BSS slot):
+`[wl] cursor arrow`, then type=3 mouse moves it. QEMU hides the
+host cursor when grabbed (`Ctrl+Alt+G`); the guest must paint
+its own. Still not `desktop.elf` / not product QML.
 That is S1 toward 本デスク (compositor owns the socket).
 S2 source whitelist (`desktop.elf` in `sys_linux_execve`) may
 live in `syscall.c`, but **do not** `make -C kernel` and map

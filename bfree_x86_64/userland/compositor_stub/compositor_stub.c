@@ -2,7 +2,7 @@
  * APP Linux sockets: 41 socket, 49 bind, 50 listen, 42 connect, 43 accept.
  * Listen on AF_UNIX /tmp/wayland-0. vfork child connect()s and paints the
  * daily FB desk lookalike (EX/VW tiles) into wl_shm. After blit, APP polls
- * sys_poll_input_event (nr 0, BSS ptr) and draws a software crosshair on FB.
+ * sys_poll_input_event (nr 0, BSS ptr) and draws an X11 left_ptr arrow on FB.
  * Not desktop.elf (g1-desk execve would load busybox; from-source kernel dies).
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
@@ -180,7 +180,35 @@ struct poll_ev {
 };
 
 static struct poll_ev g_poll;
-static unsigned int g_cur_under[17 * 17];
+/* X11 left_ptr / Windows arrow / Qt ArrowCursor lookalike. Host DesktopShell.qml
+ * never painted a sprite — it used the Ubuntu/Yaru system pointer. 0=skip 1=ink 2=fill.
+ * Hotspot is the tip (1,1). */
+#define CUR_W 12
+#define CUR_H 19
+#define CUR_HX 1
+#define CUR_HY 1
+static const unsigned char g_cur_bits[CUR_H][CUR_W] = {
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+    {1, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0},
+    {1, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0},
+    {1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0},
+    {1, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0},
+    {1, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0},
+    {1, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0},
+    {1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0},
+    {1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 0},
+    {1, 2, 2, 1, 2, 2, 1, 0, 0, 0, 0, 0},
+    {1, 2, 1, 0, 1, 2, 2, 1, 0, 0, 0, 0},
+    {1, 1, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0},
+    {1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0},
+    {0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0},
+    {0, 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0},
+    {0, 0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0},
+    {0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0},
+};
+static unsigned int g_cur_under[CUR_W * CUR_H];
 static int g_cur_have;
 static int g_cur_sx;
 static int g_cur_sy;
@@ -198,72 +226,52 @@ static int clamp_i(int v, int lo, int hi)
     return v;
 }
 
-static void cursor_bar(unsigned char *fb, unsigned int pitch, unsigned int fb_w, unsigned int fb_h,
-                       int x0, int y0, int w, int h, unsigned int color)
-{
-    int y;
-    int x;
-    int x1;
-    int y1;
-    if (w <= 0 || h <= 0) {
-        return;
-    }
-    x1 = x0 + w;
-    y1 = y0 + h;
-    if (x0 < 0) {
-        x0 = 0;
-    }
-    if (y0 < 0) {
-        y0 = 0;
-    }
-    if (x1 > (int)fb_w) {
-        x1 = (int)fb_w;
-    }
-    if (y1 > (int)fb_h) {
-        y1 = (int)fb_h;
-    }
-    if (x0 >= x1 || y0 >= y1) {
-        return;
-    }
-    for (y = y0; y < y1; y++) {
-        unsigned int *row = (unsigned int *)(fb + (unsigned long)y * pitch);
-        for (x = x0; x < x1; x++) {
-            row[x] = color;
-        }
-    }
-}
-
 static void cursor_under(unsigned char *fb, unsigned int pitch, unsigned int fb_w, unsigned int fb_h,
                          int x, int y, int save)
 {
     int dy;
     int dx;
-    for (dy = 0; dy < 17; dy++) {
-        for (dx = 0; dx < 17; dx++) {
-            int px = x - 8 + dx;
-            int py = y - 8 + dy;
+    for (dy = 0; dy < CUR_H; dy++) {
+        for (dx = 0; dx < CUR_W; dx++) {
+            int px = x - CUR_HX + dx;
+            int py = y - CUR_HY + dy;
             unsigned int *pix;
             if (px < 0 || py < 0 || (unsigned)px >= fb_w || (unsigned)py >= fb_h) {
                 continue;
             }
             pix = (unsigned int *)(fb + (unsigned long)py * pitch);
             if (save) {
-                g_cur_under[dy * 17 + dx] = pix[px];
+                g_cur_under[dy * CUR_W + dx] = pix[px];
             } else {
-                pix[px] = g_cur_under[dy * 17 + dx];
+                pix[px] = g_cur_under[dy * CUR_W + dx];
             }
         }
     }
 }
 
-/* Same crosshair as guest_desk_draw_cursor. */
 static void cursor_draw(unsigned char *fb, unsigned int pitch, unsigned int fb_w, unsigned int fb_h,
                         int x, int y)
 {
-    cursor_bar(fb, pitch, fb_w, fb_h, x - 8, y - 1, 17, 3, 0x00FFF1F2UL);
-    cursor_bar(fb, pitch, fb_w, fb_h, x - 1, y - 8, 3, 17, 0x00FFF1F2UL);
-    cursor_bar(fb, pitch, fb_w, fb_h, x - 6, y, 13, 1, 0x00111827UL);
-    cursor_bar(fb, pitch, fb_w, fb_h, x, y - 6, 1, 13, 0x00111827UL);
+    int dy;
+    int dx;
+    for (dy = 0; dy < CUR_H; dy++) {
+        for (dx = 0; dx < CUR_W; dx++) {
+            unsigned char cell = g_cur_bits[dy][dx];
+            int px;
+            int py;
+            unsigned int *pix;
+            if (cell == 0) {
+                continue;
+            }
+            px = x - CUR_HX + dx;
+            py = y - CUR_HY + dy;
+            if (px < 0 || py < 0 || (unsigned)px >= fb_w || (unsigned)py >= fb_h) {
+                continue;
+            }
+            pix = (unsigned int *)(fb + (unsigned long)py * pitch);
+            pix[px] = (cell == 1) ? 0x00111827UL : 0x00FFF1F2UL;
+        }
+    }
 }
 
 static void cursor_place(struct wl_state *st, int x, int y)
@@ -283,7 +291,7 @@ static void cursor_place(struct wl_state *st, int x, int y)
 
 static void cursor_loop(struct wl_state *st)
 {
-    static const char curon[] = "[wl] cursor on\n";
+    static const char curon[] = "[wl] cursor arrow\n";
     static int logged;
     long ret;
     if (st->fb_w == 0 || st->fb_h == 0) {
