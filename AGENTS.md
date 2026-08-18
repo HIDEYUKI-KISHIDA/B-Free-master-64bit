@@ -29,22 +29,26 @@ Makefile) and `smartphone-tron-os/` is spec/docs only.
 ### Known gaps (code/packaging, NOT environment issues)
 The committed state of this branch is **not** a clean, fully buildable OS; the
 maintainer builds from a local, partially-uncommitted working tree. Expect:
-- **Never-committed build inputs** (gitignored or simply absent):
-  `bfree_x86_64/multiboot2_header.S`, `bfree_x86_64/userland/embedded/`,
-  `bfree_x86_64/iso_root/` (incl. `boot/grub/grub.cfg`),
+- **Never-committed Qt-desk inputs** (gitignored or simply absent):
+  `bfree_x86_64/userland/embedded/`,
+  `bfree_x86_64/iso_root/` (runtime copy of `iso_skel/`),
   `bfree_x86_64/userland/init/`, `bfree_x86_64/userland/busybox_guest/`, and
-  `bfree_x86_64/build.sh`. Therefore the documented full ISO/QEMU flows
+  `bfree_x86_64/build.sh`. Hello ISO does **not** need those:
+  `tools/make_hello_iso.sh` uses committed `iso_skel/` + `make -C kernel`.
+  The documented full Qt-desk flows
   (`tools/build_busybox_iso.sh`, the `tools/*_smoke.sh` scripts) do **not** run
   as-is from a clean checkout.
-- `kernel/Makefile`'s default `all` target regenerates the (already committed)
-  `kernel/sysmain/user_hello_elf.c` from the missing `userland/embedded/user_hello.S`
-  chain and fails. The embedded hello ELF is already committed; the multiboot2
-  header + `_start` already live in `kernel/sysmain/sysdepend/x86_64/reset.S`, so
-  `../multiboot2_header.S` is redundant.
-- The committed kernel does **not** compile/link cleanly: `syscall.c` uses
-  undefined macros `BFREE_MAX_SIGNALFD` / `BFREE_SIGNALFD_FD_BASE`, and `vmm.c`
-  references undefined globals `g_bfree_shell_text_fp` / `g_bfree_shell_text_fp_valid`.
-- Curated tests `userland/ltp_curated` and `userland/libc_test_curated` fail to
+The committed kernel **does** `make -C bfree_x86_64/kernel` from a
+clean checkout: skip missing `../multiboot2_header.S` (header is in
+`reset.S`), keep committed `user_hello_elf.c` if `userland/embedded/`
+is absent, define `BFREE_MAX_SIGNALFD` / `BFREE_SIGNALFD_FD_BASE`, and
+define `g_bfree_shell_text_fp*` so `--no-undefined` links. Hello ISO:
+`bash bfree_x86_64/tools/make_hello_iso.sh` → `bfree-hello.iso` (never
+`bfree.iso`). Recipe: `bfree_x86_64/docs/ISO_RECIPE.ja.md`. That ISO is
+**not** the Qt desk. Daily `bfree.iso` / `kernel.elf.g1-desk` stay
+untouched. From-source kernel is still not the daily g1-desk binary.
+
+Curated tests `userland/ltp_curated` and `userland/libc_test_curated` fail to
   build against Ubuntu's musl 1.2.4 (`renameat2`, `struct statx`) — version
   sensitive.
 
