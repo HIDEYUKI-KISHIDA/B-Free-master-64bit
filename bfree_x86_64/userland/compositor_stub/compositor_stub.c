@@ -219,8 +219,14 @@ struct stub_win {
     int w;
     int h;
     int z;
+    int minimized;
+    int maximized;
+    int rx;
+    int ry;
+    int rw;
+    int rh;
     unsigned out_n;
-    char out[160];
+    char out[200];
 };
 static struct stub_win g_wins[WIN_MAX];
 static int g_win_n;
@@ -228,6 +234,35 @@ static int g_zseq;
 static int g_focus;
 static unsigned int g_prev_btn;
 static int g_start_open;
+static unsigned g_dw;
+static unsigned g_dh;
+static int g_wm_mode;
+static int g_wm_win;
+static int g_wm_gx;
+static int g_wm_gy;
+static int g_wm_ox;
+static int g_wm_oy;
+static int g_wm_ow;
+static int g_wm_oh;
+static char g_tline[48];
+static unsigned g_tlen;
+
+#define HIT_NONE 0
+#define HIT_CLOSE 1
+#define HIT_MAX 2
+#define HIT_MIN 3
+#define HIT_TITLE 4
+#define HIT_SE 5
+#define HIT_CLIENT 6
+#define WIN_MIN_W 280
+#define WIN_MIN_H 180
+
+static void win_refocus(void);
+static void win_raise(int wi);
+static void win_close(int wi);
+static void desk_present(struct wl_state *st);
+static long run_busybox(char *out, unsigned cap, unsigned *out_n, const char *a1, const char *a2);
+static void buf_put(char *d, unsigned cap, unsigned *n, const char *s, unsigned sn);
 
 static unsigned cstr_n(const char *s)
 {
@@ -499,7 +534,7 @@ static int hit_win_top(int mx, int my)
     int bz = -1;
     int i;
     for (i = 0; i < WIN_MAX; i++) {
-        if (!g_wins[i].open) {
+        if (!g_wins[i].open || g_wins[i].minimized) {
             continue;
         }
         if (mx < g_wins[i].x || my < g_wins[i].y) {
@@ -516,16 +551,260 @@ static int hit_win_top(int mx, int my)
     return best;
 }
 
-static int hit_close(int wi, int mx, int my)
+static int hit_part(int wi, int mx, int my)
 {
-    int x;
-    int y;
-    if (wi < 0 || !g_wins[wi].open) {
-        return 0;
+    struct stub_win *w;
+    if (wi < 0 || !g_wins[wi].open || g_wins[wi].minimized) {
+        return HIT_NONE;
     }
-    x = g_wins[wi].x + g_wins[wi].w - 40;
-    y = g_wins[wi].y + 6;
-    return (mx >= x && mx < x + 32 && my >= y && my < y + 26) ? 1 : 0;
+    w = &g_wins[wi];
+    if (mx < w->x || mx >= w->x + w->w || my < w->y || my >= w->y + w->h) {
+        return HIT_NONE;
+    }
+    if (my < w->y + WIN_TITLE_H) {
+        if (mx >= w->x + w->w - 40) {
+            return HIT_CLOSE;
+        }
+        if (mx >= w->x + w->w - 76) {
+            return HIT_MAX;
+        }
+        if (mx >= w->x + w->w - 112) {
+            return HIT_MIN;
+        }
+        return HIT_TITLE;
+    }
+    if (!w->maximized && mx >= w->x + w->w - 16 && my >= w->y + w->h - 16) {
+        return HIT_SE;
+    }
+    return HIT_CLIENT;
+}
+
+static void win_clamp(struct stub_win *w)
+{
+    int bar = (int)desk_bar(g_dh);
+    int desk_h = (int)g_dh - bar;
+    if (desk_h < WIN_MIN_H) {
+        desk_h = WIN_MIN_H;
+    }
+    if (w->w < WIN_MIN_W) {
+        w->w = WIN_MIN_W;
+    }
+    if (w->h < WIN_MIN_H) {
+        w->h = WIN_MIN_H;
+    }
+    if (w->w > (int)g_dw) {
+        w->w = (int)g_dw;
+    }
+    if (w->h > desk_h) {
+        w->h = desk_h;
+    }
+    if (w->x < 0) {
+        w->x = 0;
+    }
+    if (w->y < 0) {
+        w->y = 0;
+    }
+    if (w->x + w->w > (int)g_dw) {
+        w->x = (int)g_dw - w->w;
+    }
+    if (w->y + w->h > desk_h) {
+        w->y = desk_h - w->h;
+    }
+}
+
+static void win_minimize(int wi)
+{
+    if (wi < 0 || !g_wins[wi].open) {
+        return;
+    }
+    g_wins[wi].minimized = 1;
+    if (g_wm_win == wi) {
+        g_wm_mode = 0;
+        g_wm_win = -1;
+    }
+    serial("[wl] wm min\n", 12);
+    win_refocus();
+}
+
+static void win_maximize(int wi)
+{
+    struct stub_win *w;
+    int bar;
+    if (wi < 0 || !g_wins[wi].open) {
+        return;
+    }
+    w = &g_wins[wi];
+    if (w->maximized) {
+        w->maximized = 0;
+        w->x = w->rx;
+        w->y = w->ry;
+        w->w = w->rw;
+        w->h = w->rh;
+        win_clamp(w);
+        serial("[wl] wm restore\n", 16);
+    } else {
+        w->rx = w->x;
+        w->ry = w->y;
+        w->rw = w->w;
+        w->rh = w->h;
+        w->maximized = 1;
+        w->minimized = 0;
+        bar = (int)desk_bar(g_dh);
+        w->x = 0;
+        w->y = 0;
+        w->w = (int)g_dw;
+        w->h = (int)g_dh - bar;
+        serial("[wl] wm max\n", 12);
+    }
+    win_raise(wi);
+}
+
+static void wm_begin(int mode, int wi, int mx, int my)
+{
+    struct stub_win *w;
+    if (wi < 0 || !g_wins[wi].open) {
+        return;
+    }
+    w = &g_wins[wi];
+    if (w->maximized && mode >= 2) {
+        return;
+    }
+    g_wm_mode = mode;
+    g_wm_win = wi;
+    g_wm_gx = mx;
+    g_wm_gy = my;
+    g_wm_ox = w->x;
+    g_wm_oy = w->y;
+    g_wm_ow = w->w;
+    g_wm_oh = w->h;
+    win_raise(wi);
+    serial(mode == 1 ? "[wl] wm drag\n" : "[wl] wm resize\n", mode == 1 ? 13 : 15);
+}
+
+static void wm_apply(int mx, int my)
+{
+    struct stub_win *w;
+    int dx;
+    int dy;
+    if (g_wm_mode == 0 || g_wm_win < 0) {
+        return;
+    }
+    w = &g_wins[g_wm_win];
+    dx = mx - g_wm_gx;
+    dy = my - g_wm_gy;
+    if (g_wm_mode == 1) {
+        w->x = g_wm_ox + dx;
+        w->y = g_wm_oy + dy;
+    } else if (g_wm_mode == 2) {
+        w->w = g_wm_ow + dx;
+        w->h = g_wm_oh + dy;
+    }
+    win_clamp(w);
+}
+
+static void wm_end(void)
+{
+    if (g_wm_mode) {
+        serial("[wl] wm end\n", 12);
+        g_wm_mode = 0;
+        g_wm_win = -1;
+    }
+}
+
+static int hit_task_slot(int mx, int my)
+{
+    int bar = (int)desk_bar(g_dh);
+    int y0 = (int)g_dh - bar + 10;
+    int n = 0;
+    int i;
+    if (my < y0 || my >= y0 + 32) {
+        return -1;
+    }
+    for (i = 0; i < WIN_MAX; i++) {
+        int x0;
+        if (!g_wins[i].open) {
+            continue;
+        }
+        x0 = 300 + n * 110;
+        n++;
+        if (mx >= x0 && mx < x0 + 100) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void term_run(struct stub_win *w)
+{
+    char cmd[24];
+    char arg[24];
+    char tmp[200];
+    unsigned n = 0;
+    unsigned i = 0;
+    unsigned c = 0;
+    unsigned a = 0;
+    const char *a2;
+    while (i < g_tlen && g_tline[i] == ' ') {
+        i++;
+    }
+    while (i < g_tlen && g_tline[i] != ' ' && c + 1U < sizeof cmd) {
+        cmd[c++] = g_tline[i++];
+    }
+    cmd[c] = 0;
+    while (i < g_tlen && g_tline[i] == ' ') {
+        i++;
+    }
+    while (i < g_tlen && a + 1U < sizeof arg) {
+        arg[a++] = g_tline[i++];
+    }
+    arg[a] = 0;
+    g_tlen = 0;
+    g_tline[0] = 0;
+    if (c == 0) {
+        return;
+    }
+    a2 = a ? arg : 0;
+    if (cmd[0] == 'l' && cmd[1] == 's' && cmd[2] == 0 && !a2) {
+        a2 = "/";
+    }
+    tmp[0] = 0;
+    (void)run_busybox(tmp, (unsigned)sizeof tmp, &n, cmd, a2);
+    w->out_n = 0;
+    w->out[0] = 0;
+    buf_put(w->out, (unsigned)sizeof w->out, &w->out_n, tmp, n);
+    serial("[wl] term run\n", 14);
+}
+
+static void term_key(struct wl_state *st, unsigned k)
+{
+    struct stub_win *w;
+    if (g_focus < 0 || !g_wins[g_focus].open || g_wins[g_focus].app != 2) {
+        return;
+    }
+    w = &g_wins[g_focus];
+    if (k == 27U) {
+        win_close(g_focus);
+        desk_present(st);
+        return;
+    }
+    if (k == 13U || k == 10U) {
+        term_run(w);
+        desk_present(st);
+        return;
+    }
+    if (k == 8U || k == 127U) {
+        if (g_tlen > 0) {
+            g_tlen--;
+            g_tline[g_tlen] = 0;
+            desk_present(st);
+        }
+        return;
+    }
+    if (k >= 32U && k < 127U && g_tlen + 1U < sizeof g_tline) {
+        g_tline[g_tlen++] = (char)k;
+        g_tline[g_tlen] = 0;
+        desk_present(st);
+    }
 }
 
 static void win_refocus(void)
@@ -534,7 +813,7 @@ static void win_refocus(void)
     int best = -1;
     int bz = -1;
     for (i = 0; i < WIN_MAX; i++) {
-        if (g_wins[i].open && g_wins[i].z > bz) {
+        if (g_wins[i].open && !g_wins[i].minimized && g_wins[i].z > bz) {
             bz = g_wins[i].z;
             best = i;
         }
@@ -658,6 +937,8 @@ static void win_close(int wi)
         return;
     }
     g_wins[wi].open = 0;
+    g_wins[wi].minimized = 0;
+    g_wins[wi].maximized = 0;
     serial("[wl] desk close\n", 16);
     win_refocus();
 }
@@ -677,6 +958,7 @@ static void win_open(int app)
         }
     }
     if (existing >= 0) {
+        g_wins[existing].minimized = 0;
         win_raise(existing);
         serial("[wl] desk raise ", 16);
         serial(g_title[app], cstr_n(g_title[app]));
@@ -705,27 +987,37 @@ static void win_open(int app)
     }
     g_wins[slot].open = 1;
     g_wins[slot].app = app;
+    g_wins[slot].minimized = 0;
+    g_wins[slot].maximized = 0;
     if (app == 2) {
         g_wins[slot].w = 640;
         g_wins[slot].h = 420;
         g_wins[slot].x = 100 + (slot % 3) * 40;
         g_wins[slot].y = 40 + (slot % 3) * 24;
+    } else if (app == 0) {
+        g_wins[slot].w = 720;
+        g_wins[slot].h = 480;
+        g_wins[slot].x = 80 + (slot % 3) * 24;
+        g_wins[slot].y = 48 + (slot % 3) * 20;
     } else {
         g_wins[slot].w = 520;
         g_wins[slot].h = 320;
         g_wins[slot].x = 120 + (slot % 3) * 40;
         g_wins[slot].y = 80 + (slot % 3) * 36;
     }
+    g_wins[slot].rx = g_wins[slot].x;
+    g_wins[slot].ry = g_wins[slot].y;
+    g_wins[slot].rw = g_wins[slot].w;
+    g_wins[slot].rh = g_wins[slot].h;
     win_raise(slot);
     serial("[wl] desk open ", 15);
     serial(g_title[app], cstr_n(g_title[app]));
     serial("\n", 1);
     g_wins[slot].out_n = 0;
     g_wins[slot].out[0] = 0;
-    if (app == 2) {
-        (void)run_busybox(g_wins[slot].out, (unsigned)sizeof g_wins[slot].out, &g_wins[slot].out_n,
-                          "echo", "hello");
-    } else if (app == 0) {
+    g_tlen = 0;
+    g_tline[0] = 0;
+    if (app == 0) {
         (void)run_busybox(g_wins[slot].out, (unsigned)sizeof g_wins[slot].out, &g_wins[slot].out_n,
                           "ls", "/");
     }
@@ -738,6 +1030,10 @@ static void paint_one_win(struct wl_state *st, int wi)
     unsigned int border = (wi == g_focus) ? 0x0064748BUL : 0x0094A3B8UL;
     int bw = (wi == g_focus) ? 2 : 1;
     int app = w->app;
+    int client_y;
+    if (w->minimized) {
+        return;
+    }
     fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
               (unsigned)(w->x + 5), (unsigned)(w->y + 7), (unsigned)w->w, (unsigned)w->h, 0x002A3545UL);
     fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
@@ -758,39 +1054,113 @@ static void paint_one_win(struct wl_state *st, int wi)
     fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12, w->y + 12, g_acro[app], 0x00F8FAFCUL, 1);
     fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 44, w->y + 11, g_title[app], 0x00F8FAFCUL, 2);
     fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+              (unsigned)(w->x + w->w - 112), (unsigned)(w->y + 6), 32, 26, 0x00406090UL);
+    fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+              (unsigned)(w->x + w->w - 102), (unsigned)(w->y + 18), 12, 2, 0x00F8FAFCUL);
+    fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+              (unsigned)(w->x + w->w - 76), (unsigned)(w->y + 6), 32, 26, 0x00406090UL);
+    fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+              (unsigned)(w->x + w->w - 66), (unsigned)(w->y + 12), 14, 14, 0x00F8FAFCUL);
+    fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+              (unsigned)(w->x + w->w - 64), (unsigned)(w->y + 14), 10, 10, 0x00406090UL);
+    fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
               (unsigned)(w->x + w->w - 40), (unsigned)(w->y + 6), 32, 26, 0x00B91C1CUL);
     fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + w->w - 28, w->y + 12, "X", 0x00F8FAFCUL, 2);
-    fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
-              (unsigned)(w->x + bw), (unsigned)(w->y + WIN_TITLE_H), (unsigned)(w->w - 2 * bw),
-              (unsigned)(w->h - WIN_TITLE_H - bw), 0x00F1F5F9UL);
-    if (w->out_n > 0) {
-        unsigned off = 0;
-        int line = 0;
-        while (off < w->out_n && line < 12) {
-            char row[41];
-            unsigned k = 0;
-            while (k < 40U && off < w->out_n) {
-                char c = w->out[off++];
-                if (c == '|') {
-                    break;
+    if (app == 2) {
+        fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                  (unsigned)(w->x + bw), (unsigned)(w->y + WIN_TITLE_H), (unsigned)(w->w - 2 * bw),
+                  (unsigned)(w->h - WIN_TITLE_H - bw), 0x000D1B2AUL);
+        {
+            unsigned off = 0;
+            int line = 0;
+            char prompt[56];
+            unsigned p = 0;
+            while (off < w->out_n && line < 14) {
+                char row[41];
+                unsigned k = 0;
+                while (k < 40U && off < w->out_n) {
+                    char c = w->out[off++];
+                    if (c == '|') {
+                        break;
+                    }
+                    row[k++] = c;
                 }
-                row[k++] = c;
+                row[k] = 0;
+                if (k > 0) {
+                    fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12,
+                            w->y + WIN_TITLE_H + 10 + line * 14, row, 0x004ADE80UL, 1);
+                }
+                line++;
             }
-            row[k] = 0;
-            if (k > 0) {
-                fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16,
-                        w->y + WIN_TITLE_H + 16 + line * 14, row, 0x000F766EUL, 1);
+            prompt[p++] = '#';
+            prompt[p++] = ' ';
+            {
+                unsigned i;
+                for (i = 0; i < g_tlen && p + 1U < sizeof prompt; i++) {
+                    prompt[p++] = g_tline[i];
+                }
             }
-            line++;
+            prompt[p] = 0;
+            fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12,
+                    w->y + WIN_TITLE_H + 10 + line * 14, prompt, 0x00E2E8F0UL, 1);
+            fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                      (unsigned)(w->x + 12 + (int)p * 6), (unsigned)(w->y + WIN_TITLE_H + 10 + line * 14),
+                      8, 12, 0x00E2E8F0UL);
+        }
+    } else if (app == 0) {
+        client_y = w->y + WIN_TITLE_H;
+        fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                  (unsigned)(w->x + bw), (unsigned)client_y, (unsigned)(w->w - 2 * bw), 28, 0x00F3F4F6UL);
+        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 12, client_y + 8, "New  Cut  Copy", 0x00334155UL, 1);
+        fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                  (unsigned)(w->x + bw), (unsigned)(client_y + 28), (unsigned)(w->w - 2 * bw), 24, 0x00FFFFFFUL);
+        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, client_y + 34, "/", 0x00334155UL, 1);
+        fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                  (unsigned)(w->x + bw), (unsigned)(client_y + 52), 132,
+                  (unsigned)(w->h - WIN_TITLE_H - 52 - bw), 0x00EEF2F6UL);
+        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, client_y + 64, "Home", 0x001D4ED8UL, 1);
+        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, client_y + 84, "persist", 0x00334155UL, 1);
+        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, client_y + 104, "bin", 0x00334155UL, 1);
+        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, client_y + 124, "tmp", 0x00334155UL, 1);
+        fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                  (unsigned)(w->x + 132 + bw), (unsigned)(client_y + 52), (unsigned)(w->w - 132 - 2 * bw),
+                  (unsigned)(w->h - WIN_TITLE_H - 52 - bw), 0x00FFFFFFUL);
+        {
+            unsigned off = 0;
+            int line = 0;
+            while (off < w->out_n && line < 12) {
+                char row[28];
+                unsigned k = 0;
+                while (k < 24U && off < w->out_n) {
+                    char c = w->out[off++];
+                    if (c == '|') {
+                        break;
+                    }
+                    row[k++] = c;
+                }
+                row[k] = 0;
+                if (k > 0) {
+                    fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                              (unsigned)(w->x + 148), (unsigned)(client_y + 60 + line * 22), 18, 16, 0x001D4ED8UL);
+                    fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 172, client_y + 64 + line * 22,
+                            row, 0x001E293BUL, 1);
+                }
+                line++;
+            }
         }
     } else {
+        fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                  (unsigned)(w->x + bw), (unsigned)(w->y + WIN_TITLE_H), (unsigned)(w->w - 2 * bw),
+                  (unsigned)(w->h - WIN_TITLE_H - bw), 0x00F1F5F9UL);
         fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, w->y + WIN_TITLE_H + 16,
-                "FB window", 0x00334155UL, 1);
-        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, w->y + WIN_TITLE_H + 36,
-                "not desktop.elf", 0x0064748BUL, 1);
+                g_title[app], 0x00334155UL, 1);
     }
-    fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, w->y + w->h - 24,
-            "X closes", 0x0064748BUL, 1);
+    if (!w->maximized) {
+        fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                  (unsigned)(w->x + w->w - 18), (unsigned)(w->y + w->h - 6), 14, 4, 0x001E293BUL);
+        fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
+                  (unsigned)(w->x + w->w - 6), (unsigned)(w->y + w->h - 18), 4, 14, 0x001E293BUL);
+    }
 }
 
 static void paint_start(struct wl_state *st)
@@ -827,7 +1197,7 @@ static void paint_windows(struct wl_state *st)
     int b;
     int i;
     for (i = 0; i < WIN_MAX; i++) {
-        if (g_wins[i].open) {
+        if (g_wins[i].open && !g_wins[i].minimized) {
             order[n++] = i;
         }
     }
@@ -842,6 +1212,23 @@ static void paint_windows(struct wl_state *st)
     }
     for (i = 0; i < n; i++) {
         paint_one_win(st, order[i]);
+    }
+    {
+        int bar = (int)desk_bar(st->fb_h);
+        int slotn = 0;
+        for (i = 0; i < WIN_MAX; i++) {
+            int x0;
+            if (!g_wins[i].open) {
+                continue;
+            }
+            x0 = 300 + slotn * 110;
+            slotn++;
+            fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h, (unsigned)x0,
+                      (unsigned)(st->fb_h - (unsigned)bar + 10), 100, 32,
+                      (i == g_focus && !g_wins[i].minimized) ? 0x001A3060UL : 0x00152538UL);
+            fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, x0 + 8,
+                    (int)st->fb_h - bar + 20, g_acro[g_wins[i].app], 0x00C8DCEDUL, 1);
+        }
     }
     paint_start(st);
 }
@@ -859,6 +1246,8 @@ static void desk_click(struct wl_state *st, int mx, int my)
     int si;
     int wi;
     int hit;
+    int part;
+    int tslot;
     si = hit_start_item(mx, my, st->fb_w, st->fb_h);
     if (si >= 0) {
         g_start_open = 0;
@@ -873,6 +1262,17 @@ static void desk_click(struct wl_state *st, int mx, int my)
         desk_present(st);
         return;
     }
+    tslot = hit_task_slot(mx, my);
+    if (tslot >= 0) {
+        if (tslot == g_focus && !g_wins[tslot].minimized) {
+            win_minimize(tslot);
+        } else {
+            g_wins[tslot].minimized = 0;
+            win_raise(tslot);
+        }
+        desk_present(st);
+        return;
+    }
     if (g_start_open) {
         g_start_open = 0;
         serial("[wl] Start close\n", 17);
@@ -881,8 +1281,33 @@ static void desk_click(struct wl_state *st, int mx, int my)
     }
     wi = hit_win_top(mx, my);
     if (wi >= 0) {
-        if (hit_close(wi, mx, my)) {
+        part = hit_part(wi, mx, my);
+        if (part == HIT_CLOSE) {
             win_close(wi);
+            desk_present(st);
+            return;
+        }
+        if (part == HIT_MIN) {
+            win_minimize(wi);
+            desk_present(st);
+            return;
+        }
+        if (part == HIT_MAX) {
+            win_maximize(wi);
+            desk_present(st);
+            return;
+        }
+        if (part == HIT_TITLE) {
+            if (!g_wins[wi].maximized) {
+                wm_begin(1, wi, mx, my);
+            } else {
+                win_raise(wi);
+            }
+            desk_present(st);
+            return;
+        }
+        if (part == HIT_SE) {
+            wm_begin(2, wi, mx, my);
             desk_present(st);
             return;
         }
@@ -908,9 +1333,13 @@ static void cursor_loop(struct wl_state *st)
     }
     g_mx = (int)(st->fb_w / 2U);
     g_my = (int)(st->fb_h / 2U);
+    g_dw = st->fb_w;
+    g_dh = st->fb_h;
     g_prev_btn = 0;
     g_zseq = 1;
     g_focus = -1;
+    g_wm_mode = 0;
+    g_wm_win = -1;
     cursor_place(st, g_mx, g_my);
     serial(curon, sizeof(curon) - 1);
     for (;;) {
@@ -926,6 +1355,10 @@ static void cursor_loop(struct wl_state *st)
             if (ret <= 0) {
                 break;
             }
+            if (g_poll.type == 1) {
+                term_key(st, g_poll.keycode);
+                continue;
+            }
             if (g_poll.type != 3) {
                 continue;
             }
@@ -939,6 +1372,11 @@ static void cursor_loop(struct wl_state *st)
             }
             if ((btn & 1U) && !(g_prev_btn & 1U)) {
                 desk_click(st, g_mx, g_my);
+            } else if (!(btn & 1U) && (g_prev_btn & 1U)) {
+                wm_end();
+            } else if (g_wm_mode && (btn & 1U)) {
+                wm_apply(g_mx, g_my);
+                desk_present(st);
             } else if (g_mx != g_cur_sx || g_my != g_cur_sy) {
                 cursor_place(st, g_mx, g_my);
             }
@@ -1074,6 +1512,10 @@ static int glyph_row(char c, int row)
     static const unsigned char n2[7] = {0x0E, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1F};
     static const unsigned char col[7] = {0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00};
     static const unsigned char st[7] = {0x00, 0x15, 0x0E, 0x1F, 0x0E, 0x15, 0x00};
+    static const unsigned char mn[7] = {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00};
+    static const unsigned char sl[7] = {0x01, 0x02, 0x04, 0x04, 0x08, 0x10, 0x10};
+    static const unsigned char dt[7] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C};
+    static const unsigned char hs[7] = {0x0A, 0x0A, 0x1F, 0x0A, 0x1F, 0x0A, 0x0A};
     const unsigned char *g = 0;
     if (row < 0 || row > 6) {
         return 0;
@@ -1192,6 +1634,14 @@ static int glyph_row(char c, int row)
         g = col;
     } else if (c == '*') {
         g = st;
+    } else if (c == '-') {
+        g = mn;
+    } else if (c == '/') {
+        g = sl;
+    } else if (c == '.') {
+        g = dt;
+    } else if (c == '#') {
+        g = hs;
     } else {
         return 0;
     }

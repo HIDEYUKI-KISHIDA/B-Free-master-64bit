@@ -311,8 +311,11 @@ Desk wallpaper/icons/taskbar go through **one** `wl_shm` surface
 then blit. Cursor, Start panel, and windows are **software FB**
 overlays (5×7 glyphs, no GPU, no Qt scene graph). Host
 `DesktopShell.qml` Start is QML; this Start list is not that.
-Terminal/Explorer then `vfork`+pipe+`execve("/busybox.elf")`
-(`echo hello` / `ls /`) and paint captured stdout. That is a
+Windows: title drag, SE resize, min/max/close, taskbar slots.
+Terminal shows `# ` prompt; Enter runs busybox (`ls /`, `echo hi`).
+Explorer is a guest lookalike (sidebar + `ls /`), not host
+Explorer.exe. Terminal/Explorer `vfork`+pipe+`execve("/busybox.elf")`
+and paint captured stdout. That is a
 real busybox process, not `desktop.elf`. Do **not**
 `execve("desktop.elf")` on `g1-desk` (unknown names become
 busybox, or QPA would steal FB). From-source kernel on the
