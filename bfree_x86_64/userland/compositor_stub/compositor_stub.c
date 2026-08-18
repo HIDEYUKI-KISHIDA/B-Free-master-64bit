@@ -1,10 +1,9 @@
 /* Freestanding guest compositor. Reached via init_tramp exec_initrd (APP role).
  * APP Linux sockets: 41 socket, 49 bind, 50 listen, 42 connect, 43 accept.
- * Listen on AF_UNIX /tmp/wayland-0. vfork child connect()s and creates one
- * xdg_toplevel (wl_shm buffer). Compositor owns the FB (wallpaper) and blits
- * that window. Not product DesktopShell.qml, not Qt, not GPU. Do not execve
- * desktop.elf on g1-desk. Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso.
- * Do not GUI_FIRST. Cursor / Start / lookalike apps stay FB overlays.
+ * Two xdg_toplevels from one vfork client: fullscreen desk chrome (icons/bar)
+ * and a small app window. Compositor composites + cursor. Not product
+ * DesktopShell.qml, not Qt, not GPU. Do not execve desktop.elf on g1-desk.
+ * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
 #define BFREE_FB0_FD 0x2000
 #define WL_SHM_FORMAT_XRGB8888 1
@@ -42,13 +41,9 @@ struct fbinfo {
     int ready;
 };
 
-struct wl_state {
-    unsigned char *fb;
-    unsigned int fb_pitch;
-    unsigned int fb_w;
-    unsigned int fb_h;
-    unsigned char *pool;
-    unsigned int pool_size;
+#define WL_VIEW_N 2
+
+struct wl_view {
     unsigned int buf_off;
     unsigned int buf_w;
     unsigned int buf_h;
@@ -56,9 +51,19 @@ struct wl_state {
     unsigned int buf_format;
     unsigned int attached;
     unsigned int committed;
+    int x;
+    int y;
+};
+
+struct wl_state {
+    unsigned char *fb;
+    unsigned int fb_pitch;
+    unsigned int fb_w;
+    unsigned int fb_h;
+    unsigned char *pool;
+    unsigned int pool_size;
+    struct wl_view view[WL_VIEW_N];
     unsigned int xdg;
-    int win_x;
-    int win_y;
 };
 
 static long sys6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
@@ -146,27 +151,32 @@ static void fill_rect(unsigned char *fb, unsigned int pitch, unsigned int fb_w, 
     }
 }
 
-static void blit_shm(struct wl_state *st)
+static void blit_view(struct wl_state *st, unsigned vi)
 {
+    struct wl_view *v;
     unsigned int x0;
     unsigned int y0;
     unsigned int y;
     unsigned int x;
-    if (!st->fb || !st->pool || !st->attached || st->buf_format != WL_SHM_FORMAT_XRGB8888) {
+    if (vi >= WL_VIEW_N) {
         return;
     }
-    if (st->buf_w == 0 || st->buf_h == 0 || st->buf_stride < st->buf_w * 4U) {
+    v = &st->view[vi];
+    if (!st->fb || !st->pool || !v->attached || v->buf_format != WL_SHM_FORMAT_XRGB8888) {
         return;
     }
-    if (st->buf_off + st->buf_stride * st->buf_h > st->pool_size) {
+    if (v->buf_w == 0 || v->buf_h == 0 || v->buf_stride < v->buf_w * 4U) {
         return;
     }
-    x0 = st->xdg ? (unsigned int)(st->win_x < 0 ? 0 : st->win_x) : 0U;
-    y0 = st->xdg ? (unsigned int)(st->win_y < 0 ? 0 : st->win_y) : 0U;
-    for (y = 0; y < st->buf_h && (y0 + y) < st->fb_h; y++) {
+    if (v->buf_off + v->buf_stride * v->buf_h > st->pool_size) {
+        return;
+    }
+    x0 = (unsigned int)(v->x < 0 ? 0 : v->x);
+    y0 = (unsigned int)(v->y < 0 ? 0 : v->y);
+    for (y = 0; y < v->buf_h && (y0 + y) < st->fb_h; y++) {
         unsigned int *dst = (unsigned int *)(st->fb + (unsigned long)(y0 + y) * st->fb_pitch);
-        unsigned int *src = (unsigned int *)(st->pool + st->buf_off + (unsigned long)y * st->buf_stride);
-        unsigned int limit = st->buf_w;
+        unsigned int *src = (unsigned int *)(st->pool + v->buf_off + (unsigned long)y * v->buf_stride);
+        unsigned int limit = v->buf_w;
         if (x0 + limit > st->fb_w) {
             limit = st->fb_w - x0;
         }
@@ -174,16 +184,43 @@ static void blit_shm(struct wl_state *st)
             dst[x0 + x] = src[x];
         }
     }
-    st->committed = 1;
+    v->committed = 1;
 }
 
-static void blit_shm_rect(struct wl_state *st, int x0, int y0, int rw, int rh)
+static void blit_shm(struct wl_state *st)
+{
+    unsigned i;
+    unsigned any = 0;
+    for (i = 0; i < WL_VIEW_N; i++) {
+        if (st->view[i].attached) {
+            blit_view(st, i);
+            any = 1;
+        }
+    }
+    if (any) {
+        st->xdg = 1;
+    }
+}
+
+static unsigned wl_committed(struct wl_state *st)
+{
+    unsigned i;
+    for (i = 0; i < WL_VIEW_N; i++) {
+        if (st->view[i].committed) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void __attribute__((unused)) blit_shm_rect(struct wl_state *st, int x0, int y0, int rw, int rh)
 {
     int y;
     int x;
     int x1;
     int y1;
-    if (!st->fb || !st->pool || !st->attached || st->buf_format != WL_SHM_FORMAT_XRGB8888) {
+    if (!st->fb || !st->pool || !st->view[0].attached ||
+        st->view[0].buf_format != WL_SHM_FORMAT_XRGB8888) {
         return;
     }
     if (rw <= 0 || rh <= 0) {
@@ -214,12 +251,12 @@ static void blit_shm_rect(struct wl_state *st, int x0, int y0, int rw, int rh)
     for (y = y0; y < y1; y++) {
         unsigned int *dst;
         unsigned int *src;
-        if ((unsigned)y >= st->buf_h) {
+        if ((unsigned)y >= st->view[0].buf_h) {
             break;
         }
         dst = (unsigned int *)(st->fb + (unsigned long)y * st->fb_pitch);
-        src = (unsigned int *)(st->pool + st->buf_off + (unsigned long)y * st->buf_stride);
-        for (x = x0; x < x1 && (unsigned)x < st->buf_w; x++) {
+        src = (unsigned int *)(st->pool + st->view[0].buf_off + (unsigned long)y * st->view[0].buf_stride);
+        for (x = x0; x < x1 && (unsigned)x < st->view[0].buf_w; x++) {
             dst[x] = src[x];
         }
     }
@@ -1470,62 +1507,6 @@ static void paint_windows(struct wl_state *st)
     paint_start(st);
 }
 
-/* Compositor-owned desk chrome (icons + taskbar). Not the Wayland surface. */
-static void paint_desk_chrome(struct wl_state *st)
-{
-    unsigned int w = st->fb_w;
-    unsigned int h = st->fb_h;
-    unsigned int bar = desk_bar(h);
-    unsigned int i;
-    unsigned int tile = 48;
-    int x;
-    int y;
-    fill_rect(st->fb, st->fb_pitch, w, h, 0, 0, w, h, 0x007A8FA8UL);
-    fill_rect(st->fb, st->fb_pitch, w, h, 0, h - bar, w, bar, 0x000D1B2AUL);
-    fill_rect(st->fb, st->fb_pitch, w, h, 0, h - bar, w, 1, 0x001E3050UL);
-    fill_rect(st->fb, st->fb_pitch, w, h, 8, h - bar + 6, 56, 40, 0x001A3060UL);
-    fb_text(st->fb, st->fb_pitch, w, h, 16, (int)(h - bar + 18), "Start", 0x00C8DCEDUL, 1);
-    fill_rect(st->fb, st->fb_pitch, w, h, 72, h - bar + 10, 220, 32, 0x001A2D42UL);
-    fb_text(st->fb, st->fb_pitch, w, h, 84, (int)(h - bar + 18), "Q", 0x0088AAC0UL, 1);
-    fb_text(st->fb, st->fb_pitch, w, h, 100, (int)(h - bar + 20), "Search", 0x00557090UL, 1);
-    if (w > 260U) {
-        fill_rect(st->fb, st->fb_pitch, w, h, w - 264, h - bar + 10, 36, 32, 0x00152538UL);
-        fb_text(st->fb, st->fb_pitch, w, h, (int)(w - 256), (int)(h - bar + 20), "Net", 0x0088AAC0UL, 1);
-        fill_rect(st->fb, st->fb_pitch, w, h, w - 224, h - bar + 10, 28, 32, 0x00152538UL);
-        fb_text(st->fb, st->fb_pitch, w, h, (int)(w - 216), (int)(h - bar + 20), "N", 0x0088AAC0UL, 1);
-        fill_rect(st->fb, st->fb_pitch, w, h, w - 192, h - bar + 10, 28, 32, 0x00152538UL);
-        fb_text(st->fb, st->fb_pitch, w, h, (int)(w - 184), (int)(h - bar + 20), "*", 0x0088AAC0UL, 1);
-        fill_rect(st->fb, st->fb_pitch, w, h, w - 156, h - bar + 10, 144, 32, 0x00152538UL);
-        fb_text(st->fb, st->fb_pitch, w, h, (int)(w - 140), (int)(h - bar + 20), "12:00 AM", 0x00E2E8F0UL, 1);
-    }
-    for (i = 0; i < 16U; i++) {
-        if (i == 8U) {
-            continue;
-        }
-        if (i == 15U) {
-            x = (int)w - 16 - 76;
-            y = (int)h - (int)bar - 12 - 96;
-        } else {
-            x = 28 + (int)(i % 6U) * 88;
-            y = 36 + (int)(i / 6U) * 100;
-        }
-        if (x < 0 || y < 0 || (unsigned)(x + 62) >= w || (unsigned)(y + 70) + bar >= h) {
-            continue;
-        }
-        fill_rect(st->fb, st->fb_pitch, w, h, (unsigned)(x + 14), (unsigned)y, tile, tile, g_accent[i]);
-        fb_text(st->fb, st->fb_pitch, w, h, x + 14 + (int)(tile - str_px(g_acro[i], 2)) / 2, y + 16,
-                g_acro[i], 0x00F8FAFCUL, 2);
-        {
-            int tw = (int)str_px(g_title[i], 1);
-            int tx = x + (76 - tw) / 2;
-            if (tx < x) {
-                tx = x;
-            }
-            fb_text(st->fb, st->fb_pitch, w, h, tx, y + 54, g_title[i], 0x00E8EEF5UL, 1);
-        }
-    }
-}
-
 #define DIRTY_MAX 8
 static int g_dirty_x[DIRTY_MAX];
 static int g_dirty_y[DIRTY_MAX];
@@ -1550,16 +1531,7 @@ static void desk_present(struct wl_state *st)
     int i;
     int bar;
     cursor_hide(st);
-    if (st->xdg) {
-        paint_desk_chrome(st);
-        blit_shm(st);
-    } else if (g_dirty_n == 0) {
-        blit_shm(st);
-    } else {
-        for (i = 0; i < g_dirty_n; i++) {
-            blit_shm_rect(st, g_dirty_x[i], g_dirty_y[i], g_dirty_w[i], g_dirty_h[i]);
-        }
-    }
+    blit_shm(st);
     g_dirty_n = 0;
     paint_windows(st);
     for (i = 0; i < WIN_MAX; i++) {
@@ -1758,32 +1730,42 @@ static void wl_dispatch(struct wl_state *st, const unsigned char *msg, unsigned 
             serial("[wl] get_xdg_surface\n", 22);
         } else if (id == 9 && op == 1) {
             st->xdg = 1;
-            st->win_x = 540;
-            st->win_y = 48;
+            st->view[0].x = 0;
+            st->view[0].y = 0;
+            serial("[wl] get_toplevel desk\n", 24);
+        } else if (id == 12 && op == 1) {
+            st->xdg = 1;
+            st->view[1].x = 540;
+            st->view[1].y = 48;
             serial("[wl] get_toplevel\n", 19);
-        } else if (id == 10 && op == 2) {
+        } else if ((id == 10 || id == 13) && op == 2) {
             serial("[wl] xdg set_title\n", 20);
-        } else if (id == 9 && op == 4) {
+        } else if ((id == 9 || id == 12) && op == 4) {
             serial("[wl] xdg ack_configure\n", 24);
         } else if (id == 4 && op == 0) {
             st->pool_size = get_u32(a + 4);
             serial("[wl] create_pool\n", 18);
             serial_hex("wl pool size=", (long)st->pool_size);
         } else if (id == 6 && op == 0) {
-            st->buf_off = get_u32(a + 4);
-            st->buf_w = get_u32(a + 8);
-            st->buf_h = get_u32(a + 12);
-            st->buf_stride = get_u32(a + 16);
-            st->buf_format = get_u32(a + 20);
+            unsigned int nid = get_u32(a);
+            unsigned vi = (nid == 14U) ? 1U : 0U;
+            st->view[vi].buf_off = get_u32(a + 4);
+            st->view[vi].buf_w = get_u32(a + 8);
+            st->view[vi].buf_h = get_u32(a + 12);
+            st->view[vi].buf_stride = get_u32(a + 16);
+            st->view[vi].buf_format = get_u32(a + 20);
             serial("[wl] create_buffer\n", 20);
-            serial_hex("wl buf w=", (long)st->buf_w);
-            serial_hex("wl buf h=", (long)st->buf_h);
-        } else if (id == 5 && op == 1) {
-            st->attached = (get_u32(a) != 0);
+            serial_hex("wl buf w=", (long)st->view[vi].buf_w);
+            serial_hex("wl buf h=", (long)st->view[vi].buf_h);
+        } else if ((id == 5 || id == 11) && op == 1) {
+            unsigned vi = (id == 11U) ? 1U : 0U;
+            st->view[vi].attached = (get_u32(a) != 0);
             serial("[wl] attach\n", 13);
-        } else if (id == 5 && op == 6) {
+        } else if ((id == 5 || id == 11) && op == 6) {
             serial("[wl] commit\n", 13);
-            if (st->xdg) {
+            if (id == 5) {
+                serial("[wl] xdg desk commit\n", 22);
+            } else {
                 serial("[wl] xdg toplevel commit\n", 26);
             }
             blit_shm(st);
@@ -2052,9 +2034,9 @@ static unsigned str_px(const char *s, int scale)
     return n * 6U * (unsigned)scale;
 }
 
-/* Daily guest_paint_fb_desktopshell lookalike — kept for later compositor-owned
- * chrome. The Wayland client buffer is draw_xdg_window, not this. */
-static void __attribute__((unused)) draw_desk_chrome(unsigned int *p, unsigned int w, unsigned int h)
+/* Fullscreen xdg desk surface: icons + taskbar. Compositor only composites.
+ * Not product DesktopShell.qml. */
+static void draw_desk_chrome(unsigned int *p, unsigned int w, unsigned int h)
 {
     unsigned int bar = desk_bar(h);
     unsigned int i;
@@ -2107,7 +2089,7 @@ static void __attribute__((unused)) draw_desk_chrome(unsigned int *p, unsigned i
     }
 }
 
-/* One xdg_toplevel client buffer. Not the full desk, not DesktopShell.qml. */
+/* Second xdg_toplevel: 480x320 app window. Not DesktopShell.qml. */
 static void draw_xdg_window(unsigned int *p, unsigned int w, unsigned int h)
 {
     pool_rect(p, w, h, 0, 0, w, h, 0x00F1F5F9UL);
@@ -2116,10 +2098,17 @@ static void draw_xdg_window(unsigned int *p, unsigned int w, unsigned int h)
     shm_text(p, w, h, 16, 56, "toplevel", 0x000F172AUL, 2);
 }
 
-static unsigned wl_client_build(unsigned char *m, unsigned int w, unsigned int h)
+/* Two xdg_toplevels, one pool.
+ *   5/9/10 + buf 7  = fullscreen desk (bar/icons)
+ *   11/12/13 + buf 14 = 480x320 app window
+ * Keep compositor=3 shm=4 pool=6 — dispatch already uses those ids. */
+static unsigned wl_client_build(unsigned char *m, unsigned int dw, unsigned int dh,
+                                unsigned int aw, unsigned int ah)
 {
     unsigned int o = 0;
     unsigned int n;
+    unsigned int psz = dw * dh * 4U + aw * ah * 4U;
+    unsigned int poff = dw * dh * 4U;
     /* wl_display.get_registry(new_id=2) */
     n = 12;
     wl_put_hdr(m + o, 1, 1, n);
@@ -2185,7 +2174,7 @@ static unsigned wl_client_build(unsigned char *m, unsigned int w, unsigned int h
     put_u32(m + o + 24, 1);
     put_u32(m + o + 28, 4);
     o += n;
-    /* wl_compositor.create_surface(new_id=5) */
+    /* wl_compositor.create_surface(new_id=5) desk */
     n = 12;
     wl_put_hdr(m + o, 3, 0, n);
     put_u32(m + o + 8, 5);
@@ -2201,46 +2190,96 @@ static unsigned wl_client_build(unsigned char *m, unsigned int w, unsigned int h
     wl_put_hdr(m + o, 9, 1, n);
     put_u32(m + o + 8, 10);
     o += n;
-    /* xdg_toplevel.set_title("xdg") */
+    /* xdg_toplevel.set_title("bar") */
     n = 16;
     wl_put_hdr(m + o, 10, 2, n);
     put_u32(m + o + 8, 4);
-    m[o + 12] = 'x';
-    m[o + 13] = 'd';
-    m[o + 14] = 'g';
+    m[o + 12] = 'b';
+    m[o + 13] = 'a';
+    m[o + 14] = 'r';
     m[o + 15] = 0;
     o += n;
     /* wl_shm.create_pool(new_id=6, size) — fd omitted (shared-AS vfork) */
     n = 16;
     wl_put_hdr(m + o, 4, 0, n);
     put_u32(m + o + 8, 6);
-    put_u32(m + o + 12, w * h * 4U);
+    put_u32(m + o + 12, psz);
     o += n;
-    /* wl_shm_pool.create_buffer(id=7, off, w, h, stride, XRGB8888) */
+    /* wl_shm_pool.create_buffer(id=7, off 0, desk) */
     n = 32;
     wl_put_hdr(m + o, 6, 0, n);
     put_u32(m + o + 8, 7);
     put_u32(m + o + 12, 0);
-    put_u32(m + o + 16, w);
-    put_u32(m + o + 20, h);
-    put_u32(m + o + 24, w * 4U);
+    put_u32(m + o + 16, dw);
+    put_u32(m + o + 20, dh);
+    put_u32(m + o + 24, dw * 4U);
     put_u32(m + o + 28, WL_SHM_FORMAT_XRGB8888);
     o += n;
-    /* xdg_surface.ack_configure(serial=1) — one-shot, no server ping yet */
+    /* xdg_surface.ack_configure(serial=1) */
     n = 12;
     wl_put_hdr(m + o, 9, 4, n);
     put_u32(m + o + 8, 1);
     o += n;
-    /* wl_surface.attach(buffer=7, x=0, y=0) */
+    /* wl_surface.attach(buffer=7) desk */
     n = 20;
     wl_put_hdr(m + o, 5, 1, n);
     put_u32(m + o + 8, 7);
     put_u32(m + o + 12, 0);
     put_u32(m + o + 16, 0);
     o += n;
-    /* wl_surface.commit */
+    /* wl_compositor.create_surface(new_id=11) app */
+    n = 12;
+    wl_put_hdr(m + o, 3, 0, n);
+    put_u32(m + o + 8, 11);
+    o += n;
+    /* xdg_wm_base.get_xdg_surface(new_id=12, surface=11) */
+    n = 16;
+    wl_put_hdr(m + o, 8, 2, n);
+    put_u32(m + o + 8, 12);
+    put_u32(m + o + 12, 11);
+    o += n;
+    /* xdg_surface.get_toplevel(new_id=13) */
+    n = 12;
+    wl_put_hdr(m + o, 12, 1, n);
+    put_u32(m + o + 8, 13);
+    o += n;
+    /* xdg_toplevel.set_title("xdg") */
+    n = 16;
+    wl_put_hdr(m + o, 13, 2, n);
+    put_u32(m + o + 8, 4);
+    m[o + 12] = 'x';
+    m[o + 13] = 'd';
+    m[o + 14] = 'g';
+    m[o + 15] = 0;
+    o += n;
+    /* wl_shm_pool.create_buffer(id=14, off poff, app) */
+    n = 32;
+    wl_put_hdr(m + o, 6, 0, n);
+    put_u32(m + o + 8, 14);
+    put_u32(m + o + 12, poff);
+    put_u32(m + o + 16, aw);
+    put_u32(m + o + 20, ah);
+    put_u32(m + o + 24, aw * 4U);
+    put_u32(m + o + 28, WL_SHM_FORMAT_XRGB8888);
+    o += n;
+    /* xdg_surface.ack_configure app */
+    n = 12;
+    wl_put_hdr(m + o, 12, 4, n);
+    put_u32(m + o + 8, 1);
+    o += n;
+    /* wl_surface.attach(buffer=14) app */
+    n = 20;
+    wl_put_hdr(m + o, 11, 1, n);
+    put_u32(m + o + 8, 14);
+    put_u32(m + o + 12, 0);
+    put_u32(m + o + 16, 0);
+    o += n;
+    /* wl_surface.commit desk then app */
     n = 8;
     wl_put_hdr(m + o, 5, 6, n);
+    o += n;
+    n = 8;
+    wl_put_hdr(m + o, 11, 6, n);
     o += n;
     return o;
 }
@@ -2306,6 +2345,13 @@ static long wl_connect_unix(void)
     return fd;
 }
 
+static void paint_client_pool(unsigned char *pool, unsigned int dw, unsigned int dh,
+                              unsigned int aw, unsigned int ah)
+{
+    draw_desk_chrome((unsigned int *)(void *)pool, dw, dh);
+    draw_xdg_window((unsigned int *)(void *)(pool + dw * dh * 4U), aw, ah);
+}
+
 void _start(void)
 {
     static const char hello[] = "[compositor] guest stub hello\n";
@@ -2319,8 +2365,11 @@ void _start(void)
     static const char accepm[] = "[wl] client accepted\n";
     struct fbinfo info;
     struct wl_state st;
-    unsigned int surf_w;
-    unsigned int surf_h;
+    unsigned int desk_w;
+    unsigned int desk_h;
+    unsigned int app_w;
+    unsigned int app_h;
+    unsigned i;
     long mapped;
     long shm_map;
     unsigned char msg[512];
@@ -2357,26 +2406,38 @@ void _start(void)
     st.fb_h = info.height;
     st.pool = 0;
     st.pool_size = 0;
-    st.buf_off = 0;
-    st.buf_w = 0;
-    st.buf_h = 0;
-    st.buf_stride = 0;
-    st.buf_format = 0;
-    st.attached = 0;
-    st.committed = 0;
     st.xdg = 0;
-    st.win_x = 540;
-    st.win_y = 48;
+    for (i = 0; i < WL_VIEW_N; i++) {
+        st.view[i].buf_off = 0;
+        st.view[i].buf_w = 0;
+        st.view[i].buf_h = 0;
+        st.view[i].buf_stride = 0;
+        st.view[i].buf_format = 0;
+        st.view[i].attached = 0;
+        st.view[i].committed = 0;
+        st.view[i].x = 0;
+        st.view[i].y = 0;
+    }
+    st.view[1].x = 540;
+    st.view[1].y = 48;
 
     /* Desk wallpaper color — not magenta. Magenta under the desk flashes
      * through full-FB present / cursor restore. Proof-of-life fill is over. */
     fill_rect(st.fb, st.fb_pitch, st.fb_w, st.fb_h, 0, 0, st.fb_w, st.fb_h, 0x007A8FA8UL);
     serial(fillok, sizeof(fillok) - 1);
 
-    surf_w = 480;
-    surf_h = 320;
-    pool_bytes = surf_w * surf_h * 4U;
-    /* APP Linux mmap nr 9. Heap path already mapped 0x3c00000 for 480x320. */
+    desk_w = st.fb_w;
+    desk_h = st.fb_h;
+    if (desk_w > WL_SURF_MAX_W) {
+        desk_w = WL_SURF_MAX_W;
+    }
+    if (desk_h > WL_SURF_MAX_H) {
+        desk_h = WL_SURF_MAX_H;
+    }
+    app_w = 480;
+    app_h = 320;
+    pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
+    /* APP Linux mmap nr 9. Do not put 3MiB desk+app in BSS. */
     shm_map = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     serial_hex("wl shm mmap=", shm_map);
@@ -2386,8 +2447,8 @@ void _start(void)
     }
     st.pool = (unsigned char *)(unsigned long)shm_map;
     st.pool_size = pool_bytes;
-    serial_hex("wl surf w=", (long)surf_w);
-    serial_hex("wl surf h=", (long)surf_h);
+    serial_hex("wl desk w=", (long)desk_w);
+    serial_hex("wl desk h=", (long)desk_h);
 
     listen_fd = wl_listen_unix();
     cli_fd = -1;
@@ -2400,10 +2461,10 @@ void _start(void)
 
     if (pid == 0) {
         serial(childm, sizeof(childm) - 1);
-        draw_xdg_window((unsigned int *)(void *)st.pool, surf_w, surf_h);
+        paint_client_pool(st.pool, desk_w, desk_h, app_w, app_h);
         serial(deskm, sizeof(deskm) - 1);
         cli_fd = wl_connect_unix();
-        msglen = wl_client_build(msg, surf_w, surf_h);
+        msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
         if (cli_fd >= 0) {
             (void)sys6(SYS_WRITE, cli_fd, (long)(unsigned long)msg, (long)msglen, 0, 0, 0);
         }
@@ -2426,15 +2487,15 @@ void _start(void)
         }
     }
 
-    if (!st.committed) {
+    if (!wl_committed(&st)) {
         serial(fallback, sizeof(fallback) - 1);
-        draw_xdg_window((unsigned int *)(void *)st.pool, surf_w, surf_h);
+        paint_client_pool(st.pool, desk_w, desk_h, app_w, app_h);
         serial(deskm, sizeof(deskm) - 1);
         if (listen_fd >= 0) {
             cli_fd = wl_connect_unix();
             acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
             serial_hex("wl accept=", acc_fd);
-            msglen = wl_client_build(msg, surf_w, surf_h);
+            msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
             if (cli_fd >= 0) {
                 (void)sys6(SYS_WRITE, cli_fd, (long)(unsigned long)msg, (long)msglen, 0, 0, 0);
             }
@@ -2447,17 +2508,16 @@ void _start(void)
                 }
             }
         }
-        if (!st.committed) {
-            msglen = wl_client_build(msg, surf_w, surf_h);
+        if (!wl_committed(&st)) {
+            msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
             serial_hex("wl bytes=", (long)msglen);
             wl_dispatch(&st, msg, msglen);
         }
     }
-    if (st.committed) {
+    if (wl_committed(&st)) {
         serial(wlok, sizeof(wlok) - 1);
         if (st.xdg) {
             serial(xdgok, sizeof(xdgok) - 1);
-            paint_desk_chrome(&st);
             blit_shm(&st);
         }
     }

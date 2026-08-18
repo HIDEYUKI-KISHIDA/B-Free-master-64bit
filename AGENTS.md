@@ -322,13 +322,17 @@ The stub now paints an X11 `left_ptr` / Windows-style arrow
 (hotspot tip) via `sys_poll_input_event` (nr 0, BSS slot):
 `[wl] cursor arrow`, then type=3 mouse moves it. Icon click
 paints a lookalike window on the compositor FB (`[wl] desk open`).
-The Wayland client is now **one `xdg_toplevel`** (480×320 `wl_shm`)
-blit onto compositor-owned wallpaper **plus icons/taskbar** (FB chrome,
-not that shm). Success serial: `[wl] bind xdg_wm_base`,
-`[wl] get_toplevel`, `[wl] xdg toplevel commit`,
+The Wayland client now sends **two `xdg_toplevel`s** in one vfork
+child / one shm pool: fullscreen desk chrome (icons + Start bar,
+title `bar`) and a 480×320 app window (title `xdg`). The compositor
+only `blit_shm`s those views + cursor + lookalike overlay windows.
+Do not paint icons/taskbar as compositor FB chrome. Success serial:
+`[wl] bind xdg_wm_base`, `[wl] get_toplevel desk`,
+`[wl] xdg desk commit`, `[wl] xdg toplevel commit`,
 `[compositor] xdg-shell window`. Cursor, Start panel, and
 lookalike apps stay **software FB** overlays
-(5×7 glyphs, no GPU, no Qt scene graph, not extra Wayland surfaces).
+(5×7 glyphs, no GPU, no Qt scene graph). The bar/icons themselves
+are the fullscreen xdg desk surface, not extra compositor paint.
 Host `DesktopShell.qml` Start/Explorer are QML; this stub is not
 that. Do **not** polish the lookalike Explorer as the product —
 practical file UI needs guest **Qt** (`desktop.elf` as a Wayland
@@ -361,9 +365,9 @@ kernel. Never overwrite `kernel.elf.g1-desk` or daily
 `bfree.iso`. Do not `execve("desktop.elf")` from the stub
 until a bootable patched kernel exists. The Wayland
 client on `g1-desk` is the vfork child: it `connect()`s
-`/tmp/wayland-0` and paints the daily EX/VW desk
-lookalike into `wl_shm`. That is steps 1–2 without a
-second ELF. Do **not** drop `QT_QPA_PLATFORM=bfree` on
+`/tmp/wayland-0` and paints two xdg surfaces into one
+`wl_shm` pool (fullscreen EX/VW desk + small app window).
+That is steps 1–2 without a second ELF. Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` (step 3) until that stub is the boot
 desk. Not product
 `DesktopShell.qml`. Daily `bfree.iso` still has the
