@@ -142,15 +142,17 @@ for o in "$DESK/qt_futex_guest_stub.o" "$DESK/guest_platform_stub.o" "$DESK/gues
 done
 
 echo "[qt_wl_hello] linking with $GUEST_QT (no libqbfree.a)"
-if command -v x86_64-elf-nm >/dev/null 2>&1; then
-  echo "[qt_wl_hello] QPA undefined (pre-link):" >&2
-  x86_64-elf-nm -u "$STUB/qbfree_wayland.o" 2>/dev/null | sed 's/^/  /' | head -40 >&2 || true
-fi
 LINK_LOG="$STUB/qt_wl_hello.link.log"
+# /mnt/c copies are often CRLF; qmake wrapper strips CR. Do not bash the
+# .sh file directly (set -o pipefail^M aborts with an empty-looking log).
+LINK_WRAP="$ROOT/tools/guest_desktop_link_qmake.sh"
+if [[ ! -f "$LINK_WRAP" ]]; then
+  LINK_WRAP="$ROOT/tools/guest_desktop_link.sh"
+fi
 set +e
-bash "$ROOT/tools/guest_desktop_link.sh" \
+bash "$LINK_WRAP" \
   -o "$STUB/qt_wl_hello.elf" \
-  -T "$DESK/desktop.ld" \
+  "-T$DESK/desktop.ld" \
   "${STUBS[@]}" \
   "$STUB/qbfree_wayland.o" \
   "$STUB/qt_wl_hello.o" \
@@ -158,11 +160,13 @@ bash "$ROOT/tools/guest_desktop_link.sh" \
   "${ARCHIVES[@]}" >"$LINK_LOG" 2>&1
 link_rc=$?
 set -e
-cat "$LINK_LOG"
+echo "[qt_wl_hello] link rc=$link_rc log_bytes=$(wc -c < "$LINK_LOG" | tr -d ' ')"
+sed -n '1,80p' "$LINK_LOG"
 if [[ "$link_rc" -ne 0 ]]; then
   echo "qt_wl_hello skip: link failed. C p8test stays." >&2
   echo "qt_wl_hello: unique undefined refs:" >&2
-  grep -oE "undefined reference to \`[^\']+\'" "$LINK_LOG" | sort -u | head -40 >&2 || true
+  grep -E 'undefined reference|undefined symbol|ld: error:|file not recognized|invalid option' "$LINK_LOG" \
+    | sort -u | head -40 >&2 || true
   echo "qt_wl_hello: full log $LINK_LOG" >&2
   exit 0
 fi

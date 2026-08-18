@@ -102,6 +102,11 @@ for ((i = 0; i < ${#args[@]}; i++)); do
       [[ -n "$OUT" ]] || { OUT="${args[i + 1]}"; ((i++)); }
       continue
       ;;
+    -T)
+      SCRIPT="${args[i + 1]}"
+      ((i++))
+      continue
+      ;;
     -T*)
       SCRIPT="${a#-T}"
       continue
@@ -117,9 +122,10 @@ for ((i = 0; i < ${#args[@]}; i++)); do
       ;;
   esac
   [[ "$a" == -* ]] && continue
+  [[ "$a" == *.ld ]] && { SCRIPT="$a"; continue; }
   [[ "$a" == *crt0.o ]] && continue
   [[ "$a" == *guest_link_compat.o ]] && continue
-  [[ "$a" == *guest_serial.o ]] && continue
+  [[ "$a" == *guest_serial.o ]] && continue;
   inputs+=("$a")
   if [[ "$a" == *.a ]]; then
     case "$a" in

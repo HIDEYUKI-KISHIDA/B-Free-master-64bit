@@ -400,7 +400,11 @@ errors "Qt has not been ported to this OS"). Same define as
 `threads=no` libstdc++). It uses a local `QAbstractEventDispatcher`
 and first-frame `processEvents` then `return 0`. A failed Qt link
 writes `userland/compositor_stub/qt_wl_hello.link.log` and keeps C
-p8test; do not treat `P8_KIND=C p8test` as a script crash. Do **not** drop `QT_QPA_PLATFORM=bfree` on
+p8test; do not treat `P8_KIND=C p8test` as a script crash.
+`nm -u` on the QPA `.o` listing `QPlatformWindow` is expected
+before archives are linked. Invoke the linker through
+`guest_desktop_link_qmake.sh` (CRLF-safe). Pass `-Tdesktop.ld` as
+one argv token. Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` until that stub is the boot
 desk. Stub ISO: `BFREE_ISO` may be `bfree-desk.iso` when daily
 `bfree.iso` is absent. Not product
