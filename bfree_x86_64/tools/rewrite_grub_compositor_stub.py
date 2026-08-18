@@ -11,6 +11,7 @@ import sys
 
 INIT_LINE = "module2 /boot/init_tramp.elf init.elf"
 COMP_LINE = "module2 /boot/compositor.elf compositor.elf"
+HELLO_LINE = "module2 /boot/hello.elf hello.elf"
 
 
 def rewrite_grub(text: str) -> str:
@@ -21,7 +22,7 @@ def rewrite_grub(text: str) -> str:
         if "desktop.elf" in part:
             part, n = re.subn(
                 r"module2\s+\S+\s+init\.elf",
-                INIT_LINE + "\n    " + COMP_LINE,
+                INIT_LINE + "\n    " + COMP_LINE + "\n    " + HELLO_LINE,
                 part,
             )
             changed += n
@@ -30,7 +31,8 @@ def rewrite_grub(text: str) -> str:
     if changed == 0:
         text2, n = re.subn(
             r"module2\s+/boot/initrd\.img\s+init\.elf(\r?\n)(\s*)module2\s+/boot/desktop\.elf\s+desktop\.elf",
-            INIT_LINE + r"\1\2" + COMP_LINE + r"\1\2module2 /boot/desktop.elf desktop.elf",
+            INIT_LINE + r"\1\2" + COMP_LINE + r"\1\2" + HELLO_LINE
+            + r"\1\2module2 /boot/desktop.elf desktop.elf",
             text,
         )
         changed = n

@@ -1,20 +1,26 @@
 /* Freestanding guest compositor. Reached via init_tramp exec_initrd (APP role).
  * APP Linux sockets: 41 socket, 49 bind, 50 listen, 42 connect, 43 accept.
- * Two xdg_toplevels from one vfork client: fullscreen desk chrome (icons/bar)
- * and a small app window. Compositor composites + cursor. Not product
- * DesktopShell.qml, not Qt, not GPU. Do not execve desktop.elf on g1-desk.
+ * Wayland client is hello.elf (named Multiboot module — g1-desk keeps the
+ * image). Not desktop.elf (bfree QPA steals FB). Two xdg_toplevels: desk
+ * chrome + small app window. shm is MAP_SHARED on inherited fd 8 (no
+ * SCM_RIGHTS). Compositor composites + cursor. Not product DesktopShell.qml.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
 #define BFREE_FB0_FD 0x2000
 #define WL_SHM_FORMAT_XRGB8888 1
+#define MAP_SHARED 0x01
 #define MAP_PRIVATE 0x02
 #define MAP_ANONYMOUS 0x20
 #define PROT_READ 1
 #define PROT_WRITE 2
+#define O_RDWR 2
+#define O_CREAT 64
+#define O_TRUNC 512
 #define AF_UNIX 1
 #define SOCK_STREAM 1
 #define SYS_READ 0
 #define SYS_WRITE 1
+#define SYS_OPEN 2
 #define SYS_CLOSE 3
 #define SYS_PIPE 22
 #define SYS_DUP2 33
@@ -27,6 +33,11 @@
 #define SYS_EXECVE 59
 #define SYS_EXIT 60
 #define SYS_WAITPID 61
+#define SYS_FTRUNCATE 77
+#define SYS_MSYNC 26
+#define SYS_MEMFD 319
+#define WL_SHM_FD 8
+#define MS_SYNC 4
 /* Cap only the mmap length. Do not put this in BSS — 1024x768 NOBITS hung load_elf. */
 #define WL_SURF_MAX_W 1024
 #define WL_SURF_MAX_H 768
@@ -2316,7 +2327,7 @@ static long wl_listen_unix(void)
     if (rc != 0) {
         return rc;
     }
-    rc = sys6(SYS_LISTEN, fd, 1, 0, 0, 0, 0);
+    rc = sys6(SYS_LISTEN, fd, 4, 0, 0, 0, 0);
     serial_hex("wl listen=", rc);
     if (rc != 0) {
         return rc;
@@ -2345,6 +2356,42 @@ static long wl_connect_unix(void)
     return fd;
 }
 
+static long wl_write_all(long fd, const unsigned char *p, unsigned n)
+{
+    unsigned off = 0;
+    while (off < n) {
+        unsigned chunk = n - off;
+        long w;
+        if (chunk > 4096U) {
+            chunk = 4096U;
+        }
+        w = sys6(SYS_WRITE, fd, (long)(unsigned long)(p + off), (long)chunk, 0, 0, 0);
+        if (w <= 0) {
+            return w < 0 ? w : -1;
+        }
+        off += (unsigned)w;
+    }
+    return (long)n;
+}
+
+static long wl_read_all(long fd, unsigned char *p, unsigned n)
+{
+    unsigned off = 0;
+    while (off < n) {
+        unsigned chunk = n - off;
+        long r;
+        if (chunk > 4096U) {
+            chunk = 4096U;
+        }
+        r = sys6(SYS_READ, fd, (long)(unsigned long)(p + off), (long)chunk, 0, 0, 0);
+        if (r <= 0) {
+            return r < 0 ? r : (long)off;
+        }
+        off += (unsigned)r;
+    }
+    return (long)n;
+}
+
 static void paint_client_pool(unsigned char *pool, unsigned int dw, unsigned int dh,
                               unsigned int aw, unsigned int ah)
 {
@@ -2352,6 +2399,51 @@ static void paint_client_pool(unsigned char *pool, unsigned int dw, unsigned int
     draw_xdg_window((unsigned int *)(void *)(pool + dw * dh * 4U), aw, ah);
 }
 
+#ifdef WL_AS_CLIENT
+void _start(void)
+{
+    static const char hello[] = "[wl] hello.elf client\n";
+    static const char paintm[] = "[wl] hello.elf paint\n";
+    unsigned int desk_w = 1024;
+    unsigned int desk_h = 768;
+    unsigned int app_w = 480;
+    unsigned int app_h = 320;
+    unsigned int pool_bytes;
+    long mapped;
+    long cli_fd;
+    unsigned char msg[512];
+    unsigned char hdr[4];
+    unsigned int msglen;
+    unsigned char *pool;
+
+    serial(hello, sizeof(hello) - 1);
+    pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
+    mapped = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
+                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    serial_hex("wl cli mmap=", mapped);
+    if (mapped < 0x1000) {
+        (void)sys6(SYS_EXIT, 1, 0, 0, 0, 0, 0);
+        for (;;) {
+        }
+    }
+    pool = (unsigned char *)(unsigned long)mapped;
+    serial_hex("wl cli w=", (long)desk_w);
+    serial_hex("wl cli h=", (long)desk_h);
+    paint_client_pool(pool, desk_w, desk_h, app_w, app_h);
+    serial(paintm, sizeof(paintm) - 1);
+    cli_fd = wl_connect_unix();
+    msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
+    if (cli_fd >= 0) {
+        put_u32(hdr, msglen);
+        (void)wl_write_all(cli_fd, hdr, 4);
+        (void)wl_write_all(cli_fd, msg, msglen);
+        serial("[wl] hello.elf wire\n", 20);
+    }
+    (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
+    for (;;) {
+    }
+}
+#else
 void _start(void)
 {
     static const char hello[] = "[compositor] guest stub hello\n";
@@ -2363,6 +2455,8 @@ void _start(void)
     static const char fallback[] = "[wl] unix fallback in-process\n";
     static const char deskm[] = "[wl] xdg client paint\n";
     static const char accepm[] = "[wl] client accepted\n";
+    static char hello_path[] = "/hello.elf";
+    static char *hello_argv[2];
     struct fbinfo info;
     struct wl_state st;
     unsigned int desk_w;
@@ -2371,7 +2465,6 @@ void _start(void)
     unsigned int app_h;
     unsigned i;
     long mapped;
-    long shm_map;
     unsigned char msg[512];
     unsigned int msglen;
     unsigned int pool_bytes;
@@ -2380,6 +2473,8 @@ void _start(void)
     long acc_fd;
     long pid;
     long nread;
+    unsigned int map_bytes;
+    long exec_rc;
 
     serial(hello, sizeof(hello) - 1);
 
@@ -2437,15 +2532,18 @@ void _start(void)
     app_w = 480;
     app_h = 320;
     pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
-    /* APP Linux mmap nr 9. Do not put 3MiB desk+app in BSS. */
-    shm_map = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    serial_hex("wl shm mmap=", shm_map);
-    if (shm_map < 0x1000) {
-        for (;;) {
+    map_bytes =
+        (unsigned int)WL_SURF_MAX_W * (unsigned int)WL_SURF_MAX_H * 4U + 480U * 320U * 4U;
+    {
+        long shm_map = sys6(9, 0, (long)map_bytes, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        serial_hex("wl shm mmap=", shm_map);
+        if (shm_map < 0x1000) {
+            for (;;) {
+            }
         }
+        st.pool = (unsigned char *)(unsigned long)shm_map;
     }
-    st.pool = (unsigned char *)(unsigned long)shm_map;
     st.pool_size = pool_bytes;
     serial_hex("wl desk w=", (long)desk_w);
     serial_hex("wl desk h=", (long)desk_h);
@@ -2460,13 +2558,25 @@ void _start(void)
     }
 
     if (pid == 0) {
+        unsigned char hdr[4];
         serial(childm, sizeof(childm) - 1);
+        serial("[wl] execve hello.elf\n", 22);
+        hello_argv[0] = hello_path;
+        hello_argv[1] = 0;
+        exec_rc = sys6(SYS_EXECVE, (long)(unsigned long)hello_path,
+                       (long)(unsigned long)hello_argv, 0, 0, 0, 0);
+        serial_hex("wl execve hello=", exec_rc);
         paint_client_pool(st.pool, desk_w, desk_h, app_w, app_h);
         serial(deskm, sizeof(deskm) - 1);
         cli_fd = wl_connect_unix();
         msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
         if (cli_fd >= 0) {
-            (void)sys6(SYS_WRITE, cli_fd, (long)(unsigned long)msg, (long)msglen, 0, 0, 0);
+            put_u32(hdr, msglen);
+            (void)wl_write_all(cli_fd, hdr, 4);
+            (void)wl_write_all(cli_fd, msg, msglen);
+            put_u32(hdr, pool_bytes);
+            (void)wl_write_all(cli_fd, hdr, 4);
+            (void)wl_write_all(cli_fd, st.pool, pool_bytes);
         }
         (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
         for (;;) {
@@ -2474,15 +2584,23 @@ void _start(void)
     }
 
     if (pid > 0 && listen_fd >= 0) {
+        unsigned char hdr[4];
+        unsigned int wlen;
         serial(parentm, sizeof(parentm) - 1);
         acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
         serial_hex("wl accept=", acc_fd);
         if (acc_fd >= 0) {
             serial(accepm, sizeof(accepm) - 1);
-            nread = sys6(SYS_READ, acc_fd, (long)(unsigned long)msg, 512, 0, 0, 0);
-            serial_hex("wl bytes=", nread);
-            if (nread > 0) {
-                wl_dispatch(&st, msg, (unsigned int)nread);
+            nread = wl_read_all(acc_fd, hdr, 4);
+            wlen = (nread == 4) ? get_u32(hdr) : 0;
+            if (wlen > 0 && wlen <= 512) {
+                nread = wl_read_all(acc_fd, msg, wlen);
+                serial_hex("wl bytes=", nread);
+                paint_client_pool(st.pool, desk_w, desk_h, app_w, app_h);
+                (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
+                if (nread > 0) {
+                    wl_dispatch(&st, msg, (unsigned int)nread);
+                }
             }
         }
     }
@@ -2523,3 +2641,4 @@ void _start(void)
     }
     cursor_loop(&st);
 }
+#endif
