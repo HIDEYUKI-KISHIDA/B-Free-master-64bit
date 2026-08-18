@@ -1,7 +1,9 @@
 /* Freestanding guest compositor. Reached via init_tramp exec_initrd (APP role).
  * APP Linux sockets: 41 socket, 49 bind, 50 listen, 42 connect, 43 accept.
- * Wayland client is hello.elf (named Multiboot module — g1-desk keeps the
- * image). Not desktop.elf (bfree QPA steals FB). Two xdg_toplevels: desk
+ * Wayland client is p8test.elf (g1-desk named module, no bfree QPA inject).
+ * Built as qt_wl_client.elf (-DWL_QT_CLIENT). Exec env is
+ * QT_QPA_PLATFORM=wayland. Not desktop.elf (bfree QPA steals FB). hello.elf
+ * stays the fallback if p8test execve returns. Two xdg_toplevels: desk
  * chrome + small app window. shm is MAP_SHARED on inherited fd 8 (no
  * SCM_RIGHTS). Compositor composites + cursor. Not product DesktopShell.qml.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
@@ -2100,13 +2102,13 @@ static void draw_desk_chrome(unsigned int *p, unsigned int w, unsigned int h)
     }
 }
 
-/* Second xdg_toplevel: 480x320 app window. Not DesktopShell.qml. */
+/* Second xdg_toplevel: 480x320 app window. Qt Wayland client slot, not DesktopShell.qml. */
 static void draw_xdg_window(unsigned int *p, unsigned int w, unsigned int h)
 {
     pool_rect(p, w, h, 0, 0, w, h, 0x00F1F5F9UL);
-    pool_rect(p, w, h, 0, 0, w, 36, 0x001D4ED8UL);
-    shm_text(p, w, h, 12, 12, "xdg-shell", 0x00F8FAFCUL, 2);
-    shm_text(p, w, h, 16, 56, "toplevel", 0x000F172AUL, 2);
+    pool_rect(p, w, h, 0, 0, w, 36, 0x002F6B3AUL);
+    shm_text(p, w, h, 12, 12, "Qt", 0x00F8FAFCUL, 2);
+    shm_text(p, w, h, 16, 56, "wayland", 0x000F172AUL, 2);
 }
 
 /* Two xdg_toplevels, one pool.
@@ -2254,6 +2256,17 @@ static unsigned wl_client_build(unsigned char *m, unsigned int dw, unsigned int 
     wl_put_hdr(m + o, 12, 1, n);
     put_u32(m + o + 8, 13);
     o += n;
+#ifdef WL_QT_CLIENT
+    /* xdg_toplevel.set_title("qt") */
+    n = 16;
+    wl_put_hdr(m + o, 13, 2, n);
+    put_u32(m + o + 8, 3);
+    m[o + 12] = 'q';
+    m[o + 13] = 't';
+    m[o + 14] = 0;
+    m[o + 15] = 0;
+    o += n;
+#else
     /* xdg_toplevel.set_title("xdg") */
     n = 16;
     wl_put_hdr(m + o, 13, 2, n);
@@ -2263,6 +2276,7 @@ static unsigned wl_client_build(unsigned char *m, unsigned int dw, unsigned int 
     m[o + 14] = 'g';
     m[o + 15] = 0;
     o += n;
+#endif
     /* wl_shm_pool.create_buffer(id=14, off poff, app) */
     n = 32;
     wl_put_hdr(m + o, 6, 0, n);
@@ -2402,8 +2416,16 @@ static void paint_client_pool(unsigned char *pool, unsigned int dw, unsigned int
 #ifdef WL_AS_CLIENT
 void _start(void)
 {
+#ifdef WL_QT_CLIENT
+    static const char hello[] = "[qt] p8test.elf wayland client\n";
+    static const char qpa[] = "[qt] QT_QPA_PLATFORM=wayland\n";
+    static const char paintm[] = "[qt] p8test.elf paint\n";
+    static const char wirem[] = "[qt] p8test.elf wire\n";
+#else
     static const char hello[] = "[wl] hello.elf client\n";
     static const char paintm[] = "[wl] hello.elf paint\n";
+    static const char wirem[] = "[wl] hello.elf wire\n";
+#endif
     unsigned int desk_w = 1024;
     unsigned int desk_h = 768;
     unsigned int app_w = 480;
@@ -2417,6 +2439,9 @@ void _start(void)
     unsigned char *pool;
 
     serial(hello, sizeof(hello) - 1);
+#ifdef WL_QT_CLIENT
+    serial(qpa, sizeof(qpa) - 1);
+#endif
     pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
     mapped = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -2437,7 +2462,7 @@ void _start(void)
         put_u32(hdr, msglen);
         (void)wl_write_all(cli_fd, hdr, 4);
         (void)wl_write_all(cli_fd, msg, msglen);
-        serial("[wl] hello.elf wire\n", 20);
+        serial(wirem, sizeof(wirem) - 1);
     }
     (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
     for (;;) {
@@ -2455,8 +2480,14 @@ void _start(void)
     static const char fallback[] = "[wl] unix fallback in-process\n";
     static const char deskm[] = "[wl] xdg client paint\n";
     static const char accepm[] = "[wl] client accepted\n";
+    static char p8_path[] = "/p8test.elf";
     static char hello_path[] = "/hello.elf";
+    static char *p8_argv[2];
     static char *hello_argv[2];
+    static char env_qpa[] = "QT_QPA_PLATFORM=wayland";
+    static char env_wld[] = "WAYLAND_DISPLAY=wayland-0";
+    static char env_xdg[] = "XDG_RUNTIME_DIR=/tmp";
+    static char *p8_envp[4];
     struct fbinfo info;
     struct wl_state st;
     unsigned int desk_w;
@@ -2560,6 +2591,17 @@ void _start(void)
     if (pid == 0) {
         unsigned char hdr[4];
         serial(childm, sizeof(childm) - 1);
+        p8_argv[0] = p8_path;
+        p8_argv[1] = 0;
+        p8_envp[0] = env_qpa;
+        p8_envp[1] = env_wld;
+        p8_envp[2] = env_xdg;
+        p8_envp[3] = 0;
+        serial("[wl] execve p8test.elf\n", 23);
+        exec_rc = sys6(SYS_EXECVE, (long)(unsigned long)p8_path,
+                       (long)(unsigned long)p8_argv, (long)(unsigned long)p8_envp,
+                       0, 0, 0);
+        serial_hex("wl execve p8test=", exec_rc);
         serial("[wl] execve hello.elf\n", 22);
         hello_argv[0] = hello_path;
         hello_argv[1] = 0;

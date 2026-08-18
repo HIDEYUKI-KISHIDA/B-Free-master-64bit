@@ -10,6 +10,10 @@ SRC_ISO="${BFREE_ISO:-$ROOT/bfree.iso}"
 OUT_ISO="${BFREE_STUB_ISO:-$ROOT/bfree-compositor-stub.iso}"
 REWRITE="$ROOT/tools/rewrite_grub_compositor_stub.py"
 
+if [[ ! -f "$SRC_ISO" && -f "$ROOT/bfree-desk.iso" ]]; then
+  SRC_ISO="$ROOT/bfree-desk.iso"
+fi
+
 if [[ "$OUT_ISO" -ef "$SRC_ISO" ]]; then
   echo "refuse: output ISO must not be daily bfree.iso" >&2
   false
@@ -31,9 +35,11 @@ make -C "$ROOT/userland/compositor_stub"
 COMP="$ROOT/userland/compositor_stub/compositor.elf"
 TRAMP="$ROOT/userland/compositor_stub/init_tramp.elf"
 CLIENT="$ROOT/userland/compositor_stub/wl_client.elf"
+QTCLI="$ROOT/userland/compositor_stub/qt_wl_client.elf"
 test -s "$COMP"
 test -s "$TRAMP"
 test -s "$CLIENT"
+test -s "$QTCLI"
 
 WORK="$(mktemp -d)"
 cleanup() { rm -rf "$WORK"; }
@@ -44,6 +50,7 @@ python3 "$REWRITE" "$WORK/grub.cfg" "$WORK/grub.new"
 grep -q 'module2 /boot/init_tramp.elf init.elf' "$WORK/grub.new"
 grep -q 'module2 /boot/compositor.elf compositor.elf' "$WORK/grub.new"
 grep -q 'module2 /boot/hello.elf hello.elf' "$WORK/grub.new"
+grep -q 'module2 /boot/p8test.elf p8test.elf' "$WORK/grub.new"
 
 cp -f "$SRC_ISO" "$OUT_ISO"
 xorriso -indev "$OUT_ISO" -outdev "$OUT_ISO" \
@@ -51,6 +58,7 @@ xorriso -indev "$OUT_ISO" -outdev "$OUT_ISO" \
   -map "$TRAMP" /boot/init_tramp.elf \
   -map "$COMP" /boot/compositor.elf \
   -map "$CLIENT" /boot/hello.elf \
+  -map "$QTCLI" /boot/p8test.elf \
   -update "$WORK/grub.new" /boot/grub/grub.cfg \
   -commit >/dev/null
 
@@ -63,5 +71,7 @@ echo "HELLO_BYTES=$(wc -c < "$CLIENT")"
 echo "GRUB_PID1=init_tramp.elf as init.elf"
 echo "GRUB_EXEC=compositor.elf"
 echo "GRUB_CLIENT=hello.elf"
+echo "GRUB_QT_CLIENT=p8test.elf"
+echo "P8_BYTES=$(wc -c < "$QTCLI")"
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"
