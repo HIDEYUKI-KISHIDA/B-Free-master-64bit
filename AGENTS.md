@@ -312,9 +312,13 @@ then blit. Cursor, Start panel, and windows are **software FB**
 overlays (5×7 glyphs, no GPU, no Qt scene graph). Host
 `DesktopShell.qml` Start is QML; this Start list is not that.
 Windows: title drag, SE resize, min/max/close, taskbar slots.
-Terminal shows `# ` prompt; Enter runs busybox (`ls /`, `echo hi`).
-Explorer is a guest lookalike (sidebar + `ls /`), not host
-Explorer.exe. Terminal/Explorer `vfork`+pipe+`execve("/busybox.elf")`
+Terminal `# ` prompt is pinned at the **bottom** of the client;
+scrollback sits above it (resize must not shove the input line
+to the top). Enter runs busybox (`ls /`, `echo hi`). Explorer is
+a guest lookalike (sidebar + `ls /`), not host Explorer.exe and
+not host `DesktopShell.qml`. Practical Explorer/file UI needs
+**guest Qt** (`desktop.elf` as a Wayland client). Do **not**
+port that as GTK. Terminal/Explorer `vfork`+pipe+`execve("/busybox.elf")`
 and paint captured stdout. That is a
 real busybox process, not `desktop.elf`. Do **not**
 `execve("desktop.elf")` on `g1-desk` (unknown names become
