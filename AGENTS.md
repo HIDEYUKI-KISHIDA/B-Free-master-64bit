@@ -391,7 +391,11 @@ with `QT_QPA_PLATFORM=wayland`. Not `desktop.elf`. Not compositor
 is the default mapping; `qt_wl_hello.elf` (`QGuiApplication` + stub
 QPA) replaces it when the guest Qt prefix can link. `hello.elf` is
 fallback. Cloud cannot link `QGuiApplication` (no `libQt6Gui.a` /
-`crt0.o` / `desktop.ld`). Do **not** drop `QT_QPA_PLATFORM=bfree` on
+`crt0.o` / `desktop.ld`). On the maintainer tree,
+`tools/build_qt_wl_hello.sh` must pass `-D__linux__` because
+`x86_64-elf-g++` is not a Linux target (`qsystemdetection.h` otherwise
+errors "Qt has not been ported to this OS"). Same define as
+`Makefile.guest-elf`. Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` until that stub is the boot
 desk. Stub ISO: `BFREE_ISO` may be `bfree-desk.iso` when daily
 `bfree.iso` is absent. Not product

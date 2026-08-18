@@ -71,9 +71,9 @@ for v in 6.8.0 6.7.3 6.6.3 6.5.3 6.4.2; do
 done
 
 CXXFLAGS=(
-  -fno-exceptions -fno-rtti -std=gnu++17 -O2 -fPIC
+  -fno-exceptions -fno-rtti -std=gnu++17 -O2 -fPIC -fno-stack-protector
   -DQT_NO_DEBUG -DQT_STATIC -DQT_GUI_LIB -DQT_CORE_LIB -DQT_NO_SSL
-  -DQT_STATICPLUGIN
+  -DQT_STATICPLUGIN -D__linux__ -D__x86_64__ -D_REENTRANT
   -I"$STUB"
   -I"$QT_INC"
   -I"$QT_INC/QtGui"
@@ -108,7 +108,7 @@ done
 
 make -C "$STUB" wl_stub_flush.o
 if ! "$CXX" "${CXXFLAGS[@]}" -c -o "$STUB/qbfree_wayland.o" "$STUB/qbfree_wayland.cpp"; then
-  echo "qt_wl_hello skip: QPA compile failed (need bits/c++config.h). C p8test stays." >&2
+  echo "qt_wl_hello skip: QPA compile failed. C p8test stays." >&2
   exit 0
 fi
 if ! "$CXX" "${CXXFLAGS[@]}" -c -o "$STUB/qt_wl_hello.o" "$STUB/qt_wl_hello.cpp"; then
