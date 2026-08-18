@@ -345,9 +345,11 @@ Success serial (C slot): `[wl] vfork=` then `[wl] execve p8test.elf`,
 `[qt] p8test.elf wayland client`, `[qt] p8test.elf shm`,
 `[wl] client shm blit`, `[compositor] xdg-shell window`.
 Success serial (QGuiApplication slot): `[qt] QGuiApplication start`,
+`[desktop_qt] plugin ctor bss stack bump`, `[qt] plugin registered`,
+`[desktop_qt] musl malloc preflight OK`, `[qt] before QGuiApplication ctor`,
 `[qt] QGuiApplication ctor ok`, `[qt] QPA wayland create`,
 `[qt] QGuiApplication flush`, `[qt] QGuiApplication shm`,
-`[qt] QGuiApplication wire`, `[wl] client shm blit`.
+`[qt] QGuiApplication wire`, `[wl] vfork parent`, `[wl] client shm blit`.
 Do not print `wl fork=` (that was the unusable AS-copy path).
 Do not print `wl execve p8test=` (that means exec returned). Do not print
 `[wl] shm magic miss` on the success path. Cursor, Start panel, and
@@ -416,10 +418,21 @@ the hello QPA must accept key `bfree` or QGuiApplication aborts
 `BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh` (keep the
 53MB ELF). 53MB `p8test` exec is slow; gray wallpaper with no desk
 means the Qt child printed `[qt] QGuiApplication start` and never
-`ctor ok`. g1-desk `vfork` waits for **exit**, so the compositor
+returned. g1-desk `vfork` waits for **exit**, so the compositor
 parent never paints (`wl vfork=0` is the child; `[wl] vfork parent`
-does not appear). Serial: `plugin registered`, `before QGuiApplication ctor`,
-then `ctor ok`, `[qt] QPA wayland create`. Restore C desk:
+does not appear). Do **not** call `qRegisterStaticPluginFunction` or
+construct `QGuiApplication` on the exec stack (`0x13xxxxxx`); that is
+the first Qt heap and PFs / hangs before `plugin registered`. Use the
+same bring-up as `desktop.elf`: `bfree_guest_refresh_libc_auxv`,
+`bfree_guest_run_on_ctor_stack_plugins` (BSS+bump),
+`bfree_guest_preflight_musl_heap`, `bfree_guest_preflight_ctor_mmap`,
+then `bfree_guest_run_on_ctor_stack_hybrid` for ctor+paint+flush.
+Hello **must return 0** after first frame. Do **not**
+`bfree_guest_enter_preflighted_mmap_noreturn` (never returns, parent
+never blits). Do **not** `bfree_guest_install_static_env` in hello.
+Grep empty for `plugin registered` / `ctor ok` / `vfork parent` after
+`start` is that hang. After the ctor-stack patch expect
+`plugin ctor bss stack bump` then `plugin registered`. Restore C desk:
 `BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh`.
 `[desktop_qt] abort()` means the platform plugin was not found.
 Stub window drag looks jagged and Terminal Enter is slow: software
