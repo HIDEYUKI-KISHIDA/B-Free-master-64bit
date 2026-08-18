@@ -330,14 +330,19 @@ Compositor `execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland`
 (no bfree inject — that is only for `desktop.elf`). `hello.elf` is
 the fallback if p8test execve returns. This is **not**
 `QGuiApplication` / qtwayland (guest Qt prefix and wayland QPA
-are absent). g1-desk vfiles are 16KB so the client cannot share a
-full-desk shm file. It sends the Wayland wire on AF_UNIX; the
-compositor paints the pool then blits. Success serial:
+are absent). g1-desk vfiles are 16KB and vfork parent sleeps until
+child exit, so a full-desk AF_UNIX pixel dump deadlocks. The client
+writes the **app window** into `/tmp/wl00`… tiles plus `/tmp/wlm`
+magic `SHM1`; the compositor **blits** those bytes and does not
+paint the Qt window. Desk chrome is still compositor-side (3MiB >
+64×16KB). Window proof: `shm` text + rose bar (only in the client
+paint). Success serial:
 `[wl] execve p8test.elf`, `[qt] p8test.elf wayland client`,
-`[qt] QT_QPA_PLATFORM=wayland`, `[qt] p8test.elf wire`,
-`[wl] xdg desk commit`, `[wl] xdg toplevel commit`,
-`[compositor] xdg-shell window`. Do not print
-`wl execve p8test=` (that means exec returned). Cursor, Start panel, and
+`[qt] QT_QPA_PLATFORM=wayland`, `[qt] p8test.elf shm`,
+`[qt] p8test.elf wire`, `[wl] client shm blit`,
+`[wl] xdg desk commit`, `[compositor] xdg-shell window`. Do not print
+`wl execve p8test=` (that means exec returned). Do not print
+`[wl] shm magic miss` on the success path. Cursor, Start panel, and
 lookalike apps stay **software FB** overlays
 (5×7 glyphs, no GPU, no Qt scene graph). The bar/icons themselves
 are the fullscreen xdg desk surface, not extra compositor paint.
