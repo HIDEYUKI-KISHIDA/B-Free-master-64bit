@@ -1,35 +1,40 @@
-# ISO の材料（いま出せるもの）
+# ISO の材料
 
-GitHub を clone した人向けです。
+GitHub を clone した人向けです。`bfree.iso` は書きません。
 
-## いま一本で作れるもの
+## 1. hello ISO（表紙まで）
 
-**hello ISO**（カーネルの自己テスト + 埋め込み hello）。Qt の机ではありません。daily の `bfree.iso` でもありません。
+机ではありません。
 
 ```
 cd bfree_x86_64
 bash tools/make_hello_iso.sh
-qemu-system-x86_64 -m 512 -cdrom bfree-hello.iso -display none -serial file:/tmp/bfree_hello.log
+qemu-system-x86_64 -m 512 -cdrom bfree-hello.iso -vga std -serial file:/tmp/bfree_hello.log
 ```
 
-成功の目安（シリアル）: `STAGE1` または `user_hello.elf`。
+成功: シリアルに `Jumping to userland`。画面は白い B-Free TRON のままです。
 
-このコマンドは **`bfree.iso` を書きません。**
+## 2. 机の ISO（サンプルデスクトップ）
 
-## まだ一本で作れないもの
+いまの机は daily の `bfree.iso` です。同じ机を **別ファイル名** にします。kernel も desktop.elf も作り直しません。
 
-あなたの PC で動いている **Qt の机**（daily `bfree.iso`）です。
+手元に `bfree.iso` があるとき:
 
-足りない材料:
+```
+cd bfree_x86_64
+bash tools/make_desk_iso.sh
+qemu-system-x86_64 -cdrom bfree-desk.iso -m 1024 -vga std -serial file:/tmp/bfree_desk.log
+```
 
-- `desktop.elf`（本物の Qt ゲスト。10MB 未満は stub）
-- daily 用 `kernel.elf.g1-desk`（ソースから組んだ kernel はまだ daily と同じではありません）
-- `init.elf` / busybox / `iso_root` の机用 grub
+成功: EX / TE の机が出る（今動いた画面と同じ）。
 
-これらは今 GitHub にありません。hello ISO が先、机の ISO は次です。
+`bfree.iso` が無い clone では、まだ机は作れません。必要な材料:
 
-## やらないこと
+- `bfree.iso`（いちばん簡単）、または
+- `kernel.elf.g1-desk` + 10MB 以上の `desktop.elf` + `init.elf`
+
+## まだやらないこと
 
 - `bfree.iso` を上書きする
-- `kernel.elf.g1-desk` を上書きする
+- kernel を作り直して机に載せる
 - stub の偽物 Explorer を机の代わりにする

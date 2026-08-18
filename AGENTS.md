@@ -44,9 +44,13 @@ clean checkout: skip missing `../multiboot2_header.S` (header is in
 is absent, define `BFREE_MAX_SIGNALFD` / `BFREE_SIGNALFD_FD_BASE`, and
 define `g_bfree_shell_text_fp*` so `--no-undefined` links. Hello ISO:
 `bash bfree_x86_64/tools/make_hello_iso.sh` → `bfree-hello.iso` (never
-`bfree.iso`). Recipe: `bfree_x86_64/docs/ISO_RECIPE.ja.md`. That ISO is
+`bfree.iso`). Desk ISO: `bash bfree_x86_64/tools/make_desk_iso.sh` →
+`bfree-desk.iso` by **cloning daily `bfree.iso`** (no kernel rebuild, no
+desktop relink). Recipe: `bfree_x86_64/docs/ISO_RECIPE.ja.md`. Hello ISO is
 **not** the Qt desk. Daily `bfree.iso` / `kernel.elf.g1-desk` stay
 untouched. From-source kernel is still not the daily g1-desk binary.
+Do not `git checkout` this branch onto the maintainer working tree;
+apply with `git show origin/<branch>:path > path`.
 
 Curated tests `userland/ltp_curated` and `userland/libc_test_curated` fail to
   build against Ubuntu's musl 1.2.4 (`renameat2`, `struct statx`) — version

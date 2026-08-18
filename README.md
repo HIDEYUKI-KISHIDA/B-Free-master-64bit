@@ -13,11 +13,15 @@ B-Free inherits the philosophy of BTRON and aims to be a modern, open-source OS 
 
 ## ビルド・実行方法 / Build & Run
 
-x86_64 の本線は `bfree_x86_64/` です。clone から一本で作れるのは **hello ISO** です（Qt の机ではありません）:
+x86_64 の本線は `bfree_x86_64/` です。
+
+- clone から一本: **hello ISO**（表紙だけ。机ではない）
+- 手元の `bfree.iso` があるとき: **desk ISO**（今動いた EX/TE の机。別名にするだけ）
 
 ```
 cd bfree_x86_64
 bash tools/make_hello_iso.sh
+bash tools/make_desk_iso.sh
 ```
 
 詳細: `bfree_x86_64/docs/ISO_RECIPE.ja.md`
