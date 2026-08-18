@@ -10,7 +10,6 @@
 #include <QtPlugin>
 
 extern const QT_PREPEND_NAMESPACE(QStaticPlugin) qt_static_plugin_QBfreeWlIntegrationPlugin();
-extern "C" void bfree_guest_refresh_libc_auxv(void);
 
 static void qt_hello_serial(const char *s)
 {
@@ -35,8 +34,8 @@ int main(int argc, char **argv)
 {
     static char prog[] = "/p8test.elf";
     static char arg_platform[] = "-platform";
-    static char arg_wl[] = "wayland";
-    static char *qt_argv[] = {prog, arg_platform, arg_wl, nullptr};
+    static char arg_bfree[] = "bfree";
+    static char *qt_argv[] = {prog, arg_platform, arg_bfree, nullptr};
     int qt_argc = 3;
 
     (void)argc;
@@ -44,11 +43,10 @@ int main(int argc, char **argv)
 
     qt_hello_serial("[qt] QGuiApplication start\n");
     qRegisterStaticPluginFunction(qt_static_plugin_QBfreeWlIntegrationPlugin());
-    /* guest_link_compat wrap_getenv still reports QT_QPA_PLATFORM=bfree.
-     * Do not call bfree_guest_install_static_env() here — it resets environ
-     * to bfree. The stub QPA accepts keys wayland and bfree. */
-    bfree_guest_refresh_libc_auxv();
-
+    qt_hello_serial("[qt] plugin registered\n");
+    /* wrap_getenv reports QT_QPA_PLATFORM=bfree. Match that key. */
+    qt_hello_serial("[qt] before QGuiApplication ctor\n");
+    QGuiApplication::setDesktopSettingsAware(false);
     QGuiApplication app(qt_argc, qt_argv);
     qt_hello_serial("[qt] QGuiApplication ctor ok\n");
 
