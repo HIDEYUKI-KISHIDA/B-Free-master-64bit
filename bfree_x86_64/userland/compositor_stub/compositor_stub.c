@@ -5,10 +5,14 @@
  * QT_QPA_PLATFORM=wayland. Not desktop.elf (bfree QPA steals FB). hello.elf
  * stays the fallback if p8test execve returns. Two xdg_toplevels: desk
  * chrome + small app window. App pixels go through /tmp/wlXX vfile tiles
- * (16KB each, no SCM_RIGHTS; vfork parent sleeps until child exit so a
- * 3.7MB AF_UNIX dump deadlocks). Compositor blits those tiles; it does not
- * paint the Qt window. Desk chrome still compositor-side (full FB > 64
- * vfiles). Not product DesktopShell.qml.
+ * (16KB each, no SCM_RIGHTS; a 3.7MB AF_UNIX dump deadlocks). fork (nr 57)
+ * lets the parent accept/blit while a long-lived QGuiApplication child
+ * lives; vfork (nr 58) is the fallback (parent sleeps until child exit).
+ * Compositor blits those tiles; it does not paint the Qt window. Desk
+ * chrome still compositor-side (full FB > 64 vfiles). Not product
+ * DesktopShell.qml. Real QGuiApplication is qt_wl_hello.elf mapped as
+ * p8test.elf when the guest Qt prefix can link it; otherwise this C
+ * client stays in the slot.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
 #define BFREE_FB0_FD 0x2000
@@ -34,10 +38,12 @@
 #define SYS_ACCEPT 43
 #define SYS_BIND 49
 #define SYS_LISTEN 50
+#define SYS_FORK 57
 #define SYS_VFORK 58
 #define SYS_EXECVE 59
 #define SYS_EXIT 60
 #define SYS_WAITPID 61
+#define WNOHANG 1
 #define SYS_FTRUNCATE 77
 #define SYS_MSYNC 26
 #define SYS_MEMFD 319
@@ -2565,6 +2571,53 @@ static long wl_shm_get(unsigned char *app, unsigned app_bytes)
 }
 #endif
 
+#ifdef WL_STUB_LIB
+/* Linked into qt_wl_hello.elf (real QGuiApplication). Same tiles + wire as
+ * the C p8test client. Desk chrome stays compositor-side. */
+long wl_stub_flush_app(const unsigned char *app, unsigned w, unsigned h)
+{
+    static const char shmm[] = "[qt] QGuiApplication shm\n";
+    static const char wirem[] = "[qt] QGuiApplication wire\n";
+    unsigned int desk_w = 1024;
+    unsigned int desk_h = 768;
+    unsigned int app_w;
+    unsigned int app_h;
+    unsigned int app_bytes;
+    unsigned char msg[512];
+    unsigned char hdr[4];
+    unsigned int msglen;
+    long cli_fd;
+    long putn;
+
+    app_w = w;
+    app_h = h;
+    if (app_w == 0 || app_h == 0) {
+        app_w = 480;
+        app_h = 320;
+    }
+    if (app_w > 480U) {
+        app_w = 480;
+    }
+    if (app_h > 320U) {
+        app_h = 320;
+    }
+    app_bytes = app_w * app_h * 4U;
+    putn = wl_shm_put(app, app_bytes);
+    serial_hex("wl shm put=", putn);
+    if (putn > 0) {
+        serial(shmm, sizeof(shmm) - 1);
+    }
+    cli_fd = wl_connect_unix();
+    msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
+    if (cli_fd >= 0) {
+        put_u32(hdr, msglen);
+        (void)wl_write_all(cli_fd, hdr, 4);
+        (void)wl_write_all(cli_fd, msg, msglen);
+        serial(wirem, sizeof(wirem) - 1);
+    }
+    return putn;
+}
+#else
 #ifdef WL_AS_CLIENT
 void _start(void)
 {
@@ -2637,8 +2690,10 @@ void _start(void)
     static const char fillok[] = "[compositor] guest stub fb fill\n";
     static const char wlok[] = "[compositor] wayland native desk blit\n";
     static const char xdgok[] = "[compositor] xdg-shell window\n";
-    static const char childm[] = "[wl] vfork child\n";
-    static const char parentm[] = "[wl] vfork parent\n";
+    static const char childm[] = "[wl] fork child\n";
+    static const char parentm[] = "[wl] fork parent\n";
+    static const char vchildm[] = "[wl] vfork child\n";
+    static const char vparentm[] = "[wl] vfork parent\n";
     static const char fallback[] = "[wl] unix fallback in-process\n";
     static const char deskm[] = "[wl] xdg client paint\n";
     static const char accepm[] = "[wl] client accepted\n";
@@ -2669,6 +2724,7 @@ void _start(void)
     long nread;
     unsigned int map_bytes;
     long exec_rc;
+    int used_vfork;
 
     serial(hello, sizeof(hello) - 1);
 
@@ -2746,14 +2802,21 @@ void _start(void)
     cli_fd = -1;
     acc_fd = -1;
     pid = -1;
+    used_vfork = 0;
     if (listen_fd >= 0) {
-        pid = sys6(SYS_VFORK, 0, 0, 0, 0, 0, 0);
-        serial_hex("wl vfork=", pid);
+        pid = sys6(SYS_FORK, 0, 0, 0, 0, 0, 0);
+        serial_hex("wl fork=", pid);
+        if (pid < 0) {
+            used_vfork = 1;
+            pid = sys6(SYS_VFORK, 0, 0, 0, 0, 0, 0);
+            serial_hex("wl vfork=", pid);
+        }
     }
 
     if (pid == 0) {
         unsigned char hdr[4];
-        serial(childm, sizeof(childm) - 1);
+        serial(used_vfork ? vchildm : childm,
+               used_vfork ? (sizeof(vchildm) - 1) : (sizeof(childm) - 1));
         p8_argv[0] = p8_path;
         p8_argv[1] = 0;
         p8_envp[0] = env_qpa;
@@ -2791,7 +2854,8 @@ void _start(void)
     if (pid > 0 && listen_fd >= 0) {
         unsigned char hdr[4];
         unsigned int wlen;
-        serial(parentm, sizeof(parentm) - 1);
+        serial(used_vfork ? vparentm : parentm,
+               used_vfork ? (sizeof(vparentm) - 1) : (sizeof(parentm) - 1));
         acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
         serial_hex("wl accept=", acc_fd);
         if (acc_fd >= 0) {
@@ -2801,12 +2865,13 @@ void _start(void)
             if (wlen > 0 && wlen <= 512) {
                 nread = wl_read_all(acc_fd, msg, wlen);
                 serial_hex("wl bytes=", nread);
-                (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
                 paint_desk_only(st.pool, desk_w, desk_h);
                 {
                     unsigned int app_bytes = app_w * app_h * 4U;
                     long got = wl_shm_get(st.pool + desk_w * desk_h * 4U, app_bytes);
                     serial_hex("wl shm get=", got);
+                    (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, WNOHANG, 0, 0,
+                               0);
                     if (got == (long)app_bytes) {
                         serial(shmok, sizeof(shmok) - 1);
                     } else {
@@ -2857,4 +2922,5 @@ void _start(void)
     }
     cursor_loop(&st);
 }
-#endif
+#endif /* WL_AS_CLIENT */
+#endif /* WL_STUB_LIB */
