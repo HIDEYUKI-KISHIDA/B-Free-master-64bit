@@ -402,9 +402,10 @@ and first-frame `processEvents` then `return 0`. A failed Qt link
 writes `userland/compositor_stub/qt_wl_hello.link.log` and keeps C
 p8test; do not treat `P8_KIND=C p8test` as a script crash.
 Invoke the linker via a CR-stripped copy in `/tmp` (not
-`guest_desktop_link_qmake.sh` / `bash -s`). Failed-link log is
-`/tmp/qt_wl_hello.link.log` — do not redirect that log onto `/mnt/c`
-(DrvFS can store 0 bytes). Do **not** drop `QT_QPA_PLATFORM=bfree` on
+`guest_desktop_link_qmake.sh` / `bash -s`). Failed-link log is `/tmp/qt_wl_hello.link.log`. A 204-byte log
+that is only `[guest_desktop_link] start` means `set -e` hit
+`((i++))` when `-o` is argv[0] (expression value 0). Use
+`i=$((i + 1))`. Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` until that stub is the boot
 desk. Stub ISO: `BFREE_ISO` may be `bfree-desk.iso` when daily
 `bfree.iso` is absent. Not product

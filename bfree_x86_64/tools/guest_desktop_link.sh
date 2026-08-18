@@ -114,17 +114,20 @@ for ((i = 0; i < ${#args[@]}; i++)); do
   case "$a" in
     -o)
       OUT="${args[i + 1]}"
-      ((i++))
+      i=$((i + 1))
       continue
       ;;
     -o*)
       OUT="${a#-o}"
-      [[ -n "$OUT" ]] || { OUT="${args[i + 1]}"; ((i++)); }
+      if [[ -z "$OUT" ]]; then
+        OUT="${args[i + 1]}"
+        i=$((i + 1))
+      fi
       continue
       ;;
     -T)
       SCRIPT="${args[i + 1]}"
-      ((i++))
+      i=$((i + 1))
       continue
       ;;
     -T*)
@@ -145,7 +148,7 @@ for ((i = 0; i < ${#args[@]}; i++)); do
   [[ "$a" == *.ld ]] && { SCRIPT="$a"; continue; }
   [[ "$a" == *crt0.o ]] && continue
   [[ "$a" == *guest_link_compat.o ]] && continue
-  [[ "$a" == *guest_serial.o ]] && continue;
+  [[ "$a" == *guest_serial.o ]] && continue
   inputs+=("$a")
   if [[ "$a" == *.a ]]; then
     case "$a" in
@@ -156,6 +159,7 @@ for ((i = 0; i < ${#args[@]}; i++)); do
     objs+=("$a")
   fi
 done
+echo "[guest_desktop_link] argv parsed out=$OUT script=$SCRIPT objs=${#objs[@]} archives=${#archives[@]}" >&2
 
 append_qt_network_if_needed
 
