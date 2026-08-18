@@ -322,11 +322,11 @@ The stub now paints an X11 `left_ptr` / Windows-style arrow
 (hotspot tip) via `sys_poll_input_event` (nr 0, BSS slot):
 `[wl] cursor arrow`, then type=3 mouse moves it. Icon click
 paints a lookalike window on the compositor FB (`[wl] desk open`).
-The Wayland client now sends **two `xdg_toplevel`s** in one vfork
-child / one shm pool: fullscreen desk chrome (icons + Start bar,
-title `bar`) and a 480×320 app window (title `xdg`). The compositor
-only `blit_shm`s those views + cursor + lookalike overlay windows.
-Do not paint icons/taskbar as compositor FB chrome. Success serial:
+The Wayland client now sends **two `xdg_toplevel`s** from **hello.elf**
+(named module, not `desktop.elf`) in one shm pool: fullscreen desk
+chrome (icons + Start bar, title `bar`) and a 480×320 app window
+(title `xdg`). The compositor only `blit_shm`s those views + cursor +
+lookalike overlay windows. Success serial: `[wl] hello.elf client`,
 `[wl] bind xdg_wm_base`, `[wl] get_toplevel desk`,
 `[wl] xdg desk commit`, `[wl] xdg toplevel commit`,
 `[compositor] xdg-shell window`. Cursor, Start panel, and
@@ -363,11 +363,11 @@ serial empty (no `[init]`). That is the same class as the
 VMM/`sparse-pt` hang. Stub ISO must keep the daily `g1-desk`
 kernel. Never overwrite `kernel.elf.g1-desk` or daily
 `bfree.iso`. Do not `execve("desktop.elf")` from the stub
-until a bootable patched kernel exists. The Wayland
-client on `g1-desk` is the vfork child: it `connect()`s
-`/tmp/wayland-0` and paints two xdg surfaces into one
-`wl_shm` pool (fullscreen EX/VW desk + small app window).
-That is steps 1–2 without a second ELF. Do **not** drop `QT_QPA_PLATFORM=bfree` on
+until a bootable patched kernel exists. The Wayland client on
+`g1-desk` is **hello.elf** (named Multiboot module): compositor
+`vfork`+`execve("/hello.elf")`, shm MAP_SHARED on inherited fd 8.
+Not `desktop.elf`. If execve fails, in-process vfork fallback.
+Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` (step 3) until that stub is the boot
 desk. Not product
 `DesktopShell.qml`. Daily `bfree.iso` still has the

@@ -30,8 +30,10 @@ fi
 make -C "$ROOT/userland/compositor_stub"
 COMP="$ROOT/userland/compositor_stub/compositor.elf"
 TRAMP="$ROOT/userland/compositor_stub/init_tramp.elf"
+CLIENT="$ROOT/userland/compositor_stub/wl_client.elf"
 test -s "$COMP"
 test -s "$TRAMP"
+test -s "$CLIENT"
 
 WORK="$(mktemp -d)"
 cleanup() { rm -rf "$WORK"; }
@@ -41,12 +43,14 @@ xorriso -osirrox on -indev "$SRC_ISO" -extract /boot/grub/grub.cfg "$WORK/grub.c
 python3 "$REWRITE" "$WORK/grub.cfg" "$WORK/grub.new"
 grep -q 'module2 /boot/init_tramp.elf init.elf' "$WORK/grub.new"
 grep -q 'module2 /boot/compositor.elf compositor.elf' "$WORK/grub.new"
+grep -q 'module2 /boot/hello.elf hello.elf' "$WORK/grub.new"
 
 cp -f "$SRC_ISO" "$OUT_ISO"
 xorriso -indev "$OUT_ISO" -outdev "$OUT_ISO" \
   -boot_image any replay \
   -map "$TRAMP" /boot/init_tramp.elf \
   -map "$COMP" /boot/compositor.elf \
+  -map "$CLIENT" /boot/hello.elf \
   -update "$WORK/grub.new" /boot/grub/grub.cfg \
   -commit >/dev/null
 
@@ -55,7 +59,9 @@ echo "STUB_ISO_BYTES=$(wc -c < "$OUT_ISO")"
 echo "DAILY_ISO_UNTOUCHED=$SRC_ISO"
 echo "DAILY_ISO_BYTES=$(wc -c < "$SRC_ISO")"
 echo "COMP_BYTES=$(wc -c < "$COMP")"
+echo "HELLO_BYTES=$(wc -c < "$CLIENT")"
 echo "GRUB_PID1=init_tramp.elf as init.elf"
 echo "GRUB_EXEC=compositor.elf"
+echo "GRUB_CLIENT=hello.elf"
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"
