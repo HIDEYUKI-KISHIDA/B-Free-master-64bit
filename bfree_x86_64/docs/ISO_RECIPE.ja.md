@@ -33,6 +33,38 @@ qemu-system-x86_64 -cdrom bfree-desk.iso -m 1024 -vga std -serial file:/tmp/bfre
 - `bfree.iso`（いちばん簡単）、または
 - `kernel.elf.g1-desk` + 10MB 以上の `desktop.elf` + `init.elf`
 
+## 3. 机でファイルを開く・保存する
+
+同じ Qt 机の `/persist` です。stub の Explorer ではありません。
+
+初回だけディスクを作る:
+
+```
+cd bfree_x86_64
+bash tools/_f1_persist_img_scaffold.sh
+```
+
+机 + 保存ディスクで起動:
+
+```
+cd bfree_x86_64
+qemu-system-x86_64 -cdrom bfree-desk.iso -m 1024 -vga std -serial file:/tmp/bfree_desk.log -drive file=persist.img,if=ide,index=0,media=disk,format=raw
+```
+
+机の上:
+
+1. **EX** を押す → `/persist/desk.txt` を作る（中身 `from-desk`）
+2. **VW** を押す → そのファイルを読む
+3. QEMU を閉じて、同じコマンドでもう一度起動 → EX で `desk.txt` が残っている
+
+シリアルの成功:
+
+- `desk note created`
+- `Explorer listing persist`
+- `Viewer body=from-desk`
+
+`bfree.iso` のまま起動しても同じです。`-drive` を付けないと、再起動で消えます。
+
 ## まだやらないこと
 
 - `bfree.iso` を上書きする

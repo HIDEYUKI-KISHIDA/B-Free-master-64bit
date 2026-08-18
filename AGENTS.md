@@ -51,6 +51,9 @@ desktop relink). Recipe: `bfree_x86_64/docs/ISO_RECIPE.ja.md`. Hello ISO is
 untouched. From-source kernel is still not the daily g1-desk binary.
 Do not `git checkout` this branch onto the maintainer working tree;
 apply with `git show origin/<branch>:path > path`.
+Qt desk persist: attach `-drive file=persist.img,if=ide,index=0,media=disk,format=raw`
+(create with `bash tools/_f1_persist_img_scaffold.sh`). EX writes `/persist/desk.txt`.
+Without `-drive`, `/persist` does not survive reboot.
 
 Curated tests `userland/ltp_curated` and `userland/libc_test_curated` fail to
   build against Ubuntu's musl 1.2.4 (`renameat2`, `struct statx`) — version
