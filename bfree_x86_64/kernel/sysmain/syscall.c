@@ -11523,6 +11523,8 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
             img = "libc_test_regression.elf";
         } else if (bfree_guest_basename_eq(path, "abi_hole_finder.elf")) {
             img = "abi_hole_finder.elf";
+        } else if (bfree_guest_basename_eq(path, "desktop.elf")) {
+            img = "desktop.elf";
         }
         exec_img = img;
     }
@@ -11544,9 +11546,23 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
         return -14;
     }
     if (envc <= 0) {
-        envc = 8;
-        for (i = 0; i < envc; ++i) {
-            env_ptrs[i] = k_default_env[i];
+        if (bfree_guest_basename_eq(exec_img, "desktop.elf")) {
+            static const char *const k_desktop_exec_env[] = {
+                "QT_QPA_PLATFORM=bfree",
+                "HOME=/root",
+                "USER=root",
+                "LOGNAME=root",
+                "PATH=/bin:/usr/bin:."
+            };
+            envc = 5;
+            for (i = 0; i < envc; ++i) {
+                env_ptrs[i] = k_desktop_exec_env[i];
+            }
+        } else {
+            envc = 8;
+            for (i = 0; i < envc; ++i) {
+                env_ptrs[i] = k_default_env[i];
+            }
         }
     } else {
         for (i = 0; i < envc; ++i) {
@@ -11579,7 +11595,7 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     g_guest_etc_group_off = 0;
     g_guest_etc_profile_off = 0;
     g_guest_etc_motd_off = 0;
-    bfree_guest_proc_maps_select_busybox(1);
+    bfree_guest_proc_maps_select_busybox(bfree_guest_basename_eq(exec_img, "busybox.elf") ? 1 : 0);
 
     if (is_child) {
         /*
@@ -11657,7 +11673,10 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
             return -1;
         }
         if (bfree_user_stack_ensure_pages(stack_top,
-                BFREE_USER_STACK_PAGES_BUSYBOX + BFREE_VFORK_EXEC_STACK_SLOT_PAGES) != 0) {
+                (bfree_guest_basename_eq(exec_img, "desktop.elf")
+                     ? BFREE_USER_STACK_PAGES_DESKTOP
+                     : BFREE_USER_STACK_PAGES_BUSYBOX) +
+                    BFREE_VFORK_EXEC_STACK_SLOT_PAGES) != 0) {
             if (use_private_as) {
                 knl_current_task->page_table_base = parent_pt;
                 bfree_process_exit_restore_as();
@@ -11746,7 +11765,9 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     }
     /* Log the first few syscalls after busybox transfer (smoke: post_exec_syscall). */
     g_bfree_post_exec_syscalls = 4;
-    uart_puts("[ELF] exec transfer busybox gthr cleared entry=");
+    uart_puts("[ELF] exec transfer ");
+    uart_puts(exec_img);
+    uart_puts(" gthr cleared entry=");
     uart_puthex64(g_bfree_exec_transfer_rip);
     uart_puts(" rsp=");
     uart_puthex64(g_bfree_sysret_exec_rsp);
