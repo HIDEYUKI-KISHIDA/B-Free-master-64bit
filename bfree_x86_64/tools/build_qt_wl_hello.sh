@@ -142,30 +142,29 @@ for o in "$DESK/qt_futex_guest_stub.o" "$DESK/guest_platform_stub.o" "$DESK/gues
 done
 
 echo "[qt_wl_hello] linking with $GUEST_QT (no libqbfree.a)"
-LINK_LOG="$STUB/qt_wl_hello.link.log"
-# /mnt/c copies are often CRLF; qmake wrapper strips CR. Do not bash the
-# .sh file directly (set -o pipefail^M aborts with an empty-looking log).
-LINK_WRAP="$ROOT/tools/guest_desktop_link_qmake.sh"
-if [[ ! -f "$LINK_WRAP" ]]; then
-  LINK_WRAP="$ROOT/tools/guest_desktop_link.sh"
-fi
+echo "[qt_wl_hello] g++=$(command -v x86_64-elf-g++ 2>/dev/null || echo missing)"
+echo "[qt_wl_hello] ld=$(command -v x86_64-elf-ld 2>/dev/null || echo missing)"
+# DrvFS (/mnt/c) redirects can land as 0-byte files; keep the log on /tmp.
+# Do not bash -s / qmake wrapper here (nested stdin ate the linker script).
+LINK_LOG="/tmp/qt_wl_hello.link.log"
+GDL_LF="/tmp/bfree-guest_desktop_link.sh"
+tr -d '\r' < "$ROOT/tools/guest_desktop_link.sh" > "$GDL_LF"
 set +e
-bash "$LINK_WRAP" \
+bash "$GDL_LF" \
   -o "$STUB/qt_wl_hello.elf" \
   "-T$DESK/desktop.ld" \
   "${STUBS[@]}" \
   "$STUB/qbfree_wayland.o" \
   "$STUB/qt_wl_hello.o" \
   "$STUB/wl_stub_flush.o" \
-  "${ARCHIVES[@]}" >"$LINK_LOG" 2>&1
-link_rc=$?
+  "${ARCHIVES[@]}" 2>&1 | tee "$LINK_LOG"
+link_rc=${PIPESTATUS[0]}
 set -e
 echo "[qt_wl_hello] link rc=$link_rc log_bytes=$(wc -c < "$LINK_LOG" | tr -d ' ')"
-sed -n '1,80p' "$LINK_LOG"
 if [[ "$link_rc" -ne 0 ]]; then
   echo "qt_wl_hello skip: link failed. C p8test stays." >&2
   echo "qt_wl_hello: unique undefined refs:" >&2
-  grep -E 'undefined reference|undefined symbol|ld: error:|file not recognized|invalid option' "$LINK_LOG" \
+  grep -E 'undefined reference|undefined symbol|ld: error:|file not recognized|invalid option|not found|failed' "$LINK_LOG" \
     | sort -u | head -40 >&2 || true
   echo "qt_wl_hello: full log $LINK_LOG" >&2
   exit 0
