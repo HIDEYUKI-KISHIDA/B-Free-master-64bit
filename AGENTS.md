@@ -305,7 +305,10 @@ Host `DesktopShell.qml` never shipped a custom sprite — Qt
 Linux vs Windows arrows differ by theme, not by kernel ABI.
 The stub now paints an X11 `left_ptr` / Windows-style arrow
 (hotspot tip) via `sys_poll_input_event` (nr 0, BSS slot):
-`[wl] cursor arrow`, then type=3 mouse moves it. QEMU hides the
+`[wl] cursor arrow`, then type=3 mouse moves it. Icon click
+paints a lookalike window on the compositor FB (`[wl] desk open`
+Explorer/Terminal/…). Close `X` works. That is still not
+`desktop.elf` / BusyBox / product QML. QEMU hides the
 host cursor when grabbed (`Ctrl+Alt+G`); the guest must paint
 its own. Still not `desktop.elf` / not product QML.
 That is S1 toward 本デスク (compositor owns the socket).
