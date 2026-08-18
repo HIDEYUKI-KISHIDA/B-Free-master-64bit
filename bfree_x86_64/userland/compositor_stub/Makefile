@@ -37,4 +37,4 @@ init_tramp.elf: init_trampoline.c
 
 clean:
 	rm -f compositor.elf init_tramp.elf wl_client.elf qt_wl_client.elf wl_stub_flush.o
-	rm -f qt_wl_hello.o qbfree_wayland.o
+	rm -f qt_wl_hello.o qbfree_wayland.o qt_wl_hello.link.log

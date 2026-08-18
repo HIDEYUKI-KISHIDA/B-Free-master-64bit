@@ -395,7 +395,12 @@ fallback. Cloud cannot link `QGuiApplication` (no `libQt6Gui.a` /
 `tools/build_qt_wl_hello.sh` must pass `-D__linux__` because
 `x86_64-elf-g++` is not a Linux target (`qsystemdetection.h` otherwise
 errors "Qt has not been ported to this OS"). Same define as
-`Makefile.guest-elf`. Do **not** drop `QT_QPA_PLATFORM=bfree` on
+`Makefile.guest-elf`. The stub QPA must **not** call
+`createUnixEventDispatcher()` (undefined on this static guest Qt /
+`threads=no` libstdc++). It uses a local `QAbstractEventDispatcher`
+and first-frame `processEvents` then `return 0`. A failed Qt link
+writes `userland/compositor_stub/qt_wl_hello.link.log` and keeps C
+p8test; do not treat `P8_KIND=C p8test` as a script crash. Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` until that stub is the boot
 desk. Stub ISO: `BFREE_ISO` may be `bfree-desk.iso` when daily
 `bfree.iso` is absent. Not product

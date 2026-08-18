@@ -7,8 +7,12 @@
 #include "wl_stub_client.h"
 
 #include <QAbstractEventDispatcher>
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QImage>
+#include <QList>
+#include <QSocketNotifier>
 #include <QString>
 #include <QStringList>
 #include <QtPlugin>
@@ -23,8 +27,6 @@
 #include <qpa/qwindowsysteminterface.h>
 
 QT_BEGIN_NAMESPACE
-
-extern QAbstractEventDispatcher *createUnixEventDispatcher();
 
 static void qt_wl_serial(const char *s)
 {
@@ -111,6 +113,55 @@ public:
     void populateFontDatabase() override {}
 };
 
+/* Guest libstdc++ is threads=no; Unix epoll dispatcher is not linked.
+ * First-frame hello calls processEvents a few times then exits so vfork
+ * parent can blit. Do not call createUnixEventDispatcher(). */
+class QBfreeWlEventDispatcher : public QAbstractEventDispatcher
+{
+public:
+    bool processEvents(QEventLoop::ProcessEventsFlags flags) override
+    {
+        Q_EMIT awake();
+        QCoreApplication::sendPostedEvents();
+        return QWindowSystemInterface::sendWindowSystemEvents(flags);
+    }
+
+    void registerSocketNotifier(QSocketNotifier *notifier) override { (void)notifier; }
+    void unregisterSocketNotifier(QSocketNotifier *notifier) override { (void)notifier; }
+
+    void registerTimer(int timerId, qint64 interval, Qt::TimerType timerType,
+                       QObject *object) override
+    {
+        (void)timerId;
+        (void)interval;
+        (void)timerType;
+        (void)object;
+    }
+    bool unregisterTimer(int timerId) override
+    {
+        (void)timerId;
+        return false;
+    }
+    bool unregisterTimers(QObject *object) override
+    {
+        (void)object;
+        return false;
+    }
+    QList<TimerInfo> registeredTimers(QObject *object) const override
+    {
+        (void)object;
+        return {};
+    }
+    int remainingTime(int timerId) override
+    {
+        (void)timerId;
+        return -1;
+    }
+
+    void wakeUp() override {}
+    void interrupt() override {}
+};
+
 class QBfreeWlIntegration : public QPlatformIntegration
 {
 public:
@@ -154,7 +205,8 @@ public:
 
     QAbstractEventDispatcher *createEventDispatcher() const override
     {
-        return createUnixEventDispatcher();
+        qt_wl_serial("[qt] QPA dispatcher\n");
+        return new QBfreeWlEventDispatcher;
     }
 
     QPlatformFontDatabase *fontDatabase() const override
