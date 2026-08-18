@@ -28,10 +28,7 @@ qemu-system-x86_64 -cdrom bfree-desk.iso -m 1024 -vga std -serial file:/tmp/bfre
 
 成功: EX / TE の机が出る（今動いた画面と同じ）。
 
-`bfree.iso` が無い clone では、まだ机は作れません。必要な材料:
-
-- `bfree.iso`（いちばん簡単）、または
-- `kernel.elf.g1-desk` + 10MB 以上の `desktop.elf` + `init.elf`
+`bfree.iso` が無い clone でも、同じコマンドで机を作ります。材料は GitHub Release `desk-goldens-1` から取ります（`bfree.iso` は git に置きません。123MB で上限超え）。
 
 ## 3. 机でファイルを開く・保存する
 

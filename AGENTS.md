@@ -45,8 +45,12 @@ is absent, define `BFREE_MAX_SIGNALFD` / `BFREE_SIGNALFD_FD_BASE`, and
 define `g_bfree_shell_text_fp*` so `--no-undefined` links. Hello ISO:
 `bash bfree_x86_64/tools/make_hello_iso.sh` → `bfree-hello.iso` (never
 `bfree.iso`). Desk ISO: `bash bfree_x86_64/tools/make_desk_iso.sh` →
-`bfree-desk.iso` by **cloning daily `bfree.iso`** (no kernel rebuild, no
-desktop relink). Recipe: `bfree_x86_64/docs/ISO_RECIPE.ja.md`. Hello ISO is
+`bfree-desk.iso` (no kernel rebuild, no desktop relink). If daily
+`bfree.iso` is present it is copied under a new name; if absent the
+script downloads GitHub Release tag `desk-goldens-1`
+(`kernel.elf.g1-desk`, Qt `desktop.elf` ≥ 10MB, `init.elf`,
+`busybox.elf`) and assembles. Never commit `bfree.iso` (123MB).
+Recipe: `bfree_x86_64/docs/ISO_RECIPE.ja.md`. Hello ISO is
 **not** the Qt desk. Daily `bfree.iso` / `kernel.elf.g1-desk` stay
 untouched. From-source kernel is still not the daily g1-desk binary.
 Do not `git checkout` this branch onto the maintainer working tree;
