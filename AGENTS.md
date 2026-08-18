@@ -405,7 +405,13 @@ Invoke the linker via a CR-stripped copy in `/tmp` (not
 `guest_desktop_link_qmake.sh` / `bash -s`). Failed-link log is `/tmp/qt_wl_hello.link.log`. A 204-byte log
 that is only `[guest_desktop_link] start` means `set -e` hit
 `((i++))` when `-o` is argv[0] (expression value 0). Use
-`i=$((i + 1))`. Do **not** drop `QT_QPA_PLATFORM=bfree` on
+`i=$((i + 1))`. Do not link `guest_platform_stub.o` into
+`qt_wl_hello.elf` (that object is the bfree QPA factory
+`QPlatformIntegrationPluginBFree` / `libqbfree.a`). Provide a dummy
+`__real_qInitResources_guest_desktop` instead of desktop qrc.
+Stub window drag looks jagged and Terminal Enter is slow: software
+FB dirty blit + per-Enter `vfork`/`busybox.elf`. Do not polish that
+as the product. `threads=no` libstdc++ warning is expected. Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` until that stub is the boot
 desk. Stub ISO: `BFREE_ISO` may be `bfree-desk.iso` when daily
 `bfree.iso` is absent. Not product

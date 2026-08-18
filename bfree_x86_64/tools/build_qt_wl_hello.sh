@@ -137,9 +137,18 @@ do
 done
 
 STUBS=()
-for o in "$DESK/qt_futex_guest_stub.o" "$DESK/guest_platform_stub.o" "$DESK/guest_mmap.o"; do
+# qt_futex + guest_mmap only. guest_platform_stub.o is the bfree QPA factory
+# (QPlatformIntegrationPluginBFree / libqbfree.a) — do not link it here.
+for o in "$DESK/qt_futex_guest_stub.o" "$DESK/guest_mmap.o"; do
   [[ -f "$o" ]] && STUBS+=("$o")
 done
+
+SYM_STUB="$STUB/qt_wl_hello_syms.o"
+if ! x86_64-elf-gcc -ffreestanding -fno-pic -c -o "$SYM_STUB" "$STUB/qt_wl_hello_syms.c"; then
+  echo "qt_wl_hello skip: sym stub compile failed. C p8test stays." >&2
+  exit 0
+fi
+STUBS+=("$SYM_STUB")
 
 echo "[qt_wl_hello] linking with $GUEST_QT (no libqbfree.a)"
 echo "[qt_wl_hello] g++=$(command -v x86_64-elf-g++ 2>/dev/null || echo missing)"
