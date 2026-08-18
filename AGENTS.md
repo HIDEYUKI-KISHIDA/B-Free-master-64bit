@@ -298,6 +298,12 @@ after the magenta fill. Transport is now **AF_UNIX**
 not a pipe. vfork child `connect()`s; in-process connect is
 the fallback. Success serial: `[wl] listen ok` then
 `[wl] client accepted` then `wayland native desk blit`.
+After that blit the stub used to hang with **no pointer**. Daily
+desk draws a software crosshair via `sys_poll_input_event` (nr 0,
+BSS slot). The stub now does the same on FB after commit:
+`[wl] cursor on`, then type=3 mouse moves the crosshair. QEMU
+hides the host cursor when grabbed (`Ctrl+Alt+G`); the guest
+must paint its own. Still not `desktop.elf` / not product QML.
 That is S1 toward 本デスク (compositor owns the socket).
 S2 source whitelist (`desktop.elf` in `sys_linux_execve`) may
 live in `syscall.c`, but **do not** `make -C kernel` and map
