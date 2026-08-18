@@ -306,9 +306,18 @@ Linux vs Windows arrows differ by theme, not by kernel ABI.
 The stub now paints an X11 `left_ptr` / Windows-style arrow
 (hotspot tip) via `sys_poll_input_event` (nr 0, BSS slot):
 `[wl] cursor arrow`, then type=3 mouse moves it. Icon click
-paints a lookalike window on the compositor FB (`[wl] desk open`
-Explorer/Terminal/…). Close `X` works. That is still not
-`desktop.elf` / BusyBox / product QML. QEMU hides the
+paints a lookalike window on the compositor FB (`[wl] desk open`).
+Desk wallpaper/icons/taskbar go through **one** `wl_shm` surface
+then blit. Cursor, Start panel, and windows are **software FB**
+overlays (5×7 glyphs, no GPU, no Qt scene graph). Host
+`DesktopShell.qml` Start is QML; this Start list is not that.
+Terminal/Explorer then `vfork`+pipe+`execve("/busybox.elf")`
+(`echo hello` / `ls /`) and paint captured stdout. That is a
+real busybox process, not `desktop.elf`. Do **not**
+`execve("desktop.elf")` on `g1-desk` (unknown names become
+busybox, or QPA would steal FB). From-source kernel on the
+stub ISO still kills QEMU. 本デスク still needs a **bootable**
+kernel that execs `desktop.elf` as a Wayland client. QEMU hides the
 host cursor when grabbed (`Ctrl+Alt+G`); the guest must paint
 its own. Still not `desktop.elf` / not product QML.
 That is S1 toward 本デスク (compositor owns the socket).

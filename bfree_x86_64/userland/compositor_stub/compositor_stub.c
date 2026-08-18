@@ -3,8 +3,10 @@
  * Listen on AF_UNIX /tmp/wayland-0. vfork child connect()s and paints the
  * daily FB desk lookalike (EX/VW tiles) into wl_shm. After blit, APP polls
  * sys_poll_input_event (nr 0, BSS ptr) and draws an X11 left_ptr arrow on FB.
- * Icon click paints a lookalike window on the compositor FB (not desktop.elf).
- * Not desktop.elf (g1-desk execve would load busybox; from-source kernel dies).
+ * Icon click paints a lookalike window on the compositor FB. Terminal/Explorer
+ * vfork+pipe+execve busybox.elf (g1-desk maps unknown names to busybox; do not
+ * execve desktop.elf — that steals FB via QT_QPA_PLATFORM=bfree or becomes
+ * busybox). Desk chrome is one wl_shm surface; windows/cursor/Start are FB.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
 #define BFREE_FB0_FD 0x2000
@@ -17,13 +19,18 @@
 #define SOCK_STREAM 1
 #define SYS_READ 0
 #define SYS_WRITE 1
+#define SYS_CLOSE 3
+#define SYS_PIPE 22
+#define SYS_DUP2 33
 #define SYS_SOCKET 41
 #define SYS_CONNECT 42
 #define SYS_ACCEPT 43
 #define SYS_BIND 49
 #define SYS_LISTEN 50
 #define SYS_VFORK 58
+#define SYS_EXECVE 59
 #define SYS_EXIT 60
+#define SYS_WAITPID 61
 /* Cap only the mmap length. Do not put this in BSS — 1024x768 NOBITS hung load_elf. */
 #define WL_SURF_MAX_W 1024
 #define WL_SURF_MAX_H 768
@@ -212,6 +219,8 @@ struct stub_win {
     int w;
     int h;
     int z;
+    unsigned out_n;
+    char out[160];
 };
 static struct stub_win g_wins[WIN_MAX];
 static int g_win_n;
@@ -543,6 +552,106 @@ static void win_raise(int wi)
     g_focus = wi;
 }
 
+static int g_pipefd[2];
+static char g_bb_path[] = "/busybox.elf";
+static char g_bb_a1[32];
+static char g_bb_a2[32];
+static char *g_bb_argv[4];
+static char g_bb_chunk[64];
+static int g_waitst;
+
+static void copy_str(char *d, unsigned cap, const char *s)
+{
+    unsigned i = 0;
+    if (!s) {
+        d[0] = 0;
+        return;
+    }
+    while (s[i] && i + 1U < cap) {
+        d[i] = s[i];
+        i++;
+    }
+    d[i] = 0;
+}
+
+static void buf_put(char *d, unsigned cap, unsigned *n, const char *s, unsigned sn)
+{
+    unsigned i;
+    for (i = 0; i < sn && *n + 1U < cap; i++) {
+        char c = s[i];
+        if (c == '\r') {
+            continue;
+        }
+        if (c == '\n') {
+            c = '|';
+        }
+        d[(*n)++] = c;
+    }
+    d[*n] = 0;
+}
+
+/* APP vfork child + private-AS execve. Path busybox.elf is on the daily ISO.
+ * Do not execve desktop.elf on g1-desk. */
+static long run_busybox(char *out, unsigned cap, unsigned *out_n, const char *a1, const char *a2)
+{
+    long pid;
+    long rc;
+    long nread;
+    *out_n = 0;
+    if (cap) {
+        out[0] = 0;
+    }
+    copy_str(g_bb_a1, sizeof g_bb_a1, a1);
+    copy_str(g_bb_a2, sizeof g_bb_a2, a2);
+    g_bb_argv[0] = g_bb_a1;
+    g_bb_argv[1] = a2 ? g_bb_a2 : 0;
+    g_bb_argv[2] = 0;
+    g_pipefd[0] = -1;
+    g_pipefd[1] = -1;
+    rc = sys6(SYS_PIPE, (long)(unsigned long)g_pipefd, 0, 0, 0, 0, 0);
+    serial_hex("wl pipe=", rc);
+    if (rc != 0) {
+        buf_put(out, cap, out_n, "pipe fail", 9);
+        return rc;
+    }
+    serial("[wl] busybox exec\n", 18);
+    pid = sys6(SYS_VFORK, 0, 0, 0, 0, 0, 0);
+    serial_hex("wl bb vfork=", pid);
+    if (pid == 0) {
+        (void)sys6(SYS_DUP2, (long)g_pipefd[1], 1, 0, 0, 0, 0);
+        (void)sys6(SYS_DUP2, (long)g_pipefd[1], 2, 0, 0, 0, 0);
+        (void)sys6(SYS_CLOSE, (long)g_pipefd[0], 0, 0, 0, 0, 0);
+        (void)sys6(SYS_CLOSE, (long)g_pipefd[1], 0, 0, 0, 0, 0);
+        rc = sys6(SYS_EXECVE, (long)(unsigned long)g_bb_path, (long)(unsigned long)g_bb_argv, 0, 0, 0, 0);
+        serial_hex("wl execve=", rc);
+        (void)sys6(SYS_EXIT, 1, 0, 0, 0, 0, 0);
+        for (;;) {
+        }
+    }
+    if (pid < 0) {
+        buf_put(out, cap, out_n, "vfork fail", 10);
+        (void)sys6(SYS_CLOSE, (long)g_pipefd[0], 0, 0, 0, 0, 0);
+        (void)sys6(SYS_CLOSE, (long)g_pipefd[1], 0, 0, 0, 0, 0);
+        return pid;
+    }
+    (void)sys6(SYS_CLOSE, (long)g_pipefd[1], 0, 0, 0, 0, 0);
+    for (;;) {
+        nread = sys6(SYS_READ, (long)g_pipefd[0], (long)(unsigned long)g_bb_chunk, 64, 0, 0, 0);
+        if (nread <= 0) {
+            break;
+        }
+        buf_put(out, cap, out_n, g_bb_chunk, (unsigned)nread);
+    }
+    (void)sys6(SYS_CLOSE, (long)g_pipefd[0], 0, 0, 0, 0, 0);
+    rc = sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
+    serial_hex("wl wait=", rc);
+    serial_hex("wl cap n=", (long)*out_n);
+    if (*out_n == 0) {
+        buf_put(out, cap, out_n, "busybox empty", 13);
+    }
+    return 0;
+}
+
 static void win_close(int wi)
 {
     if (wi < 0 || !g_wins[wi].open) {
@@ -611,6 +720,15 @@ static void win_open(int app)
     serial("[wl] desk open ", 15);
     serial(g_title[app], cstr_n(g_title[app]));
     serial("\n", 1);
+    g_wins[slot].out_n = 0;
+    g_wins[slot].out[0] = 0;
+    if (app == 2) {
+        (void)run_busybox(g_wins[slot].out, (unsigned)sizeof g_wins[slot].out, &g_wins[slot].out_n,
+                          "echo", "hello");
+    } else if (app == 0) {
+        (void)run_busybox(g_wins[slot].out, (unsigned)sizeof g_wins[slot].out, &g_wins[slot].out_n,
+                          "ls", "/");
+    }
 }
 
 static void paint_one_win(struct wl_state *st, int wi)
@@ -645,10 +763,32 @@ static void paint_one_win(struct wl_state *st, int wi)
     fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
               (unsigned)(w->x + bw), (unsigned)(w->y + WIN_TITLE_H), (unsigned)(w->w - 2 * bw),
               (unsigned)(w->h - WIN_TITLE_H - bw), 0x00F1F5F9UL);
-    fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, w->y + WIN_TITLE_H + 16,
-            "FB window", 0x00334155UL, 1);
-    fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, w->y + WIN_TITLE_H + 36,
-            "not desktop.elf", 0x0064748BUL, 1);
+    if (w->out_n > 0) {
+        unsigned off = 0;
+        int line = 0;
+        while (off < w->out_n && line < 12) {
+            char row[41];
+            unsigned k = 0;
+            while (k < 40U && off < w->out_n) {
+                char c = w->out[off++];
+                if (c == '|') {
+                    break;
+                }
+                row[k++] = c;
+            }
+            row[k] = 0;
+            if (k > 0) {
+                fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16,
+                        w->y + WIN_TITLE_H + 16 + line * 14, row, 0x000F766EUL, 1);
+            }
+            line++;
+        }
+    } else {
+        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, w->y + WIN_TITLE_H + 16,
+                "FB window", 0x00334155UL, 1);
+        fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, w->y + WIN_TITLE_H + 36,
+                "not desktop.elf", 0x0064748BUL, 1);
+    }
     fb_text(st->fb, st->fb_pitch, st->fb_w, st->fb_h, w->x + 16, w->y + w->h - 24,
             "X closes", 0x0064748BUL, 1);
 }
