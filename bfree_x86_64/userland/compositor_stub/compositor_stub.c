@@ -1,8 +1,9 @@
 /* Freestanding guest compositor. Reached via init_tramp exec_initrd (APP role).
  * APP Linux sockets: 41 socket, 49 bind, 50 listen, 42 connect, 43 accept.
- * Listen on AF_UNIX /tmp/wayland-0. vfork child connect()s; pipe is gone.
- * Shared AS (vfork) so the child's wl_shm pixels are visible to the parent.
- * Not Linux tron_gui_server. Do not set BFREE_BOOT_GUI_FIRST on the daily kernel.
+ * Listen on AF_UNIX /tmp/wayland-0. vfork child connect()s and paints the
+ * daily FB desk lookalike (EX/VW tiles) into wl_shm. Not desktop.elf
+ * (g1-desk execve would load busybox; from-source kernel dies).
+ * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
 #define BFREE_FB0_FD 0x2000
 #define WL_SHM_FORMAT_XRGB8888 1
@@ -234,34 +235,295 @@ static void pool_rect(unsigned int *p, unsigned int w, unsigned int h,
     }
 }
 
-/* Client-side desk chrome. Not product DesktopShell.qml. */
+/* 5x7 glyphs — same bitmaps as guest_main.cpp fb_draw_text. */
+static int glyph_row(char c, int row)
+{
+    static const unsigned char A[7] = {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11};
+    static const unsigned char B[7] = {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E};
+    static const unsigned char C[7] = {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E};
+    static const unsigned char D[7] = {0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E};
+    static const unsigned char E[7] = {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F};
+    static const unsigned char F[7] = {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10};
+    static const unsigned char G[7] = {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0E};
+    static const unsigned char H[7] = {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11};
+    static const unsigned char I[7] = {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E};
+    static const unsigned char J[7] = {0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E};
+    static const unsigned char K[7] = {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11};
+    static const unsigned char L[7] = {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F};
+    static const unsigned char M[7] = {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11};
+    static const unsigned char N[7] = {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11};
+    static const unsigned char O[7] = {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
+    static const unsigned char P[7] = {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10};
+    static const unsigned char Q[7] = {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D};
+    static const unsigned char R[7] = {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11};
+    static const unsigned char S[7] = {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E};
+    static const unsigned char T[7] = {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04};
+    static const unsigned char U[7] = {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E};
+    static const unsigned char V[7] = {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04};
+    static const unsigned char W[7] = {0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11};
+    static const unsigned char X[7] = {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11};
+    static const unsigned char Y[7] = {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04};
+    static const unsigned char Z[7] = {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F};
+    static const unsigned char la[7] = {0x00, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F};
+    static const unsigned char lb[7] = {0x10, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x1E};
+    static const unsigned char lc[7] = {0x00, 0x00, 0x0E, 0x10, 0x10, 0x11, 0x0E};
+    static const unsigned char ld[7] = {0x01, 0x01, 0x0F, 0x11, 0x11, 0x11, 0x0F};
+    static const unsigned char le[7] = {0x00, 0x00, 0x0E, 0x11, 0x1F, 0x10, 0x0E};
+    static const unsigned char lf[7] = {0x06, 0x08, 0x08, 0x1C, 0x08, 0x08, 0x08};
+    static const unsigned char lg[7] = {0x00, 0x00, 0x0F, 0x11, 0x0F, 0x01, 0x0E};
+    static const unsigned char lh[7] = {0x10, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x11};
+    static const unsigned char li[7] = {0x04, 0x00, 0x0C, 0x04, 0x04, 0x04, 0x0E};
+    static const unsigned char lj[7] = {0x02, 0x00, 0x06, 0x02, 0x02, 0x12, 0x0C};
+    static const unsigned char lk[7] = {0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12};
+    static const unsigned char ll[7] = {0x0C, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E};
+    static const unsigned char lm[7] = {0x00, 0x00, 0x1A, 0x15, 0x15, 0x15, 0x15};
+    static const unsigned char ln[7] = {0x00, 0x00, 0x1E, 0x11, 0x11, 0x11, 0x11};
+    static const unsigned char lo[7] = {0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E};
+    static const unsigned char lp[7] = {0x00, 0x00, 0x1E, 0x11, 0x1E, 0x10, 0x10};
+    static const unsigned char lq[7] = {0x00, 0x00, 0x0F, 0x11, 0x0F, 0x01, 0x01};
+    static const unsigned char lr[7] = {0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10};
+    static const unsigned char ls[7] = {0x00, 0x00, 0x0F, 0x10, 0x0E, 0x01, 0x1E};
+    static const unsigned char lt[7] = {0x08, 0x08, 0x1C, 0x08, 0x08, 0x09, 0x06};
+    static const unsigned char lu[7] = {0x00, 0x00, 0x11, 0x11, 0x11, 0x13, 0x0D};
+    static const unsigned char lv[7] = {0x00, 0x00, 0x11, 0x11, 0x11, 0x0A, 0x04};
+    static const unsigned char lw[7] = {0x00, 0x00, 0x11, 0x15, 0x15, 0x15, 0x0A};
+    static const unsigned char lx[7] = {0x00, 0x00, 0x11, 0x0A, 0x04, 0x0A, 0x11};
+    static const unsigned char ly[7] = {0x00, 0x00, 0x11, 0x11, 0x0F, 0x01, 0x0E};
+    static const unsigned char lz[7] = {0x00, 0x00, 0x1F, 0x02, 0x04, 0x08, 0x1F};
+    static const unsigned char n0[7] = {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E};
+    static const unsigned char n1[7] = {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E};
+    static const unsigned char n2[7] = {0x0E, 0x11, 0x01, 0x06, 0x08, 0x10, 0x1F};
+    static const unsigned char col[7] = {0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00};
+    static const unsigned char st[7] = {0x00, 0x15, 0x0E, 0x1F, 0x0E, 0x15, 0x00};
+    const unsigned char *g = 0;
+    if (row < 0 || row > 6) {
+        return 0;
+    }
+    if (c == 'A') {
+        g = A;
+    } else if (c == 'B') {
+        g = B;
+    } else if (c == 'C') {
+        g = C;
+    } else if (c == 'D') {
+        g = D;
+    } else if (c == 'E') {
+        g = E;
+    } else if (c == 'F') {
+        g = F;
+    } else if (c == 'G') {
+        g = G;
+    } else if (c == 'H') {
+        g = H;
+    } else if (c == 'I') {
+        g = I;
+    } else if (c == 'J') {
+        g = J;
+    } else if (c == 'K') {
+        g = K;
+    } else if (c == 'L') {
+        g = L;
+    } else if (c == 'M') {
+        g = M;
+    } else if (c == 'N') {
+        g = N;
+    } else if (c == 'O') {
+        g = O;
+    } else if (c == 'P') {
+        g = P;
+    } else if (c == 'Q') {
+        g = Q;
+    } else if (c == 'R') {
+        g = R;
+    } else if (c == 'S') {
+        g = S;
+    } else if (c == 'T') {
+        g = T;
+    } else if (c == 'U') {
+        g = U;
+    } else if (c == 'V') {
+        g = V;
+    } else if (c == 'W') {
+        g = W;
+    } else if (c == 'X') {
+        g = X;
+    } else if (c == 'Y') {
+        g = Y;
+    } else if (c == 'Z') {
+        g = Z;
+    } else if (c == 'a') {
+        g = la;
+    } else if (c == 'b') {
+        g = lb;
+    } else if (c == 'c') {
+        g = lc;
+    } else if (c == 'd') {
+        g = ld;
+    } else if (c == 'e') {
+        g = le;
+    } else if (c == 'f') {
+        g = lf;
+    } else if (c == 'g') {
+        g = lg;
+    } else if (c == 'h') {
+        g = lh;
+    } else if (c == 'i') {
+        g = li;
+    } else if (c == 'j') {
+        g = lj;
+    } else if (c == 'k') {
+        g = lk;
+    } else if (c == 'l') {
+        g = ll;
+    } else if (c == 'm') {
+        g = lm;
+    } else if (c == 'n') {
+        g = ln;
+    } else if (c == 'o') {
+        g = lo;
+    } else if (c == 'p') {
+        g = lp;
+    } else if (c == 'q') {
+        g = lq;
+    } else if (c == 'r') {
+        g = lr;
+    } else if (c == 's') {
+        g = ls;
+    } else if (c == 't') {
+        g = lt;
+    } else if (c == 'u') {
+        g = lu;
+    } else if (c == 'v') {
+        g = lv;
+    } else if (c == 'w') {
+        g = lw;
+    } else if (c == 'x') {
+        g = lx;
+    } else if (c == 'y') {
+        g = ly;
+    } else if (c == 'z') {
+        g = lz;
+    } else if (c == '0') {
+        g = n0;
+    } else if (c == '1') {
+        g = n1;
+    } else if (c == '2') {
+        g = n2;
+    } else if (c == ':') {
+        g = col;
+    } else if (c == '*') {
+        g = st;
+    } else {
+        return 0;
+    }
+    return (int)g[row];
+}
+
+static void shm_text(unsigned int *p, unsigned int w, unsigned int h, int x, int y,
+                     const char *s, unsigned int color, int scale)
+{
+    int i;
+    int row;
+    int col;
+    int sx;
+    int sy;
+    if (scale < 1) {
+        scale = 1;
+    }
+    for (i = 0; s[i]; i++) {
+        for (row = 0; row < 7; row++) {
+            int bits = glyph_row(s[i], row);
+            for (col = 0; col < 5; col++) {
+                if (bits & (0x10 >> col)) {
+                    for (sy = 0; sy < scale; sy++) {
+                        for (sx = 0; sx < scale; sx++) {
+                            int px = x + col * scale + sx;
+                            int py = y + row * scale + sy;
+                            if (px >= 0 && py >= 0 && (unsigned)px < w && (unsigned)py < h) {
+                                p[(unsigned)py * w + (unsigned)px] = color;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        x += 6 * scale;
+    }
+}
+
+static unsigned str_px(const char *s, int scale)
+{
+    unsigned n = 0;
+    while (s[n]) {
+        n++;
+    }
+    return n * 6U * (unsigned)scale;
+}
+
+/* Daily guest_paint_fb_desktopshell lookalike on wl_shm. Not DesktopShell.qml. */
 static void draw_desk_chrome(unsigned int *p, unsigned int w, unsigned int h)
 {
-    static const unsigned int icons[15] = {
-        0x002E6BFFUL, 0x0028A745UL, 0x00E07A2EUL, 0x007B2CBFUL, 0x0020C997UL,
-        0x000DCAF0UL, 0x001F4E79UL, 0x006F42C1UL, 0x000D6EFDUL, 0x00198754UL,
-        0x000DCAF0UL, 0x00DC3545UL, 0x00198754UL, 0x00E07A2EUL, 0x006F42C1UL
+    static const char *acro[16] = {
+        "EX", "VW", "TE", "SM", "SS", "DI", "AS", "NO",
+        "CL", "CA", "PB", "NM", "BA", "SO", "JI", "TR"
     };
+    static const char *title[16] = {
+        "Explorer", "Viewer", "Terminal", "SystemMonitor", "SystemSettings", "Discover",
+        "AppStore", "Notification", "ClockApplet", "Calculator", "PaintBoard",
+        "NetworkManager", "BatteryManager", "SoundManager", "JapaneseIME", "Trash"
+    };
+    static const unsigned int accent[16] = {
+        0x001D4ED8UL, 0x000F766EUL, 0x00C2410CUL, 0x007C3AEDUL, 0x000F766EUL, 0x000D9488UL,
+        0x001E3A8AUL, 0x007C3AEDUL, 0x00C2410CUL, 0x001D4ED8UL, 0x000D9488UL, 0x001D4ED8UL,
+        0x000F766EUL, 0x00BE185DUL, 0x007C3AEDUL, 0x00475569UL
+    };
+    unsigned int bar = (h > 52U) ? 52U : (h / 6U);
     unsigned int i;
-    unsigned int bar = (h > 48U) ? 48U : (h / 6U);
-    unsigned int iy;
-    unsigned int ix;
-    unsigned int gapx;
-    unsigned int gapy;
-    pool_rect(p, w, h, 0, 0, w, h, 0x0094A3B8UL);
-    pool_rect(p, w, h, 0, h - bar, w, bar, 0x00101828UL);
-    pool_rect(p, w, h, 8, h - bar + 8, 72, bar > 16U ? bar - 16U : bar, 0x003D5C9EUL);
-    pool_rect(p, w, h, 88, h - bar + 12, 160, bar > 24U ? bar - 24U : 8U, 0x00202838UL);
-    if (w > 96U) {
-        pool_rect(p, w, h, w - 88, h - bar + 12, 72, bar > 24U ? bar - 24U : 8U, 0x00202838UL);
+    unsigned int tile = 48;
+    int x;
+    int y;
+    pool_rect(p, w, h, 0, 0, w, h, 0x007A8FA8UL);
+    pool_rect(p, w, h, 0, h - bar, w, bar, 0x000D1B2AUL);
+    pool_rect(p, w, h, 0, h - bar, w, 1, 0x001E3050UL);
+    pool_rect(p, w, h, 8, h - bar + 6, 56, 40, 0x001A3060UL);
+    shm_text(p, w, h, 16, (int)(h - bar + 18), "Start", 0x00C8DCEDUL, 1);
+    pool_rect(p, w, h, 72, h - bar + 10, 220, 32, 0x001A2D42UL);
+    shm_text(p, w, h, 84, (int)(h - bar + 18), "Q", 0x0088AAC0UL, 1);
+    shm_text(p, w, h, 100, (int)(h - bar + 20), "Search", 0x00557090UL, 1);
+    if (w > 260U) {
+        pool_rect(p, w, h, w - 264, h - bar + 10, 36, 32, 0x00152538UL);
+        shm_text(p, w, h, (int)(w - 256), (int)(h - bar + 20), "Net", 0x0088AAC0UL, 1);
+        pool_rect(p, w, h, w - 224, h - bar + 10, 28, 32, 0x00152538UL);
+        shm_text(p, w, h, (int)(w - 216), (int)(h - bar + 20), "N", 0x0088AAC0UL, 1);
+        pool_rect(p, w, h, w - 192, h - bar + 10, 28, 32, 0x00152538UL);
+        shm_text(p, w, h, (int)(w - 184), (int)(h - bar + 20), "*", 0x0088AAC0UL, 1);
+        pool_rect(p, w, h, w - 156, h - bar + 10, 144, 32, 0x00152538UL);
+        shm_text(p, w, h, (int)(w - 140), (int)(h - bar + 20), "12:00 AM", 0x00E2E8F0UL, 1);
     }
-    gapx = (w >= 800U) ? 140U : 76U;
-    gapy = (h >= 600U) ? 110U : 76U;
-    for (i = 0; i < 15U; i++) {
-        ix = 36U + (i % 6U) * gapx;
-        iy = 36U + (i / 6U) * gapy;
-        if (ix + 56U < w && iy + 56U + bar < h) {
-            pool_rect(p, w, h, ix, iy, 56, 56, icons[i]);
+    for (i = 0; i < 16U; i++) {
+        if (i == 8U) {
+            continue;
+        }
+        if (i == 15U) {
+            x = (int)w - 16 - 76;
+            y = (int)h - (int)bar - 12 - 96;
+        } else {
+            x = 28 + (int)(i % 6U) * 88;
+            y = 36 + (int)(i / 6U) * 100;
+        }
+        if (x < 0 || y < 0 || (unsigned)(x + 62) >= w || (unsigned)(y + 70) + bar >= h) {
+            continue;
+        }
+        pool_rect(p, w, h, (unsigned)(x + 14), (unsigned)y, tile, tile, accent[i]);
+        shm_text(p, w, h, x + 14 + (int)(tile - str_px(acro[i], 2)) / 2, y + 16, acro[i],
+                 0x00F8FAFCUL, 2);
+        {
+            int tw = (int)str_px(title[i], 1);
+            int tx = x + (76 - tw) / 2;
+            if (tx < x) {
+                tx = x;
+            }
+            shm_text(p, w, h, tx, y + 54, title[i], 0x00E8EEF5UL, 1);
         }
     }
 }
@@ -415,7 +677,7 @@ void _start(void)
 {
     static const char hello[] = "[compositor] guest stub hello\n";
     static const char fillok[] = "[compositor] guest stub fb fill\n";
-    static const char wlok[] = "[compositor] wayland desk chrome blit\n";
+    static const char wlok[] = "[compositor] wayland native desk blit\n";
     static const char childm[] = "[wl] vfork child\n";
     static const char parentm[] = "[wl] vfork parent\n";
     static const char fallback[] = "[wl] unix fallback in-process\n";
