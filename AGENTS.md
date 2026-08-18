@@ -409,6 +409,15 @@ that is only `[guest_desktop_link] start` means `set -e` hit
 `qt_wl_hello.elf` (that object is the bfree QPA factory
 `QPlatformIntegrationPluginBFree` / `libqbfree.a`). Provide a dummy
 `__real_qInitResources_guest_desktop` instead of desktop qrc.
+`guest_link_compat` `getenv` still reports `QT_QPA_PLATFORM=bfree`;
+the hello QPA must accept key `bfree` or QGuiApplication aborts
+(`abort()` wrap = infinite pause, wallpaper forever). Stub QPA keys:
+`wayland`, `bfreewl`, `bfree`. Restore C p8test with
+`BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh` (keep the
+53MB ELF). 53MB `p8test` exec is slow; gray wallpaper with no desk
+means the Qt child has not returned from vfork. Serial:
+`[qt] QGuiApplication start` then `ctor ok` then `QPA wayland create`.
+`[desktop_qt] abort()` means the platform plugin was not found.
 Stub window drag looks jagged and Terminal Enter is slow: software
 FB dirty blit + per-Enter `vfork`/`busybox.elf`. Do not polish that
 as the product. `threads=no` libstdc++ warning is expected. Do **not** drop `QT_QPA_PLATFORM=bfree` on

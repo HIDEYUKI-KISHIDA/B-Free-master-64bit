@@ -10,7 +10,6 @@
 #include <QtPlugin>
 
 extern const QT_PREPEND_NAMESPACE(QStaticPlugin) qt_static_plugin_QBfreeWlIntegrationPlugin();
-extern "C" void bfree_guest_install_static_env(void);
 extern "C" void bfree_guest_refresh_libc_auxv(void);
 
 static void qt_hello_serial(const char *s)
@@ -45,7 +44,9 @@ int main(int argc, char **argv)
 
     qt_hello_serial("[qt] QGuiApplication start\n");
     qRegisterStaticPluginFunction(qt_static_plugin_QBfreeWlIntegrationPlugin());
-    bfree_guest_install_static_env();
+    /* guest_link_compat wrap_getenv still reports QT_QPA_PLATFORM=bfree.
+     * Do not call bfree_guest_install_static_env() here — it resets environ
+     * to bfree. The stub QPA accepts keys wayland and bfree. */
     bfree_guest_refresh_libc_auxv();
 
     QGuiApplication app(qt_argc, qt_argv);
