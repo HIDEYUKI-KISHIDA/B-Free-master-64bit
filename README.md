@@ -16,7 +16,7 @@ B-Free inherits the philosophy of BTRON and aims to be a modern, open-source OS 
 x86_64 の本線は `bfree_x86_64/` です。
 
 - clone から一本: **hello ISO**（表紙だけ。机ではない）
-- 手元の `bfree.iso` があるとき: **desk ISO**（今動いた EX/TE の机。別名にするだけ）
+- **desk ISO**: 手元に `bfree.iso` があれば別名コピー。無ければ GitHub Release の材料で組み立て（今動いた EX/TE の机）
 
 ```
 cd bfree_x86_64
