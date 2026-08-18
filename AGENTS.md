@@ -325,14 +325,13 @@ paints a lookalike window on the compositor FB (`[wl] desk open`).
 The Wayland client now sends **two `xdg_toplevel`s** from **p8test.elf**
 (g1-desk named module, **not** `desktop.elf`):
 fullscreen desk chrome (icons + Start bar, title `bar`) and a
-480×320 app window. Compositor `fork` (Linux nr **57**, AS-copy) then
+480×320 app window. Compositor `vfork` (Linux nr **58**) then
 `execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland` (no bfree inject —
-that is only for `desktop.elf`). vfork (nr 58) is the fallback if fork
-fails. Parent `waitpid` (blocking) after `fork` so the parked child actually
-runs — `accept()` busy-halts and does **not** coop-yield on g1-desk.
-The first `QGuiApplication` hello **exits after the first flush**
-(same as the C client). A live `exec()` loop would freeze the parent
-in `waitpid`; that needs an accept-yield later. `hello.elf` is the fallback if p8test
+that is only for `desktop.elf`). Do **not** `fork` (nr 57) the compositor:
+AS-copy COWs the hardware FB (solid wallpaper, `[COW] break` on every
+mouse, unusable). First-frame clients **exit after shm/wire** so the
+vfork parent can blit. A live Qt `exec()` loop still cannot share the
+FB this way. `hello.elf` is the fallback if p8test
 execve returns. Cloud / trees without the guest Qt prefix still map the
 C `qt_wl_client.elf` as p8test (serial `[qt] p8test.elf wayland client`).
 When `bash tools/build_qt_wl_hello.sh` can link, `qt_wl_hello.elf`
@@ -342,14 +341,14 @@ platform — argv is `-platform wayland`) replaces that mapping. That QPA
 emits the same canned wire + `/tmp/wlXX` tiles; it is **not** upstream
 qtwayland. Qt window proof: gold title bar `0xD4A017` + navy body
 `0x1E3A8A` + cyan mark `0x06B6D4` (C client stays green/`shm`/rose).
-Success serial (C slot): `[wl] fork=` then `[wl] execve p8test.elf`,
+Success serial (C slot): `[wl] vfork=` then `[wl] execve p8test.elf`,
 `[qt] p8test.elf wayland client`, `[qt] p8test.elf shm`,
 `[wl] client shm blit`, `[compositor] xdg-shell window`.
 Success serial (QGuiApplication slot): `[qt] QGuiApplication start`,
 `[qt] QGuiApplication ctor ok`, `[qt] QPA wayland create`,
 `[qt] QGuiApplication flush`, `[qt] QGuiApplication shm`,
 `[qt] QGuiApplication wire`, `[wl] client shm blit`.
-`wl fork=` negative then `wl vfork=` is the fallback path.
+Do not print `wl fork=` (that was the unusable AS-copy path).
 Do not print `wl execve p8test=` (that means exec returned). Do not print
 `[wl] shm magic miss` on the success path. Cursor, Start panel, and
 lookalike apps stay **software FB** overlays
@@ -386,8 +385,9 @@ VMM/`sparse-pt` hang. Stub ISO must keep the daily `g1-desk`
 kernel. Never overwrite `kernel.elf.g1-desk` or daily
 `bfree.iso`. Do not `execve("desktop.elf")` from the stub
 until a bootable patched kernel exists. The Wayland client on
-`g1-desk` is **p8test.elf**: compositor `fork`(57)+`execve("/p8test.elf")`
-with `QT_QPA_PLATFORM=wayland`. Not `desktop.elf`. C `qt_wl_client.elf`
+`g1-desk` is **p8test.elf**: compositor `vfork`(58)+`execve("/p8test.elf")`
+with `QT_QPA_PLATFORM=wayland`. Not `desktop.elf`. Not compositor
+`fork`(57) — that COWs the FB. C `qt_wl_client.elf`
 is the default mapping; `qt_wl_hello.elf` (`QGuiApplication` + stub
 QPA) replaces it when the guest Qt prefix can link. `hello.elf` is
 fallback. Cloud cannot link `QGuiApplication` (no `libQt6Gui.a` /
