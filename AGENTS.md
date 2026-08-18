@@ -322,10 +322,13 @@ The stub now paints an X11 `left_ptr` / Windows-style arrow
 (hotspot tip) via `sys_poll_input_event` (nr 0, BSS slot):
 `[wl] cursor arrow`, then type=3 mouse moves it. Icon click
 paints a lookalike window on the compositor FB (`[wl] desk open`).
-Desk wallpaper/icons/taskbar go through **one** `wl_shm` surface
-then blit. That is the only guest Wayland (wire + shm pixels).
-Cursor, Start panel, and windows are **software FB** overlays
-(5×7 glyphs, no GPU, no Qt scene graph, not Wayland surfaces).
+The Wayland client is now **one `xdg_toplevel`** (480×320 `wl_shm`)
+blit onto compositor wallpaper — not a full-desk shm, not product
+`DesktopShell.qml`. Success serial: `[wl] bind xdg_wm_base`,
+`[wl] get_toplevel`, `[wl] xdg toplevel commit`,
+`[compositor] xdg-shell window`. Cursor, Start panel, and
+lookalike apps stay **software FB** overlays
+(5×7 glyphs, no GPU, no Qt scene graph, not extra Wayland surfaces).
 Host `DesktopShell.qml` Start/Explorer are QML; this stub is not
 that. Do **not** polish the lookalike Explorer as the product —
 practical file UI needs guest **Qt** (`desktop.elf` as a Wayland
