@@ -240,6 +240,7 @@ static struct poll_ev g_poll;
 static int glyph_row(char c, int row);
 static unsigned cstr_n(const char *s);
 static unsigned desk_bar(unsigned int h);
+static unsigned str_px(const char *s, int scale);
 
 #define DESK_N 16
 #define WIN_MAX 4
@@ -1469,6 +1470,62 @@ static void paint_windows(struct wl_state *st)
     paint_start(st);
 }
 
+/* Compositor-owned desk chrome (icons + taskbar). Not the Wayland surface. */
+static void paint_desk_chrome(struct wl_state *st)
+{
+    unsigned int w = st->fb_w;
+    unsigned int h = st->fb_h;
+    unsigned int bar = desk_bar(h);
+    unsigned int i;
+    unsigned int tile = 48;
+    int x;
+    int y;
+    fill_rect(st->fb, st->fb_pitch, w, h, 0, 0, w, h, 0x007A8FA8UL);
+    fill_rect(st->fb, st->fb_pitch, w, h, 0, h - bar, w, bar, 0x000D1B2AUL);
+    fill_rect(st->fb, st->fb_pitch, w, h, 0, h - bar, w, 1, 0x001E3050UL);
+    fill_rect(st->fb, st->fb_pitch, w, h, 8, h - bar + 6, 56, 40, 0x001A3060UL);
+    fb_text(st->fb, st->fb_pitch, w, h, 16, (int)(h - bar + 18), "Start", 0x00C8DCEDUL, 1);
+    fill_rect(st->fb, st->fb_pitch, w, h, 72, h - bar + 10, 220, 32, 0x001A2D42UL);
+    fb_text(st->fb, st->fb_pitch, w, h, 84, (int)(h - bar + 18), "Q", 0x0088AAC0UL, 1);
+    fb_text(st->fb, st->fb_pitch, w, h, 100, (int)(h - bar + 20), "Search", 0x00557090UL, 1);
+    if (w > 260U) {
+        fill_rect(st->fb, st->fb_pitch, w, h, w - 264, h - bar + 10, 36, 32, 0x00152538UL);
+        fb_text(st->fb, st->fb_pitch, w, h, (int)(w - 256), (int)(h - bar + 20), "Net", 0x0088AAC0UL, 1);
+        fill_rect(st->fb, st->fb_pitch, w, h, w - 224, h - bar + 10, 28, 32, 0x00152538UL);
+        fb_text(st->fb, st->fb_pitch, w, h, (int)(w - 216), (int)(h - bar + 20), "N", 0x0088AAC0UL, 1);
+        fill_rect(st->fb, st->fb_pitch, w, h, w - 192, h - bar + 10, 28, 32, 0x00152538UL);
+        fb_text(st->fb, st->fb_pitch, w, h, (int)(w - 184), (int)(h - bar + 20), "*", 0x0088AAC0UL, 1);
+        fill_rect(st->fb, st->fb_pitch, w, h, w - 156, h - bar + 10, 144, 32, 0x00152538UL);
+        fb_text(st->fb, st->fb_pitch, w, h, (int)(w - 140), (int)(h - bar + 20), "12:00 AM", 0x00E2E8F0UL, 1);
+    }
+    for (i = 0; i < 16U; i++) {
+        if (i == 8U) {
+            continue;
+        }
+        if (i == 15U) {
+            x = (int)w - 16 - 76;
+            y = (int)h - (int)bar - 12 - 96;
+        } else {
+            x = 28 + (int)(i % 6U) * 88;
+            y = 36 + (int)(i / 6U) * 100;
+        }
+        if (x < 0 || y < 0 || (unsigned)(x + 62) >= w || (unsigned)(y + 70) + bar >= h) {
+            continue;
+        }
+        fill_rect(st->fb, st->fb_pitch, w, h, (unsigned)(x + 14), (unsigned)y, tile, tile, g_accent[i]);
+        fb_text(st->fb, st->fb_pitch, w, h, x + 14 + (int)(tile - str_px(g_acro[i], 2)) / 2, y + 16,
+                g_acro[i], 0x00F8FAFCUL, 2);
+        {
+            int tw = (int)str_px(g_title[i], 1);
+            int tx = x + (76 - tw) / 2;
+            if (tx < x) {
+                tx = x;
+            }
+            fb_text(st->fb, st->fb_pitch, w, h, tx, y + 54, g_title[i], 0x00E8EEF5UL, 1);
+        }
+    }
+}
+
 #define DIRTY_MAX 8
 static int g_dirty_x[DIRTY_MAX];
 static int g_dirty_y[DIRTY_MAX];
@@ -1494,18 +1551,7 @@ static void desk_present(struct wl_state *st)
     int bar;
     cursor_hide(st);
     if (st->xdg) {
-        if (g_dirty_n == 0) {
-            fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h, 0, 0, st->fb_w, st->fb_h,
-                      0x007A8FA8UL);
-        } else {
-            for (i = 0; i < g_dirty_n; i++) {
-                fill_rect(st->fb, st->fb_pitch, st->fb_w, st->fb_h,
-                          (unsigned int)(g_dirty_x[i] < 0 ? 0 : g_dirty_x[i]),
-                          (unsigned int)(g_dirty_y[i] < 0 ? 0 : g_dirty_y[i]),
-                          (unsigned int)(g_dirty_w[i] < 0 ? 0 : g_dirty_w[i]),
-                          (unsigned int)(g_dirty_h[i] < 0 ? 0 : g_dirty_h[i]), 0x007A8FA8UL);
-            }
-        }
+        paint_desk_chrome(st);
         blit_shm(st);
     } else if (g_dirty_n == 0) {
         blit_shm(st);
@@ -1712,7 +1758,7 @@ static void wl_dispatch(struct wl_state *st, const unsigned char *msg, unsigned 
             serial("[wl] get_xdg_surface\n", 22);
         } else if (id == 9 && op == 1) {
             st->xdg = 1;
-            st->win_x = 72;
+            st->win_x = 540;
             st->win_y = 48;
             serial("[wl] get_toplevel\n", 19);
         } else if (id == 10 && op == 2) {
@@ -2319,7 +2365,7 @@ void _start(void)
     st.attached = 0;
     st.committed = 0;
     st.xdg = 0;
-    st.win_x = 72;
+    st.win_x = 540;
     st.win_y = 48;
 
     /* Desk wallpaper color — not magenta. Magenta under the desk flashes
@@ -2411,6 +2457,8 @@ void _start(void)
         serial(wlok, sizeof(wlok) - 1);
         if (st.xdg) {
             serial(xdgok, sizeof(xdgok) - 1);
+            paint_desk_chrome(&st);
+            blit_shm(&st);
         }
     }
     cursor_loop(&st);

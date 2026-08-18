@@ -323,8 +323,8 @@ The stub now paints an X11 `left_ptr` / Windows-style arrow
 `[wl] cursor arrow`, then type=3 mouse moves it. Icon click
 paints a lookalike window on the compositor FB (`[wl] desk open`).
 The Wayland client is now **one `xdg_toplevel`** (480×320 `wl_shm`)
-blit onto compositor wallpaper — not a full-desk shm, not product
-`DesktopShell.qml`. Success serial: `[wl] bind xdg_wm_base`,
+blit onto compositor-owned wallpaper **plus icons/taskbar** (FB chrome,
+not that shm). Success serial: `[wl] bind xdg_wm_base`,
 `[wl] get_toplevel`, `[wl] xdg toplevel commit`,
 `[compositor] xdg-shell window`. Cursor, Start panel, and
 lookalike apps stay **software FB** overlays
