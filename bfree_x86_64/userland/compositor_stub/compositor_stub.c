@@ -5,10 +5,15 @@
  * QT_QPA_PLATFORM=wayland. Not desktop.elf (bfree QPA steals FB). hello.elf
  * stays the fallback if p8test execve returns. Two xdg_toplevels: desk
  * chrome + small app window. App pixels go through /tmp/wlXX vfile tiles
- * (16KB each, no SCM_RIGHTS; vfork parent sleeps until child exit so a
- * 3.7MB AF_UNIX dump deadlocks). Compositor blits those tiles; it does not
- * paint the Qt window. Desk chrome still compositor-side (full FB > 64
- * vfiles). Not product DesktopShell.qml.
+ * (16KB each, no SCM_RIGHTS; a 3.7MB AF_UNIX dump deadlocks). Spawn with
+ * vfork (nr 58). Do not fork (nr 57) the compositor: AS-copy COWs the
+ * hardware FB (gray wallpaper, [COW] break on every mouse, unusable).
+ * First-frame clients exit after shm/wire so vfork parent can blit.
+ * Compositor blits those tiles; it does not paint the Qt window. Desk
+ * chrome still compositor-side (full FB > 64 vfiles). Not product
+ * DesktopShell.qml. Real QGuiApplication is qt_wl_hello.elf mapped as
+ * p8test.elf when the guest Qt prefix can link it; otherwise this C
+ * client stays in the slot.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
 #define BFREE_FB0_FD 0x2000
@@ -2565,6 +2570,53 @@ static long wl_shm_get(unsigned char *app, unsigned app_bytes)
 }
 #endif
 
+#ifdef WL_STUB_LIB
+/* Linked into qt_wl_hello.elf (real QGuiApplication). Same tiles + wire as
+ * the C p8test client. Desk chrome stays compositor-side. */
+long wl_stub_flush_app(const unsigned char *app, unsigned w, unsigned h)
+{
+    static const char shmm[] = "[qt] QGuiApplication shm\n";
+    static const char wirem[] = "[qt] QGuiApplication wire\n";
+    unsigned int desk_w = 1024;
+    unsigned int desk_h = 768;
+    unsigned int app_w;
+    unsigned int app_h;
+    unsigned int app_bytes;
+    unsigned char msg[512];
+    unsigned char hdr[4];
+    unsigned int msglen;
+    long cli_fd;
+    long putn;
+
+    app_w = w;
+    app_h = h;
+    if (app_w == 0 || app_h == 0) {
+        app_w = 480;
+        app_h = 320;
+    }
+    if (app_w > 480U) {
+        app_w = 480;
+    }
+    if (app_h > 320U) {
+        app_h = 320;
+    }
+    app_bytes = app_w * app_h * 4U;
+    putn = wl_shm_put(app, app_bytes);
+    serial_hex("wl shm put=", putn);
+    if (putn > 0) {
+        serial(shmm, sizeof(shmm) - 1);
+    }
+    cli_fd = wl_connect_unix();
+    msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
+    if (cli_fd >= 0) {
+        put_u32(hdr, msglen);
+        (void)wl_write_all(cli_fd, hdr, 4);
+        (void)wl_write_all(cli_fd, msg, msglen);
+        serial(wirem, sizeof(wirem) - 1);
+    }
+    return putn;
+}
+#else
 #ifdef WL_AS_CLIENT
 void _start(void)
 {
@@ -2857,4 +2909,5 @@ void _start(void)
     }
     cursor_loop(&st);
 }
-#endif
+#endif /* WL_AS_CLIENT */
+#endif /* WL_STUB_LIB */

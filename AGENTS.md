@@ -323,25 +323,33 @@ The stub now paints an X11 `left_ptr` / Windows-style arrow
 `[wl] cursor arrow`, then type=3 mouse moves it. Icon click
 paints a lookalike window on the compositor FB (`[wl] desk open`).
 The Wayland client now sends **two `xdg_toplevel`s** from **p8test.elf**
-(`qt_wl_client.elf`, g1-desk named module, **not** `desktop.elf`):
+(g1-desk named module, **not** `desktop.elf`):
 fullscreen desk chrome (icons + Start bar, title `bar`) and a
-480×320 app window (title `qt`, painted `Qt` / `wayland`).
-Compositor `execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland`
-(no bfree inject — that is only for `desktop.elf`). `hello.elf` is
-the fallback if p8test execve returns. This is **not**
-`QGuiApplication` / qtwayland (guest Qt prefix and wayland QPA
-are absent). g1-desk vfiles are 16KB and vfork parent sleeps until
-child exit, so a full-desk AF_UNIX pixel dump deadlocks. The client
-writes the **app window** into `/tmp/wl00`… tiles plus `/tmp/wlm`
-magic `SHM1`; the compositor **blits** those bytes and does not
-paint the Qt window. Desk chrome is still compositor-side (3MiB >
-64×16KB). Window proof: `shm` text + rose bar (only in the client
-paint). Success serial:
-`[wl] execve p8test.elf`, `[qt] p8test.elf wayland client`,
-`[qt] QT_QPA_PLATFORM=wayland`, `[qt] p8test.elf shm`,
-`[qt] p8test.elf wire`, `[wl] client shm blit`,
-`[wl] xdg desk commit`, `[compositor] xdg-shell window`. Do not print
-`wl execve p8test=` (that means exec returned). Do not print
+480×320 app window. Compositor `vfork` (Linux nr **58**) then
+`execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland` (no bfree inject —
+that is only for `desktop.elf`). Do **not** `fork` (nr 57) the compositor:
+AS-copy COWs the hardware FB (solid wallpaper, `[COW] break` on every
+mouse, unusable). First-frame clients **exit after shm/wire** so the
+vfork parent can blit. A live Qt `exec()` loop still cannot share the
+FB this way. `hello.elf` is the fallback if p8test
+execve returns. Cloud / trees without the guest Qt prefix still map the
+C `qt_wl_client.elf` as p8test (serial `[qt] p8test.elf wayland client`).
+When `bash tools/build_qt_wl_hello.sh` can link, `qt_wl_hello.elf`
+(real `QGuiApplication` + stub QPA key `wayland`, **not** `libqbfree.a`,
+**not** `guest_link_compat` `QT_QPA_PLATFORM=bfree` as the selected
+platform — argv is `-platform wayland`) replaces that mapping. That QPA
+emits the same canned wire + `/tmp/wlXX` tiles; it is **not** upstream
+qtwayland. Qt window proof: gold title bar `0xD4A017` + navy body
+`0x1E3A8A` + cyan mark `0x06B6D4` (C client stays green/`shm`/rose).
+Success serial (C slot): `[wl] vfork=` then `[wl] execve p8test.elf`,
+`[qt] p8test.elf wayland client`, `[qt] p8test.elf shm`,
+`[wl] client shm blit`, `[compositor] xdg-shell window`.
+Success serial (QGuiApplication slot): `[qt] QGuiApplication start`,
+`[qt] QGuiApplication ctor ok`, `[qt] QPA wayland create`,
+`[qt] QGuiApplication flush`, `[qt] QGuiApplication shm`,
+`[qt] QGuiApplication wire`, `[wl] client shm blit`.
+Do not print `wl fork=` (that was the unusable AS-copy path).
+Do not print `wl execve p8test=` (that means exec returned). Do not print
 `[wl] shm magic miss` on the success path. Cursor, Start panel, and
 lookalike apps stay **software FB** overlays
 (5×7 glyphs, no GPU, no Qt scene graph). The bar/icons themselves
@@ -377,10 +385,17 @@ VMM/`sparse-pt` hang. Stub ISO must keep the daily `g1-desk`
 kernel. Never overwrite `kernel.elf.g1-desk` or daily
 `bfree.iso`. Do not `execve("desktop.elf")` from the stub
 until a bootable patched kernel exists. The Wayland client on
-`g1-desk` is **p8test.elf** (`qt_wl_client.elf`): compositor
-`vfork`+`execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland`.
-Not `desktop.elf`. Not `QGuiApplication`. `hello.elf` is fallback.
-Do **not** drop `QT_QPA_PLATFORM=bfree` on
+`g1-desk` is **p8test.elf**: compositor `vfork`(58)+`execve("/p8test.elf")`
+with `QT_QPA_PLATFORM=wayland`. Not `desktop.elf`. Not compositor
+`fork`(57) — that COWs the FB. C `qt_wl_client.elf`
+is the default mapping; `qt_wl_hello.elf` (`QGuiApplication` + stub
+QPA) replaces it when the guest Qt prefix can link. `hello.elf` is
+fallback. Cloud cannot link `QGuiApplication` (no `libQt6Gui.a` /
+`crt0.o` / `desktop.ld`). On the maintainer tree,
+`tools/build_qt_wl_hello.sh` must pass `-D__linux__` because
+`x86_64-elf-g++` is not a Linux target (`qsystemdetection.h` otherwise
+errors "Qt has not been ported to this OS"). Same define as
+`Makefile.guest-elf`. Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` until that stub is the boot
 desk. Stub ISO: `BFREE_ISO` may be `bfree-desk.iso` when daily
 `bfree.iso` is absent. Not product

@@ -36,6 +36,15 @@ COMP="$ROOT/userland/compositor_stub/compositor.elf"
 TRAMP="$ROOT/userland/compositor_stub/init_tramp.elf"
 CLIENT="$ROOT/userland/compositor_stub/wl_client.elf"
 QTCLI="$ROOT/userland/compositor_stub/qt_wl_client.elf"
+HELLO_QT="$ROOT/userland/compositor_stub/qt_wl_hello.elf"
+QT_KIND="C p8test (not QGuiApplication)"
+if [[ -f "$HELLO_QT" ]]; then
+  HELLO_SZ="$(wc -c < "$HELLO_QT")"
+  if [[ "$HELLO_SZ" -gt 1000000 ]]; then
+    QTCLI="$HELLO_QT"
+    QT_KIND="QGuiApplication qt_wl_hello.elf"
+  fi
+fi
 test -s "$COMP"
 test -s "$TRAMP"
 test -s "$CLIENT"
@@ -72,6 +81,7 @@ echo "GRUB_PID1=init_tramp.elf as init.elf"
 echo "GRUB_EXEC=compositor.elf"
 echo "GRUB_CLIENT=hello.elf"
 echo "GRUB_QT_CLIENT=p8test.elf"
+echo "P8_KIND=$QT_KIND"
 echo "P8_BYTES=$(wc -c < "$QTCLI")"
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"
