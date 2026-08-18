@@ -325,10 +325,10 @@ paints a lookalike window on the compositor FB (`[wl] desk open`).
 The Wayland client now sends **two `xdg_toplevel`s** from **hello.elf**
 (named module, not `desktop.elf`): fullscreen desk chrome (icons +
 Start bar, title `bar`) and a 480×320 app window (title `xdg`).
-g1-desk vfiles are 16KB so pixels ride AF_UNIX after the Wayland
-bytes. The compositor copies them then `blit_shm`s + cursor +
-lookalike overlay windows. Success serial: `[wl] hello.elf client`,
-`[wl] hello.elf pixels`, `[wl] bind xdg_wm_base`, `[wl] get_toplevel desk`,
+g1-desk vfiles are 16KB so hello.elf cannot share a full-desk shm
+file. It sends the Wayland wire on AF_UNIX; the compositor paints the
+pool then blits. Success serial: `[wl] hello.elf client`,
+`[wl] hello.elf wire`, `[wl] bind xdg_wm_base`, `[wl] get_toplevel desk`,
 `[wl] bind xdg_wm_base`, `[wl] get_toplevel desk`,
 `[wl] xdg desk commit`, `[wl] xdg toplevel commit`,
 `[compositor] xdg-shell window`. Cursor, Start panel, and
@@ -367,8 +367,8 @@ kernel. Never overwrite `kernel.elf.g1-desk` or daily
 `bfree.iso`. Do not `execve("desktop.elf")` from the stub
 until a bootable patched kernel exists. The Wayland client on
 `g1-desk` is **hello.elf** (named Multiboot module): compositor
-`vfork`+`execve("/hello.elf")`. Pixels follow the Wayland bytes on the
-same AF_UNIX socket (vfile shm is 16KB on g1-desk). Not `desktop.elf`.
+`vfork`+`execve("/hello.elf")`. hello.elf sends the Wayland wire;
+the compositor paints the pool (vfile shm is 16KB). Not `desktop.elf`.
 Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` (step 3) until that stub is the boot
 desk. Not product

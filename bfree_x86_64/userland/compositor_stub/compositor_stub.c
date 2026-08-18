@@ -2437,10 +2437,7 @@ void _start(void)
         put_u32(hdr, msglen);
         (void)wl_write_all(cli_fd, hdr, 4);
         (void)wl_write_all(cli_fd, msg, msglen);
-        put_u32(hdr, pool_bytes);
-        (void)wl_write_all(cli_fd, hdr, 4);
-        (void)wl_write_all(cli_fd, pool, pool_bytes);
-        serial("[wl] hello.elf pixels\n", 22);
+        serial("[wl] hello.elf wire\n", 20);
     }
     (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
     for (;;) {
@@ -2589,7 +2586,6 @@ void _start(void)
     if (pid > 0 && listen_fd >= 0) {
         unsigned char hdr[4];
         unsigned int wlen;
-        unsigned int plen;
         serial(parentm, sizeof(parentm) - 1);
         acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
         serial_hex("wl accept=", acc_fd);
@@ -2600,17 +2596,10 @@ void _start(void)
             if (wlen > 0 && wlen <= 512) {
                 nread = wl_read_all(acc_fd, msg, wlen);
                 serial_hex("wl bytes=", nread);
-                nread = wl_read_all(acc_fd, hdr, 4);
-                plen = (nread == 4) ? get_u32(hdr) : 0;
-                serial_hex("wl pix n=", (long)plen);
-                if (plen > 0 && plen <= map_bytes) {
-                    nread = wl_read_all(acc_fd, st.pool, plen);
-                    serial_hex("wl pix r=", nread);
-                    st.pool_size = plen;
-                }
+                paint_client_pool(st.pool, desk_w, desk_h, app_w, app_h);
                 (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
-                if (wlen > 0) {
-                    wl_dispatch(&st, msg, wlen);
+                if (nread > 0) {
+                    wl_dispatch(&st, msg, (unsigned int)nread);
                 }
             }
         }
