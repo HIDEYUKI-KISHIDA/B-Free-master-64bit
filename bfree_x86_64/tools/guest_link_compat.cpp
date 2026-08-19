@@ -1382,35 +1382,52 @@ static void *bfree_guest_mmap_ctor_stack_at(size_t stack_bytes, uintptr_t *top_o
     uintptr_t va = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA;
     static uintptr_t g_mmap_va;
     static size_t g_mmap_bytes;
+    static size_t g_mmap_actual;
+    static const size_t k_try[] = {
+        256U * 1024U * 1024U,
+        64U * 1024U * 1024U,
+        32U * 1024U * 1024U,
+    };
     long ret;
+    unsigned i;
+    size_t n;
 
     if (!top_out || stack_bytes == 0)
         return 0;
     if (bfree_guest_mmap_ctor_stack_reset) {
         g_mmap_va = 0;
         g_mmap_bytes = 0;
+        g_mmap_actual = 0;
         bfree_guest_mmap_ctor_stack_reset = 0;
     }
-    if (g_mmap_va && g_mmap_bytes == stack_bytes) {
-        *top_out = g_mmap_va + g_mmap_bytes - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
+    if (g_mmap_va && g_mmap_bytes == stack_bytes && g_mmap_actual) {
+        *top_out = g_mmap_va + g_mmap_actual - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
         return (void *)g_mmap_va;
     }
     g_mmap_va = 0;
     g_mmap_bytes = 0;
-    /* APP: Linux mmap is 9. Native mmap is 26. Try both (p8test is APP). */
-    ret = bfree_guest_mmap_fixed_try(va, stack_bytes);
-    if (ret < 0 || (uintptr_t)ret != va) {
-        bfree_guest_serial_lit("[desktop_qt] ctor mmap fail ret=");
-        bfree_guest_serial_hex_u64((uint64_t)(uintptr_t)ret);
-        bfree_guest_serial_lit(" bytes=");
-        bfree_guest_serial_hex_u64((uint64_t)stack_bytes);
-        bfree_guest_serial_lit("\n");
-        return 0;
+    g_mmap_actual = 0;
+    /* APP: Linux mmap is 9. Native mmap is 26. 256MiB may ENOMEM; hello only needs 32MiB. */
+    for (i = 0; i < (unsigned)(sizeof(k_try) / sizeof(k_try[0])); i++) {
+        n = k_try[i];
+        if (n > stack_bytes)
+            continue;
+        ret = bfree_guest_mmap_fixed_try(va, n);
+        if (ret >= 0 && (uintptr_t)ret == va) {
+            g_mmap_va = va;
+            g_mmap_bytes = stack_bytes;
+            g_mmap_actual = n;
+            *top_out = va + n - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
+            bfree_guest_serial_lit("[desktop_qt] ctor mmap ok n=");
+            bfree_guest_serial_hex_u64((uint64_t)n);
+            bfree_guest_serial_lit("\n");
+            return (void *)va;
+        }
     }
-    g_mmap_va = va;
-    g_mmap_bytes = stack_bytes;
-    *top_out = va + stack_bytes - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
-    return (void *)va;
+    bfree_guest_serial_lit("[desktop_qt] ctor mmap fail bytes=");
+    bfree_guest_serial_hex_u64((uint64_t)stack_bytes);
+    bfree_guest_serial_lit("\n");
+    return 0;
 }
 
 static void bfree_pthread_run_pending(void)
@@ -1763,16 +1780,30 @@ extern "C" void *mmap(void *addr, size_t length, int prot, int flags, int fd, of
 }
 
 /* APP role uses Linux numbers: 9=mmap, 26=msync. INIT/native still has 26=mmap.
- * p8test.elf is APP (compositor vfork+exec). syscall(26)-only is msync → fail. */
+ * p8test is APP. Do not treat msync's 0 as MAP_FIXED success (that printed
+ * ctor mmap fail ret=0). */
 static long bfree_guest_mmap_fixed_try(uintptr_t va, size_t bytes)
 {
     long flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
-    long ret;
+    long ret9;
+    long ret26;
 
-    ret = syscall(9L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
-    if (ret < 0 || (uintptr_t)ret != va)
-        ret = syscall(26L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
-    return ret;
+    ret9 = syscall(9L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+    if (ret9 >= 0 && (uintptr_t)ret9 == va)
+        return ret9;
+    ret26 = syscall(26L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+    if (ret26 >= 0 && (uintptr_t)ret26 == va)
+        return ret26;
+    bfree_guest_serial_lit("[desktop_qt] mmap9=");
+    bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret9);
+    bfree_guest_serial_lit(" mmap26=");
+    bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret26);
+    bfree_guest_serial_lit(" want=");
+    bfree_guest_serial_hex_u64((uint64_t)va);
+    bfree_guest_serial_lit(" n=");
+    bfree_guest_serial_hex_u64((uint64_t)bytes);
+    bfree_guest_serial_lit("\n");
+    return (ret9 < 0) ? ret9 : -1L;
 }
 
 static int bfree_guest_mmap_fixed_anon(uintptr_t va, size_t bytes)
@@ -3147,9 +3178,14 @@ static void bfree_guest_run_on_ctor_stack_inner(void (*fn)(void), int bump_polic
     if (bfree_guest_musl_malloc_ready || bump_policy != 0) {
         stack_bytes = BFREE_GUEST_CTOR_MMAP_STACK_BYTES;
         mmap_stack = bfree_guest_mmap_ctor_stack_at(stack_bytes, &ctor_top);
-        if (mmap_stack && bump_policy == 2)
-            ctor_top = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA + BFREE_GUEST_CTOR_MMAP_STACK_BYTES_HYBRID
-                       - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
+        if (mmap_stack && bump_policy == 2) {
+            uintptr_t hybrid_top = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA
+                + BFREE_GUEST_CTOR_MMAP_STACK_BYTES_HYBRID - 256U
+                - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
+            /* Do not switch RSP above a shrunken mapping (hello 32MiB). */
+            if (hybrid_top < ctor_top)
+                ctor_top = hybrid_top;
+        }
         if (mmap_stack) {
             ctor_stack = mmap_stack;
             used_mmap = 1;
