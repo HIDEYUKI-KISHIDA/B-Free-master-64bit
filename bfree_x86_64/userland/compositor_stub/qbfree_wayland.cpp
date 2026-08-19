@@ -7,8 +7,12 @@
 #include "wl_stub_client.h"
 
 #include <QAbstractEventDispatcher>
+#include <QCoreApplication>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QImage>
+#include <QList>
+#include <QSocketNotifier>
 #include <QString>
 #include <QStringList>
 #include <QtPlugin>
@@ -23,8 +27,6 @@
 #include <qpa/qwindowsysteminterface.h>
 
 QT_BEGIN_NAMESPACE
-
-extern QAbstractEventDispatcher *createUnixEventDispatcher();
 
 static void qt_wl_serial(const char *s)
 {
@@ -111,6 +113,55 @@ public:
     void populateFontDatabase() override {}
 };
 
+/* Guest libstdc++ is threads=no; Unix epoll dispatcher is not linked.
+ * First-frame hello calls processEvents a few times then exits so vfork
+ * parent can blit. Do not call createUnixEventDispatcher(). */
+class QBfreeWlEventDispatcher : public QAbstractEventDispatcher
+{
+public:
+    bool processEvents(QEventLoop::ProcessEventsFlags flags) override
+    {
+        Q_EMIT awake();
+        QCoreApplication::sendPostedEvents();
+        return QWindowSystemInterface::sendWindowSystemEvents(flags);
+    }
+
+    void registerSocketNotifier(QSocketNotifier *notifier) override { (void)notifier; }
+    void unregisterSocketNotifier(QSocketNotifier *notifier) override { (void)notifier; }
+
+    void registerTimer(int timerId, qint64 interval, Qt::TimerType timerType,
+                       QObject *object) override
+    {
+        (void)timerId;
+        (void)interval;
+        (void)timerType;
+        (void)object;
+    }
+    bool unregisterTimer(int timerId) override
+    {
+        (void)timerId;
+        return false;
+    }
+    bool unregisterTimers(QObject *object) override
+    {
+        (void)object;
+        return false;
+    }
+    QList<TimerInfo> registeredTimers(QObject *object) const override
+    {
+        (void)object;
+        return {};
+    }
+    int remainingTime(int timerId) override
+    {
+        (void)timerId;
+        return -1;
+    }
+
+    void wakeUp() override {}
+    void interrupt() override {}
+};
+
 class QBfreeWlIntegration : public QPlatformIntegration
 {
 public:
@@ -154,7 +205,8 @@ public:
 
     QAbstractEventDispatcher *createEventDispatcher() const override
     {
-        return createUnixEventDispatcher();
+        qt_wl_serial("[qt] QPA dispatcher\n");
+        return new QBfreeWlEventDispatcher;
     }
 
     QPlatformFontDatabase *fontDatabase() const override
@@ -185,7 +237,8 @@ public:
     QPlatformIntegration *create(const QString &system, const QStringList &) override
     {
         if (system.compare(QLatin1String("wayland"), Qt::CaseInsensitive) == 0
-            || system.compare(QLatin1String("bfreewl"), Qt::CaseInsensitive) == 0) {
+            || system.compare(QLatin1String("bfreewl"), Qt::CaseInsensitive) == 0
+            || system.compare(QLatin1String("bfree"), Qt::CaseInsensitive) == 0) {
             qt_wl_serial("[qt] QPA wayland create\n");
             return new QBfreeWlIntegration;
         }
@@ -209,8 +262,9 @@ static constexpr unsigned char qt_pluginMetaDataCbor[] = {
     0x63, 0x65, 0x2e, 0x35, 0x2e, 0x33, 0x03, 0x78, 0x19, 0x51, 0x42, 0x66,
     0x72, 0x65, 0x65, 0x57, 0x6c, 0x49, 0x6e, 0x74, 0x65, 0x67, 0x72, 0x61,
     0x74, 0x69, 0x6f, 0x6e, 0x50, 0x6c, 0x75, 0x67, 0x69, 0x6e, 0x04, 0xa1,
-    0x64, 0x4b, 0x65, 0x79, 0x73, 0x82, 0x67, 0x77, 0x61, 0x79, 0x6c, 0x61,
-    0x6e, 0x64, 0x67, 0x62, 0x66, 0x72, 0x65, 0x65, 0x77, 0x6c
+    0x64, 0x4b, 0x65, 0x79, 0x73, 0x83, 0x67, 0x77, 0x61, 0x79, 0x6c, 0x61,
+    0x6e, 0x64, 0x67, 0x62, 0x66, 0x72, 0x65, 0x65, 0x77, 0x6c, 0x65, 0x62,
+    0x66, 0x72, 0x65, 0x65
 };
 
 static QPluginMetaData qt_plugin_query_metadata_QBfreeWlIntegrationPlugin()

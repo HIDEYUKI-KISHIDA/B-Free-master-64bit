@@ -17,9 +17,18 @@ LD="${BFREE_ELF_LD:-}"
 if [[ -z "$LD" && -n "${BFREE_ELF_BINUTILS_DIR:-}" ]]; then
   LD="${BFREE_ELF_BINUTILS_DIR}/x86_64-elf-ld"
 fi
-[[ -z "$LD" || ! -x "$LD" ]] && LD="$(command -v x86_64-elf-ld 2>/dev/null || true)"
+if [[ -z "$LD" || ! -x "$LD" ]]; then
+  LD="$(command -v x86_64-elf-ld 2>/dev/null || true)"
+fi
 
-ROOT="${BFREE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+if [[ -n "${BFREE_ROOT:-}" ]]; then
+  ROOT="$BFREE_ROOT"
+elif [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != bash && "${BASH_SOURCE[0]}" != - && "${BASH_SOURCE[0]}" != -s ]]; then
+  ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+else
+  echo "guest_desktop_link: set BFREE_ROOT (argv0=$0)" >&2
+  exit 1
+fi
 CRT0="${BFREE_GUEST_CRT0:-$ROOT/userland/desktop_qt/crt0.o}"
 COMPAT="${BFREE_GUEST_COMPAT:-$ROOT/userland/desktop_qt/guest_link_compat.o}"
 GUEST_SERIAL="${BFREE_GUEST_SERIAL:-$ROOT/userland/desktop_qt/guest_serial.o}"
@@ -27,12 +36,23 @@ GUEST_MMAP="${BFREE_GUEST_MMAP:-$ROOT/userland/desktop_qt/guest_mmap.o}"
 CC="${BFREE_GUEST_CC:-$(command -v x86_64-elf-gcc 2>/dev/null || true)}"
 CXX="${BFREE_GUEST_CXX:-$REAL_CXX}"
 
+echo "[guest_desktop_link] start ROOT=$ROOT cxx=$REAL_CXX ld=${LD:-none}" >&2
+
+# Do not `bash -s` the resolve script: nested stdin + pipefail SIGPIPE
+# exits 1 with an empty log when the parent was also bash -s.
 _resolve() {
-  bash -c 'tr -d "\r" < "$1" | bash -s -- "$2" "$3"' _ \
-    "$ROOT/tools/resolve_elf_runtime_libs.sh" "$CC" "$CXX"
+  local lf
+  lf="$(mktemp /tmp/bfree-resolve.XXXXXX.sh)"
+  tr -d '\r' < "$ROOT/tools/resolve_elf_runtime_libs.sh" > "$lf"
+  bash "$lf" "$CC" "$CXX" || { rm -f "$lf"; return 1; }
+  rm -f "$lf"
+  return 0
 }
 
-RUNTIME_STR="$(_resolve)"
+if ! RUNTIME_STR="$(_resolve)"; then
+  echo "guest_desktop_link: resolve_elf_runtime_libs failed (see stderr above)" >&2
+  exit 1
+fi
 read -ra RUNTIME <<< "$RUNTIME_STR"
 [[ ${#RUNTIME[@]} -gt 0 ]] || { echo "guest_desktop_link: resolve_elf_runtime_libs failed" >&2; exit 1; }
 case " ${RUNTIME[*]} " in *libstdc++*) ;; *)
@@ -94,12 +114,20 @@ for ((i = 0; i < ${#args[@]}; i++)); do
   case "$a" in
     -o)
       OUT="${args[i + 1]}"
-      ((i++))
+      i=$((i + 1))
       continue
       ;;
     -o*)
       OUT="${a#-o}"
-      [[ -n "$OUT" ]] || { OUT="${args[i + 1]}"; ((i++)); }
+      if [[ -z "$OUT" ]]; then
+        OUT="${args[i + 1]}"
+        i=$((i + 1))
+      fi
+      continue
+      ;;
+    -T)
+      SCRIPT="${args[i + 1]}"
+      i=$((i + 1))
       continue
       ;;
     -T*)
@@ -117,6 +145,7 @@ for ((i = 0; i < ${#args[@]}; i++)); do
       ;;
   esac
   [[ "$a" == -* ]] && continue
+  [[ "$a" == *.ld ]] && { SCRIPT="$a"; continue; }
   [[ "$a" == *crt0.o ]] && continue
   [[ "$a" == *guest_link_compat.o ]] && continue
   [[ "$a" == *guest_serial.o ]] && continue
@@ -130,6 +159,7 @@ for ((i = 0; i < ${#args[@]}; i++)); do
     objs+=("$a")
   fi
 done
+echo "[guest_desktop_link] argv parsed out=$OUT script=$SCRIPT objs=${#objs[@]} archives=${#archives[@]}" >&2
 
 append_qt_network_if_needed
 

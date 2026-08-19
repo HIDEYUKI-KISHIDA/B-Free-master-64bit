@@ -11,6 +11,25 @@ work on Linux (no `2ndboot64` rule; needs an ELF32/MinGW toolchain). The ARM
 trees at the repo root (`kernel_arm/`, `userland_arm/`) are source-only (no
 Makefile) and `smartphone-tron-os/` is spec/docs only.
 
+### 本デスク / Native OS progress
+Canonical checklist: `bfree_x86_64/docs/HONDESK_TODOLIST.ja.md`.
+Four tracks (do not mix): **Native OS** = whole guest OS (boots; daily
+bfree-QPA desk is N2, not Wayland, not GPU). **Wayland** = compositor
+socket + client windows (W7 C done, **W8 Qt hello is current**).
+**本デスク** = product desk (`DesktopShell.qml` as Qt Wayland client;
+D* not started). **GPU** = accel (G* not started). Current work is
+**W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
+Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
+W8 blocked: 53MB `QGuiApplication` prints `start` then hangs
+(exec-stack `qRegister`). Gray wallpaper. Next: ctor-stack plugin +
+hybrid QGui then **return 0**. Proof: gold `0xD4A017` / navy
+`0x1E3A8A` / cyan `0x06B6D4`. Restore C (W7):
+`BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh`.
+Do not start D* or G* before W8 paints. Do not retry Gate 1 /
+`beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
+compositor `fork`(57). Do not map a from-source kernel onto the stub
+ISO (S2).
+
 ### Toolchain (installed by the startup update script)
 - A prebuilt **`x86_64-elf` cross GCC 13.2.0** is installed to
   `$HOME/x86_64-elf-toolchain` by `bfree_x86_64/tools/install_x86_64_elf_gpp_prebuilt.sh`.
@@ -345,9 +364,11 @@ Success serial (C slot): `[wl] vfork=` then `[wl] execve p8test.elf`,
 `[qt] p8test.elf wayland client`, `[qt] p8test.elf shm`,
 `[wl] client shm blit`, `[compositor] xdg-shell window`.
 Success serial (QGuiApplication slot): `[qt] QGuiApplication start`,
+`[desktop_qt] plugin ctor bss stack bump`, `[qt] plugin registered`,
+`[desktop_qt] musl malloc preflight OK`, `[qt] before QGuiApplication ctor`,
 `[qt] QGuiApplication ctor ok`, `[qt] QPA wayland create`,
 `[qt] QGuiApplication flush`, `[qt] QGuiApplication shm`,
-`[qt] QGuiApplication wire`, `[wl] client shm blit`.
+`[qt] QGuiApplication wire`, `[wl] vfork parent`, `[wl] client shm blit`.
 Do not print `wl fork=` (that was the unusable AS-copy path).
 Do not print `wl execve p8test=` (that means exec returned). Do not print
 `[wl] shm magic miss` on the success path. Cursor, Start panel, and
@@ -372,7 +393,9 @@ from shm. Terminal/Explorer `vfork`+pipe+`execve("/busybox.elf")`
 and paint captured stdout. That is a
 real busybox process, not `desktop.elf`. From-source kernel on the
 stub ISO still kills QEMU. 本デスク still needs a **bootable**
-kernel that execs `desktop.elf` as a Wayland client (not bfree QPA). QEMU hides the
+kernel that execs `desktop.elf` as a Wayland client (not bfree QPA).
+Phases / TODOLIST: `bfree_x86_64/docs/HONDESK_TODOLIST.ja.md` (W8 current).
+S0–S2 history: `bfree_x86_64/docs/HONDESK_PHASES.ja.md`. QEMU hides the
 host cursor when grabbed (`Ctrl+Alt+G`); the guest must paint
 its own. Still not `desktop.elf` / not product QML.
 That is S1 toward 本デスク (compositor owns the socket).
@@ -395,7 +418,47 @@ fallback. Cloud cannot link `QGuiApplication` (no `libQt6Gui.a` /
 `tools/build_qt_wl_hello.sh` must pass `-D__linux__` because
 `x86_64-elf-g++` is not a Linux target (`qsystemdetection.h` otherwise
 errors "Qt has not been ported to this OS"). Same define as
-`Makefile.guest-elf`. Do **not** drop `QT_QPA_PLATFORM=bfree` on
+`Makefile.guest-elf`. The stub QPA must **not** call
+`createUnixEventDispatcher()` (undefined on this static guest Qt /
+`threads=no` libstdc++). It uses a local `QAbstractEventDispatcher`
+and first-frame `processEvents` then `return 0`. A failed Qt link
+writes `userland/compositor_stub/qt_wl_hello.link.log` and keeps C
+p8test; do not treat `P8_KIND=C p8test` as a script crash.
+Invoke the linker via a CR-stripped copy in `/tmp` (not
+`guest_desktop_link_qmake.sh` / `bash -s`). Failed-link log is `/tmp/qt_wl_hello.link.log`. A 204-byte log
+that is only `[guest_desktop_link] start` means `set -e` hit
+`((i++))` when `-o` is argv[0] (expression value 0). Use
+`i=$((i + 1))`. Do not link `guest_platform_stub.o` into
+`qt_wl_hello.elf` (that object is the bfree QPA factory
+`QPlatformIntegrationPluginBFree` / `libqbfree.a`). Provide a dummy
+`__real_qInitResources_guest_desktop` instead of desktop qrc.
+`guest_link_compat` `getenv` still reports `QT_QPA_PLATFORM=bfree`;
+the hello QPA must accept key `bfree` or QGuiApplication aborts
+(`abort()` wrap = infinite pause, wallpaper forever). Stub QPA keys:
+`wayland`, `bfreewl`, `bfree`. Restore C p8test with
+`BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh` (keep the
+53MB ELF). 53MB `p8test` exec is slow; gray wallpaper with no desk
+means the Qt child printed `[qt] QGuiApplication start` and never
+returned. g1-desk `vfork` waits for **exit**, so the compositor
+parent never paints (`wl vfork=0` is the child; `[wl] vfork parent`
+does not appear). Do **not** call `qRegisterStaticPluginFunction` or
+construct `QGuiApplication` on the exec stack (`0x13xxxxxx`); that is
+the first Qt heap and PFs / hangs before `plugin registered`. Use the
+same bring-up as `desktop.elf`: `bfree_guest_refresh_libc_auxv`,
+`bfree_guest_run_on_ctor_stack_plugins` (BSS+bump),
+`bfree_guest_preflight_musl_heap`, `bfree_guest_preflight_ctor_mmap`,
+then `bfree_guest_run_on_ctor_stack_hybrid` for ctor+paint+flush.
+Hello **must return 0** after first frame. Do **not**
+`bfree_guest_enter_preflighted_mmap_noreturn` (never returns, parent
+never blits). Do **not** `bfree_guest_install_static_env` in hello.
+Grep empty for `plugin registered` / `ctor ok` / `vfork parent` after
+`start` is that hang. After the ctor-stack patch expect
+`plugin ctor bss stack bump` then `plugin registered`. Restore C desk:
+`BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh`.
+`[desktop_qt] abort()` means the platform plugin was not found.
+Stub window drag looks jagged and Terminal Enter is slow: software
+FB dirty blit + per-Enter `vfork`/`busybox.elf`. Do not polish that
+as the product. `threads=no` libstdc++ warning is expected. Do **not** drop `QT_QPA_PLATFORM=bfree` on
 daily `bfree.iso` until that stub is the boot
 desk. Stub ISO: `BFREE_ISO` may be `bfree-desk.iso` when daily
 `bfree.iso` is absent. Not product

@@ -137,20 +137,45 @@ do
 done
 
 STUBS=()
-for o in "$DESK/qt_futex_guest_stub.o" "$DESK/guest_platform_stub.o" "$DESK/guest_mmap.o"; do
+# qt_futex + guest_mmap only. guest_platform_stub.o is the bfree QPA factory
+# (QPlatformIntegrationPluginBFree / libqbfree.a) — do not link it here.
+for o in "$DESK/qt_futex_guest_stub.o" "$DESK/guest_mmap.o"; do
   [[ -f "$o" ]] && STUBS+=("$o")
 done
 
+SYM_STUB="$STUB/qt_wl_hello_syms.o"
+if ! x86_64-elf-gcc -ffreestanding -fno-pic -c -o "$SYM_STUB" "$STUB/qt_wl_hello_syms.c"; then
+  echo "qt_wl_hello skip: sym stub compile failed. C p8test stays." >&2
+  exit 0
+fi
+STUBS+=("$SYM_STUB")
+
 echo "[qt_wl_hello] linking with $GUEST_QT (no libqbfree.a)"
-if ! bash "$ROOT/tools/guest_desktop_link.sh" \
+echo "[qt_wl_hello] g++=$(command -v x86_64-elf-g++ 2>/dev/null || echo missing)"
+echo "[qt_wl_hello] ld=$(command -v x86_64-elf-ld 2>/dev/null || echo missing)"
+# DrvFS (/mnt/c) redirects can land as 0-byte files; keep the log on /tmp.
+# Do not bash -s / qmake wrapper here (nested stdin ate the linker script).
+LINK_LOG="/tmp/qt_wl_hello.link.log"
+GDL_LF="/tmp/bfree-guest_desktop_link.sh"
+tr -d '\r' < "$ROOT/tools/guest_desktop_link.sh" > "$GDL_LF"
+set +e
+bash "$GDL_LF" \
   -o "$STUB/qt_wl_hello.elf" \
-  -T "$DESK/desktop.ld" \
+  "-T$DESK/desktop.ld" \
   "${STUBS[@]}" \
   "$STUB/qbfree_wayland.o" \
   "$STUB/qt_wl_hello.o" \
   "$STUB/wl_stub_flush.o" \
-  "${ARCHIVES[@]}"; then
+  "${ARCHIVES[@]}" 2>&1 | tee "$LINK_LOG"
+link_rc=${PIPESTATUS[0]}
+set -e
+echo "[qt_wl_hello] link rc=$link_rc log_bytes=$(wc -c < "$LINK_LOG" | tr -d ' ')"
+if [[ "$link_rc" -ne 0 ]]; then
   echo "qt_wl_hello skip: link failed. C p8test stays." >&2
+  echo "qt_wl_hello: unique undefined refs:" >&2
+  grep -E 'undefined reference|undefined symbol|ld: error:|file not recognized|invalid option|not found|failed' "$LINK_LOG" \
+    | sort -u | head -40 >&2 || true
+  echo "qt_wl_hello: full log $LINK_LOG" >&2
   exit 0
 fi
 

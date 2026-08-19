@@ -38,7 +38,9 @@ CLIENT="$ROOT/userland/compositor_stub/wl_client.elf"
 QTCLI="$ROOT/userland/compositor_stub/qt_wl_client.elf"
 HELLO_QT="$ROOT/userland/compositor_stub/qt_wl_hello.elf"
 QT_KIND="C p8test (not QGuiApplication)"
-if [[ -f "$HELLO_QT" ]]; then
+if [[ "${BFREE_P8TEST_C:-}" == "1" ]]; then
+  echo "P8_FORCE=C (BFREE_P8TEST_C=1)"
+elif [[ -f "$HELLO_QT" ]]; then
   HELLO_SZ="$(wc -c < "$HELLO_QT")"
   if [[ "$HELLO_SZ" -gt 1000000 ]]; then
     QTCLI="$HELLO_QT"
