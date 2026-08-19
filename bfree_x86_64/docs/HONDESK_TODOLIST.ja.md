@@ -67,7 +67,7 @@ C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机�
 
 - [x] **D1** step 4: stub の Qt クライアントが bfree QPA を描画に選ばない。`getenv QT_QPA_PLATFORM=wayland` → `exit_group` → `[wl] vfork parent`。日次 `bfree.iso` は **上書きしていない**（N2 の EX/TE は残す）。`desktop_qt/guest_link_compat.o` は上書きしていない。g1-desk の `desktop.elf` 注入は触っていない
 - [ ] **D2** `DesktopShell.qml` を **Wayland クライアント**として載せる（boot の `beginCreate` は死んでいる。やり直さない）
-  - [x] 第一段: hello が `userland/compositor_stub/DesktopShell.qml` を運び、GuestMvpShell レイアウトを QImage bits で塗る。シリアル `D2 qml-client` → `hello wait-stub` → `getenv QT_QPA_PLATFORM=wayland` → `D2 argv -platform wayland` → `D2 fill desk` → `exit_group` → `[wl] vfork parent`。窓は 480×320。壁紙 `#7A8FA8` / 白カード / バー `#334155` / EX `#1D4ED8` / VW `#0F766E` / TE `#C2410C`（W8 の金／紺ではない）。周りの EX/VW/TE は stub 仮 chrome
+  - [x] 第一段: hello が `userland/compositor_stub/DesktopShell.qml` を運び、GuestMvpShell レイアウトを QImage bits で塗る。シリアル `D2 qml-client` → `hello wait-stub` → `getenv QT_QPA_PLATFORM=wayland` → `D2 argv -platform wayland` → `D2 fill desk` → `exit_group`（`ppid=1`）→ `[VFORK] parent resume` → `[wl] vfork parent`。親シリアルは `exit_group` の数秒後でもよい（~35MB hello）。窓は 480×320。壁紙 `#7A8FA8` / 白カード / バー `#334155` / EX `#1D4ED8` / VW `#0F766E` / TE `#C2410C`。周りの EX/VW/TE は stub 仮 chrome
   - [ ] **D2b** `QQmlEngine` を Wayland クライアントで作る。`beginCreate` / `loadUrl` / `processEvents` / `qml_register_types` はしない。シリアル `[qt] D2b qml-engine` `[qt] D2b engine enter` … `[qt] D2b engine ok`。リンク失敗時は第一段 hello に戻る。ハングしたら最後の行を見る。退避: `BFREE_D2B_QML=0 bash tools/build_qt_wl_hello.sh`
   - [ ] まだ: 製品 QML の qmlcache `populate`（IR Ready）。`beginCreate` は使わない
 - [ ] **D3** 起動できるカーネルで `desktop.elf` を Wayland exec（旧 S2）。from-source kernel を stub ISO に載せない
