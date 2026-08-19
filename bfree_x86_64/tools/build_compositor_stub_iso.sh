@@ -85,5 +85,10 @@ echo "GRUB_CLIENT=hello.elf"
 echo "GRUB_QT_CLIENT=p8test.elf"
 echo "P8_KIND=$QT_KIND"
 echo "P8_BYTES=$(wc -c < "$QTCLI")"
+if grep -aq 'hello hybrid-qpa' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_STAMP=hybrid-qpa"
+else
+  echo "P8TEST_STAMP=MISSING (stale p8test — apply qt_wl_hello.cpp and rebuild tools/build_qt_wl_hello.sh)"
+fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"

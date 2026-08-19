@@ -199,6 +199,7 @@ fi
 sz="$(wc -c < "$STUB/qt_wl_hello.elf")"
 echo "QT_WL_HELLO=$STUB/qt_wl_hello.elf"
 echo "QT_WL_HELLO_BYTES=$sz"
+echo "QT_WL_HELLO_STAMP=hybrid-qpa"
 if [[ "$sz" -lt 1000000 ]]; then
   echo "qt_wl_hello: ELF too small ($sz) — not a linked QGuiApplication" >&2
   rm -f "$STUB/qt_wl_hello.elf"
