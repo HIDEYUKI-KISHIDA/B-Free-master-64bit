@@ -67,3 +67,5 @@ qemu-system-x86_64 -cdrom bfree-desk.iso -m 1024 -vga std -serial file:/tmp/bfre
 - `bfree.iso` を上書きする
 - kernel を作り直して机に載せる
 - stub の偽物 Explorer を机の代わりにする
+
+本デスクの step / S0–S2 は `docs/HONDESK_PHASES.ja.md`。
