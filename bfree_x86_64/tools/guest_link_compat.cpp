@@ -1372,6 +1372,8 @@ static void *bfree_guest_alloc_ctor_stack(uintptr_t *top_out)
 extern "C" long syscall(long number, ...);
 extern "C" void bfree_guest_serial_hex_u64(uint64_t v);
 
+static long bfree_guest_mmap_fixed_try(uintptr_t va, size_t bytes);
+
 /* libc mmap() ignores MAP_FIXED; use syscall(9/26) at a fixed VA above desktop.elf. */
 static int bfree_guest_mmap_ctor_stack_reset;
 
@@ -1380,36 +1382,60 @@ static void *bfree_guest_mmap_ctor_stack_at(size_t stack_bytes, uintptr_t *top_o
     uintptr_t va = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA;
     static uintptr_t g_mmap_va;
     static size_t g_mmap_bytes;
-    long flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
+    static size_t g_mmap_actual;
+#ifdef BFREE_GUEST_APP_MMAP
+    /* QEMU -m 1024 cannot spare 256MiB for p8test. Hello QGui only needs 32MiB. */
+    static const size_t k_try[] = {
+        32U * 1024U * 1024U,
+        16U * 1024U * 1024U,
+    };
+#else
+    static const size_t k_try[] = {
+        256U * 1024U * 1024U,
+        64U * 1024U * 1024U,
+        32U * 1024U * 1024U,
+    };
+#endif
     long ret;
+    unsigned i;
+    size_t n;
 
     if (!top_out || stack_bytes == 0)
         return 0;
     if (bfree_guest_mmap_ctor_stack_reset) {
         g_mmap_va = 0;
         g_mmap_bytes = 0;
+        g_mmap_actual = 0;
         bfree_guest_mmap_ctor_stack_reset = 0;
     }
-    if (g_mmap_va && g_mmap_bytes == stack_bytes) {
-        *top_out = g_mmap_va + g_mmap_bytes - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
+    if (g_mmap_va && g_mmap_bytes == stack_bytes && g_mmap_actual) {
+        *top_out = g_mmap_va + g_mmap_actual - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
         return (void *)g_mmap_va;
     }
     g_mmap_va = 0;
     g_mmap_bytes = 0;
-    /* B-Free guest mmap is syscall 26 only (syscall 9 is Linux mmap in compat layer but avoid dup). */
-    ret = syscall(26L, (long)va, (long)stack_bytes, 3L, flags, -1L, 0L);
-    if (ret < 0 || (uintptr_t)ret != va) {
-        bfree_guest_serial_lit("[desktop_qt] ctor mmap fail ret=");
-        bfree_guest_serial_hex_u64((uint64_t)(uintptr_t)ret);
-        bfree_guest_serial_lit(" bytes=");
-        bfree_guest_serial_hex_u64((uint64_t)stack_bytes);
-        bfree_guest_serial_lit("\n");
-        return 0;
+    g_mmap_actual = 0;
+    /* APP: Linux mmap is 9. Native mmap is 26. 256MiB may ENOMEM; hello only needs 32MiB. */
+    for (i = 0; i < (unsigned)(sizeof(k_try) / sizeof(k_try[0])); i++) {
+        n = k_try[i];
+        if (n > stack_bytes)
+            continue;
+        ret = bfree_guest_mmap_fixed_try(va, n);
+        if (ret >= 0 && (uintptr_t)ret == va) {
+            g_mmap_va = va;
+            g_mmap_bytes = stack_bytes;
+            g_mmap_actual = n;
+            *top_out = va + n - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
+            bfree_guest_serial_lit("[desktop_qt] ctor mmap ok n=");
+            bfree_guest_serial_hex_u64((uint64_t)n);
+            bfree_guest_serial_lit("\n");
+            return (void *)va;
+        }
     }
-    g_mmap_va = va;
-    g_mmap_bytes = stack_bytes;
-    *top_out = va + stack_bytes - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
-    return (void *)va;
+    bfree_guest_serial_lit("[desktop_qt] ctor mmap fail bytes=");
+    bfree_guest_serial_hex_u64((uint64_t)stack_bytes);
+    bfree_guest_serial_lit("\n");
+    return 0;
 }
 
 static void bfree_pthread_run_pending(void)
@@ -1726,8 +1752,10 @@ extern "C" void *__mmap(void *addr, size_t length, int prot, int flags, int fd, 
             }
         }
         ret = syscall(9L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
+#ifndef BFREE_GUEST_APP_MMAP
         if (ret < 0)
             ret = syscall(26L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
+#endif
         if (ret < 0 && bfree_guest_ctor_bump_hybrid
             && (bfree_guest_qv4_mmap_active || bfree_guest_on_mmap_ctor_stack)) {
             void *qv4 = bfree_guest_mmap_qv4_arena(length);
@@ -1737,16 +1765,29 @@ extern "C" void *__mmap(void *addr, size_t length, int prot, int flags, int fd, 
             }
         }
         bfree_guest_trace_mmap((unsigned long)length, ret);
+#ifdef BFREE_GUEST_APP_MMAP
+        if (ret > 0)
+            return (void *)(uintptr_t)ret;
+#else
         if (ret >= 0)
             return (void *)(uintptr_t)ret;
+#endif
         return (void *)-1L;
     }
+#ifdef BFREE_GUEST_APP_MMAP
+    ret = syscall(9L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
+#else
     ret = syscall(26L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
     if (ret < 0)
         ret = syscall(9L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
+#endif
     bfree_guest_trace_mmap((unsigned long)length, ret);
     if (ret < 0)
         return (void *)-1L;
+#ifdef BFREE_GUEST_APP_MMAP
+    if (ret == 0)
+        return (void *)-1L;
+#endif
     if (anon && !(lflags & BFREE_MAP_FIXED)) {
         uint64_t r = (uint64_t)(uintptr_t)ret;
         /* Reject identity-PTE band only; kernel heap at 0x19xxxxxx is valid. */
@@ -1761,14 +1802,53 @@ extern "C" void *mmap(void *addr, size_t length, int prot, int flags, int fd, of
     return __mmap(addr, length, prot, flags, fd, offset);
 }
 
-static int bfree_guest_mmap_fixed_anon(uintptr_t va, size_t bytes)
+/* APP role uses Linux numbers: 9=mmap, 26=msync. INIT/native still has 26=mmap.
+ * p8test is APP. Do not treat msync's 0 as MAP_FIXED success (that printed
+ * ctor mmap fail ret=0). Hello compiles with -DBFREE_GUEST_APP_MMAP and never
+ * calls 26. */
+static long bfree_guest_mmap_fixed_try(uintptr_t va, size_t bytes)
 {
     long flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
+    long ret9;
+
+    ret9 = syscall(9L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+    if (ret9 >= 0 && (uintptr_t)ret9 == va)
+        return ret9;
+#ifndef BFREE_GUEST_APP_MMAP
+    {
+        long ret26 = syscall(26L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+        if (ret26 >= 0 && (uintptr_t)ret26 == va)
+            return ret26;
+        bfree_guest_serial_lit("[desktop_qt] mmap9=");
+        bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret9);
+        bfree_guest_serial_lit(" mmap26=");
+        bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret26);
+        bfree_guest_serial_lit(" want=");
+        bfree_guest_serial_hex_u64((uint64_t)va);
+        bfree_guest_serial_lit(" n=");
+        bfree_guest_serial_hex_u64((uint64_t)bytes);
+        bfree_guest_serial_lit("\n");
+        return (ret9 < 0) ? ret9 : -1L;
+    }
+#else
+    bfree_guest_serial_lit("[desktop_qt] mmap9=");
+    bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret9);
+    bfree_guest_serial_lit(" want=");
+    bfree_guest_serial_hex_u64((uint64_t)va);
+    bfree_guest_serial_lit(" n=");
+    bfree_guest_serial_hex_u64((uint64_t)bytes);
+    bfree_guest_serial_lit("\n");
+    return (ret9 < 0) ? ret9 : -1L;
+#endif
+}
+
+static int bfree_guest_mmap_fixed_anon(uintptr_t va, size_t bytes)
+{
     long ret;
 
     if (bytes == 0)
         return -1;
-    ret = syscall(26L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+    ret = bfree_guest_mmap_fixed_try(va, bytes);
     if (ret < 0 || (uintptr_t)ret != va)
         return -1;
     return 0;
@@ -1779,7 +1859,6 @@ static void *bfree_guest_mmap_qv4_arena(size_t length)
     const size_t page = 4096U;
     size_t need;
     uintptr_t va;
-    long flags;
     long ret;
 
     if (length == 0)
@@ -1790,10 +1869,7 @@ static void *bfree_guest_mmap_qv4_arena(size_t length)
     va = bfree_guest_qv4_mmap_next;
     if (va + need > bfree_guest_qv4_mmap_end)
         return (void *)-1L;
-    flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
-    ret = syscall(9L, (long)va, (long)need, 3L, flags, -1L, 0L);
-    if (ret < 0)
-        ret = syscall(26L, (long)va, (long)need, 3L, flags, -1L, 0L);
+    ret = bfree_guest_mmap_fixed_try(va, need);
     if (ret < 0 || (uintptr_t)ret != va)
         return (void *)-1L;
     bfree_guest_qv4_mmap_next = va + need;
@@ -1805,7 +1881,6 @@ static void *bfree_guest_qv4_large_mmap(size_t length)
     const size_t page = 4096U;
     size_t need;
     uintptr_t va;
-    long flags;
     long ret;
 
     if (length < BFREE_GUEST_QV4_LARGE_THRESHOLD || bfree_guest_qv4_large_used)
@@ -1814,10 +1889,7 @@ static void *bfree_guest_qv4_large_mmap(size_t length)
     if (need > BFREE_GUEST_QV4_LARGE_BYTES)
         return 0;
     va = (uintptr_t)BFREE_GUEST_QV4_LARGE_VA;
-    flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
-    ret = syscall(9L, (long)va, (long)need, 3L, flags, -1L, 0L);
-    if (ret < 0)
-        ret = syscall(26L, (long)va, (long)need, 3L, flags, -1L, 0L);
+    ret = bfree_guest_mmap_fixed_try(va, need);
     if (ret < 0 || (uintptr_t)ret != va) {
         bfree_guest_serial_lit("[desktop_qt] qv4 large mmap fail ret=");
         bfree_guest_serial_hex_u64((uint64_t)(long)ret);
@@ -2082,21 +2154,37 @@ static void bfree_guest_fill_auxv_tables(void);
 
 extern "C" int bfree_guest_ensure_fallback_heap(void)
 {
-    if (bfree_guest_fallback_heap_base
-        && bfree_guest_fallback_heap_cap >= BFREE_GUEST_FALLBACK_HEAP_BYTES)
+#ifdef BFREE_GUEST_APP_MMAP
+    static const size_t k_try[] = {
+        32U * 1024U * 1024U,
+        16U * 1024U * 1024U,
+    };
+#else
+    static const size_t k_try[] = {
+        BFREE_GUEST_FALLBACK_HEAP_BYTES,
+    };
+#endif
+    unsigned i;
+    size_t n;
+
+    if (bfree_guest_fallback_heap_base && bfree_guest_fallback_heap_cap)
         return 0;
-    if (bfree_guest_mmap_fixed_anon((uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA,
-                                    BFREE_GUEST_FALLBACK_HEAP_BYTES) != 0) {
-        bfree_guest_serial_lit("[desktop_qt] fallback heap mmap fail\n");
-        return -1;
+    for (i = 0; i < (unsigned)(sizeof(k_try) / sizeof(k_try[0])); i++) {
+        n = k_try[i];
+        if (bfree_guest_mmap_fixed_anon((uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA, n) != 0)
+            continue;
+        bfree_guest_fallback_heap_base = (unsigned char *)(uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA;
+        bfree_guest_fallback_heap_cap = n;
+        bfree_guest_fallback_heap_off = 0;
+        bfree_guest_serial_lit("[desktop_qt] fallback heap ok va=");
+        bfree_guest_serial_hex_u64((uint64_t)(uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA);
+        bfree_guest_serial_lit(" n=");
+        bfree_guest_serial_hex_u64((uint64_t)n);
+        bfree_guest_serial_lit("\n");
+        return 0;
     }
-    bfree_guest_fallback_heap_base = (unsigned char *)(uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA;
-    bfree_guest_fallback_heap_cap = BFREE_GUEST_FALLBACK_HEAP_BYTES;
-    bfree_guest_fallback_heap_off = 0;
-    bfree_guest_serial_lit("[desktop_qt] fallback heap ok va=");
-    bfree_guest_serial_hex_u64((uint64_t)(uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA);
-    bfree_guest_serial_lit("\n");
-    return 0;
+    bfree_guest_serial_lit("[desktop_qt] fallback heap mmap fail\n");
+    return -1;
 }
 
 /* Map ctor stack + fallback before QGuiApplication (defer bump mmap to QML hybrid). */
@@ -2571,8 +2659,13 @@ static char bfree_guest_env_noft[] = "QT_NO_FT_LIB=1";
 static char bfree_guest_env_theme[] = "QT_QPA_PLATFORMTHEME=";
 static char bfree_guest_env_qmlcache[] = "QML_DISABLE_DISK_CACHE=1";
 static char bfree_guest_env_fs[] = "BFREE_DESKTOP_PSEUDO_FULLSCREEN=1";
+#ifdef BFREE_GUEST_APP_MMAP
+static char bfree_guest_env_dbgplug[] = "QT_DEBUG_PLUGINS=1";
+static char bfree_guest_env_logrules[] = "QT_LOGGING_RULES=qt.qpa.*=true;qt.core.plugin.*=true";
+#else
 static char bfree_guest_env_dbgplug[] = "QT_DEBUG_PLUGINS=0";
 static char bfree_guest_env_logrules[] = "QT_LOGGING_RULES=qt.qpa.*=false";
+#endif
 static char bfree_guest_env_lcall[] = "LC_ALL=C";
 static char bfree_guest_env_home[] = "HOME=/";
 static char bfree_guest_env_tmp[] = "TMPDIR=/tmp";
@@ -3134,9 +3227,14 @@ static void bfree_guest_run_on_ctor_stack_inner(void (*fn)(void), int bump_polic
     if (bfree_guest_musl_malloc_ready || bump_policy != 0) {
         stack_bytes = BFREE_GUEST_CTOR_MMAP_STACK_BYTES;
         mmap_stack = bfree_guest_mmap_ctor_stack_at(stack_bytes, &ctor_top);
-        if (mmap_stack && bump_policy == 2)
-            ctor_top = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA + BFREE_GUEST_CTOR_MMAP_STACK_BYTES_HYBRID
-                       - 256U - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
+        if (mmap_stack && bump_policy == 2) {
+            uintptr_t hybrid_top = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA
+                + BFREE_GUEST_CTOR_MMAP_STACK_BYTES_HYBRID - 256U
+                - BFREE_GUEST_CTOR_STACK_CALL_BIAS;
+            /* Do not switch RSP above a shrunken mapping (hello 32MiB). */
+            if (hybrid_top < ctor_top)
+                ctor_top = hybrid_top;
+        }
         if (mmap_stack) {
             ctor_stack = mmap_stack;
             used_mmap = 1;
@@ -4069,8 +4167,17 @@ static void bfree_guest_resource_list_sanitize(void)
         return;
     }
     for (i = 0; i < n; ++i) {
-        if (ptrs[i])
-            ptrs[w++] = ptrs[i];
+        void *r = ptrs[i];
+        if (!r)
+            continue;
+        /* Drop resource roots whose vtable is bogus (uninitialized / deferred
+         * ctor never ran => vtable pointer == 1). Such a root crashes
+         * QResourceRoot::findNode at `call *0x10(vtable)` (CR2=0x11). The
+         * object memory is allocated (r != NULL) so reading the vtable qword
+         * is safe; a valid guest vtable lives well above 0x100000. */
+        if (*(uintptr_t *)r < (uintptr_t)0x100000)
+            continue;
+        ptrs[w++] = r;
     }
     if (w == n)
         return;
@@ -4088,6 +4195,21 @@ static void bfree_guest_resource_list_sanitize(void)
 extern "C" void bfree_guest_qresource_sanitize(void)
 {
     bfree_guest_resource_list_sanitize();
+}
+
+/* Gate 1: stock isThisThread() until the event loop. Never true during STAGE 5 qrc. */
+static int g_bfree_typeloader_main_ok;
+
+extern "C" void bfree_guest_set_typeloader_main_ok(int on)
+{
+    g_bfree_typeloader_main_ok = on ? 1 : 0;
+    bfree_guest_serial_lit("[desktop_qt] typeloader main ok=");
+    bfree_guest_serial_lit(on ? "1\n" : "0\n");
+}
+
+extern "C" int bfree_guest_typeloader_main_ok(void)
+{
+    return g_bfree_typeloader_main_ok;
 }
 
 extern "C" bool __real__Z21qRegisterResourceDataiPKhS0_S0_(int version, const unsigned char *tree,

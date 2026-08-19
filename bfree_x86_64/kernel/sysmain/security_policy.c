@@ -49,12 +49,13 @@ int bfree_syscall_allowed(long syscall_num)
     case BFREE_ROLE_INIT:
         return 1;
     case BFREE_ROLE_COMPOSITOR:
+        /* 24 = sys_debug_serial_write. Guest stub hello uses it; was omitted. */
         if (syscall_num == 0 || syscall_num == 1 || syscall_num == 2 || syscall_num == 3 ||
             syscall_num == 4 || syscall_num == 20 || syscall_num == 21 || syscall_num == 22 ||
-            syscall_num == 25 || syscall_num == 26 || syscall_num == 27 || syscall_num == 28 ||
-            syscall_num == 29 || syscall_num == 30 || syscall_num == 31 || syscall_num == 32 ||
-            syscall_num == 33 || syscall_num == 34 || syscall_num == 35 || syscall_num == 38 ||
-            syscall_num == 39 || syscall_num == 40 || syscall_num == 41) {
+            syscall_num == 24 || syscall_num == 25 || syscall_num == 26 || syscall_num == 27 ||
+            syscall_num == 28 || syscall_num == 29 || syscall_num == 30 || syscall_num == 31 ||
+            syscall_num == 32 || syscall_num == 33 || syscall_num == 34 || syscall_num == 35 ||
+            syscall_num == 38 || syscall_num == 39 || syscall_num == 40 || syscall_num == 41) {
             return 1;
         }
         return 0;
