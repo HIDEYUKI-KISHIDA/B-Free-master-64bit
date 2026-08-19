@@ -11,6 +11,32 @@ work on Linux (no `2ndboot64` rule; needs an ELF32/MinGW toolchain). The ARM
 trees at the repo root (`kernel_arm/`, `userland_arm/`) are source-only (no
 Makefile) and `smartphone-tron-os/` is spec/docs only.
 
+### 本デスク / Native OS progress
+Product = guest compositor owns pixels; `DesktopShell.qml` is a **Qt
+Wayland client**; GPU + Qt. Not GTK. Not compositor-painted Explorer.
+Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
+- **Native kernel + POSIX:** done. Daily `bfree.iso` boots `g1-desk`.
+- **Daily desk:** done. Qt `QT_QPA_PLATFORM=bfree` paints the QEMU FB
+  itself (EX/VW/TE + persist). **Not** Wayland. **Not** GPU.
+- **GPU:** not started. Stub is software FB dirty blit. QPA reports
+  OpenGL/Rhi off. No DRM/EGL.
+- **Wayland stub (compositor-first):** C path done. `compositor.elf`
+  `vfork`(58)+`execve("/p8test.elf")`, AF_UNIX `/tmp/wayland-0`, canned
+  xdg-shell, `/tmp/wlXX` tiles. Observed: green title `Qt` / `wayland`
+  / rose `shm`, `[wl] vfork parent`, `[wl] client shm blit`. Not
+  upstream qtwayland (`sendmsg` has no SCM_RIGHTS, no `wl_seat`).
+- **Qt as Wayland client:** blocked. 53MB `QGuiApplication`
+  `qt_wl_hello.elf` prints `start` then hangs (exec-stack `qRegister`).
+  Gray wallpaper, no desk. Next: ctor-stack plugin + hybrid QGui then
+  **return 0**. Proof: gold `0xD4A017` / navy `0x1E3A8A` / cyan
+  `0x06B6D4`. Restore C with
+  `BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh` from
+  `bfree_x86_64/`.
+- **本デスク:** not started. Needs Qt hello to paint, then drop bfree
+  QPA on daily, then `DesktopShell.qml` as Wayland client (boot skip
+  `beginCreate` still dead: `CR2=0xC`, `threads=no`). Do not
+  `execve("desktop.elf")` on g1-desk. Do not compositor `fork`(57).
+
 ### Toolchain (installed by the startup update script)
 - A prebuilt **`x86_64-elf` cross GCC 13.2.0** is installed to
   `$HOME/x86_64-elf-toolchain` by `bfree_x86_64/tools/install_x86_64_elf_gpp_prebuilt.sh`.
