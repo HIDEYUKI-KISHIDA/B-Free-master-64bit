@@ -1371,58 +1371,8 @@ static void *bfree_guest_alloc_ctor_stack(uintptr_t *top_out)
     return bfree_guest_ctor_stack_buf;
 }
 
-extern "C" void bfree_guest_serial_hex_u64(uint64_t v);
-
-static long bfree_raw_sys6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
-{
-    register long rax __asm__("rax") = n;
-    register long rdi __asm__("rdi") = a1;
-    register long rsi __asm__("rsi") = a2;
-    register long rdx __asm__("rdx") = a3;
-    register long r10 __asm__("r10") = a4;
-    register long r8 __asm__("r8") = a5;
-    register long r9 __asm__("r9") = a6;
-    __asm__ volatile("syscall"
-                     : "+r"(rax)
-                     : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9)
-                     : "rcx", "r11", "memory");
-    return rax;
-}
-
-#ifndef BFREE_GUEST_APP_MMAP
 extern "C" long syscall(long number, ...);
-#else
-/* musl clone.S / wait4 go through syscall(). Intercept before g1-desk
- * waitpid WNOHANG zombies the vfork child or clone overwrites parent RIP. */
-extern "C" long syscall(long number, ...)
-{
-    va_list ap;
-    long a1;
-    long a2;
-    long a3;
-    long a4;
-    long a5;
-    long a6;
-
-    va_start(ap, number);
-    a1 = va_arg(ap, long);
-    a2 = va_arg(ap, long);
-    a3 = va_arg(ap, long);
-    a4 = va_arg(ap, long);
-    a5 = va_arg(ap, long);
-    a6 = va_arg(ap, long);
-    va_end(ap);
-    if (number == 56L || number == 57L || number == 58L) {
-        bfree_guest_serial_lit("[qt] skip clone\n");
-        return -11L;
-    }
-    if (number == 61L || number == 247L) {
-        bfree_guest_serial_lit("[qt] skip waitpid\n");
-        return -10L;
-    }
-    return bfree_raw_sys6(number, a1, a2, a3, a4, a5, a6);
-}
-#endif
+extern "C" void bfree_guest_serial_hex_u64(uint64_t v);
 
 static long bfree_guest_mmap_fixed_try(uintptr_t va, size_t bytes);
 
@@ -3904,6 +3854,18 @@ extern "C" long syscall(long number, ...)
     a4 = va_arg(ap, unsigned long);
     a5 = va_arg(ap, unsigned long);
     va_end(ap);
+
+#ifdef BFREE_GUEST_APP_MMAP
+    /* musl wait4/clone use this syscall(), not libc waitpid(). */
+    if (number == 56L || number == 57L || number == 58L) {
+        bfree_guest_serial_lit("[qt] skip clone\n");
+        return -11L;
+    }
+    if (number == 61L || number == 247L) {
+        bfree_guest_serial_lit("[qt] skip waitpid\n");
+        return -10L;
+    }
+#endif
 
     if (bfree_guest_qv4_mmap_active) {
         if (number == BFREE_LINUX_SYS_FUTEX)
