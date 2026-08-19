@@ -231,28 +231,55 @@ private:
     QBfreeWlScreen *m_screen;
 };
 
+class QPlatformIntegrationFactory
+{
+public:
+    static QStringList keys(const QString &platformPluginPath = QString());
+    static QPlatformIntegration *create(const QString &name, const QStringList &args, int &argc,
+                                        char **argv, const QString &platformPluginPath = QString());
+};
+
+QStringList QPlatformIntegrationFactory::keys(const QString &)
+{
+    QStringList k;
+    qt_wl_serial("[qt] QPA factory keys\n");
+    k.append(QString::fromLatin1("bfree"));
+    k.append(QString::fromLatin1("wayland"));
+    k.append(QString::fromLatin1("offscreen"));
+    return k;
+}
+
+QPlatformIntegration *QPlatformIntegrationFactory::create(const QString &name, const QStringList &,
+                                                          int &, char **, const QString &)
+{
+    (void)name;
+    qt_wl_serial("[qt] QPA factory create\n");
+    return new QBfreeWlIntegration;
+}
+
 class QBfreeWlIntegrationPlugin : public QPlatformIntegrationPlugin
 {
 public:
     QPlatformIntegration *create(const QString &system, const QStringList &) override
     {
-        if (system.compare(QLatin1String("wayland"), Qt::CaseInsensitive) == 0
-            || system.compare(QLatin1String("bfreewl"), Qt::CaseInsensitive) == 0
-            || system.compare(QLatin1String("bfree"), Qt::CaseInsensitive) == 0) {
-            qt_wl_serial("[qt] QPA wayland create\n");
-            return new QBfreeWlIntegration;
-        }
-        return nullptr;
+        /* Keys parse may still fail; once instance() runs, accept any QPA name. */
+        (void)system;
+        qt_wl_serial("[qt] QPA wayland create\n");
+        return new QBfreeWlIntegration;
     }
 };
 
 static QObject *qt_plugin_instance_QBfreeWlIntegrationPlugin()
 {
+    qt_wl_serial("[qt] plugin instance\n");
     static QBfreeWlIntegrationPlugin *inst = new QBfreeWlIntegrationPlugin;
     return inst;
 }
 
-/* Qt 6.8 static-plugin CBOR (IID=2, className=3, MetaData=4). */
+/* Qt 6.8 static plugin: 4-byte Header then CBOR (IID=2, className=3, MetaData=4).
+ * QFactoryLoader slices sizeof(Header) then parses CBOR. Do not use
+ * QPluginMetaDataV2 with an array NTTP — gcc may decay it to a pointer and
+ * store only 8 bytes of payload, so Keys never match and create() is skipped. */
 static constexpr unsigned char qt_pluginMetaDataCbor[] = {
     0xa3, 0x02, 0x78, 0x3e, 0x6f, 0x72, 0x67, 0x2e, 0x71, 0x74, 0x2d, 0x70,
     0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x2e, 0x51, 0x74, 0x2e, 0x51, 0x50,
@@ -262,15 +289,49 @@ static constexpr unsigned char qt_pluginMetaDataCbor[] = {
     0x63, 0x65, 0x2e, 0x35, 0x2e, 0x33, 0x03, 0x78, 0x19, 0x51, 0x42, 0x66,
     0x72, 0x65, 0x65, 0x57, 0x6c, 0x49, 0x6e, 0x74, 0x65, 0x67, 0x72, 0x61,
     0x74, 0x69, 0x6f, 0x6e, 0x50, 0x6c, 0x75, 0x67, 0x69, 0x6e, 0x04, 0xa1,
-    0x64, 0x4b, 0x65, 0x79, 0x73, 0x83, 0x67, 0x77, 0x61, 0x79, 0x6c, 0x61,
+    0x64, 0x4b, 0x65, 0x79, 0x73, 0x86, 0x67, 0x77, 0x61, 0x79, 0x6c, 0x61,
     0x6e, 0x64, 0x67, 0x62, 0x66, 0x72, 0x65, 0x65, 0x77, 0x6c, 0x65, 0x62,
-    0x66, 0x72, 0x65, 0x65
+    0x66, 0x72, 0x65, 0x65, 0x69, 0x6f, 0x66, 0x66, 0x73, 0x63, 0x72, 0x65,
+    0x65, 0x6e, 0x67, 0x6d, 0x69, 0x6e, 0x69, 0x6d, 0x61, 0x6c, 0x63, 0x78,
+    0x63, 0x62
 };
+
+static void qt_wl_hex8(const unsigned char *p)
+{
+    static const char hex[] = "0123456789abcdef";
+    char b[18];
+    int i;
+    for (i = 0; i < 8; i++) {
+        b[i * 2] = hex[p[i] >> 4];
+        b[i * 2 + 1] = hex[p[i] & 15];
+    }
+    b[16] = '\n';
+    b[17] = 0;
+    qt_wl_serial("[qt] plugin hdr=");
+    qt_wl_serial(b);
+}
 
 static QPluginMetaData qt_plugin_query_metadata_QBfreeWlIntegrationPlugin()
 {
-    static constexpr QPluginMetaDataV2<qt_pluginMetaDataCbor> md{};
-    return md;
+    static unsigned char raw[4 + sizeof(qt_pluginMetaDataCbor)];
+    static int once;
+    if (!once) {
+        unsigned i;
+        raw[0] = 1;
+        raw[1] = (unsigned char)QT_VERSION_MAJOR;
+        raw[2] = (unsigned char)QT_VERSION_MINOR;
+#ifdef QT_NO_DEBUG
+        raw[3] = 1;
+#else
+        raw[3] = (unsigned char)(1u | 0x80u);
+#endif
+        for (i = 0; i < sizeof(qt_pluginMetaDataCbor); i++) {
+            raw[4 + i] = qt_pluginMetaDataCbor[i];
+        }
+        once = 1;
+        qt_wl_hex8(raw);
+    }
+    return {raw, sizeof(raw)};
 }
 
 const QStaticPlugin qt_static_plugin_QBfreeWlIntegrationPlugin()
