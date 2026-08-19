@@ -82,6 +82,11 @@ public:
     {
         if (m_image.size() != size) {
             m_image = QImage(size, QImage::Format_RGB32);
+            if (m_image.isNull()) {
+                qt_wl_serial("[qt] QImage null\n");
+            } else {
+                qt_wl_serial("[qt] QImage ok\n");
+            }
         }
     }
 

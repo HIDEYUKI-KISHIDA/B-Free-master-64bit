@@ -100,5 +100,10 @@ if grep -aq 'window start' "$QTCLI" 2>/dev/null; then
 else
   echo "P8TEST_WINDOW=MISSING (stale qt_wl_hello.cpp — no post-ctor serials)"
 fi
+if grep -aq 'fill bits' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_PAINT=bits"
+else
+  echo "P8TEST_PAINT=MISSING (stale qt_wl_hello.cpp — still QPainter fillRect)"
+fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"

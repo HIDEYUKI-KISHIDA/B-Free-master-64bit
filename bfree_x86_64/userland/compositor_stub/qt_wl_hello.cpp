@@ -4,10 +4,9 @@
  * Do not call bfree_guest_enter_preflighted_mmap_noreturn. */
 #include <new>
 #include <QBackingStore>
-#include <QColor>
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QPainter>
+#include <QImage>
 #include <QPluginLoader>
 #include <QStaticPlugin>
 #include <QString>
@@ -152,12 +151,50 @@ __attribute__((noinline)) static void hello_gui_session(void)
     const QRect rect(0, 0, 480, 320);
     store.beginPaint(rect);
     qt_hello_serial("[qt] beginPaint\n");
+    /* Do not QPainter::fillRect — dummy font DB / raster engine is null
+     * (PF CR2=0 right after [qt] painter). Write QImage bits. */
     {
-        QPainter p(store.paintDevice());
-        qt_hello_serial("[qt] painter\n");
-        p.fillRect(0, 0, 480, 320, QColor(0x1e, 0x3a, 0x8a));
-        p.fillRect(0, 0, 480, 36, QColor(0xd4, 0xa0, 0x17));
-        p.fillRect(16, 92, 72, 8, QColor(0x06, 0xb6, 0xd4));
+        QImage *img = static_cast<QImage *>(store.paintDevice());
+        unsigned *bits;
+        int bpl;
+        int w;
+        int h;
+        int x;
+        int y;
+
+        if (!img || img->isNull()) {
+            qt_hello_serial("[qt] image null\n");
+        } else {
+            qt_hello_serial("[qt] image\n");
+            bits = (unsigned *)img->bits();
+            if (!bits) {
+                qt_hello_serial("[qt] bits 0\n");
+            } else {
+                qt_hello_serial("[qt] bits\n");
+                bpl = img->bytesPerLine() / 4;
+                w = img->width();
+                h = img->height();
+                for (y = 0; y < h; y++) {
+                    unsigned *row = bits + y * bpl;
+                    for (x = 0; x < w; x++) {
+                        row[x] = 0xff1e3a8au;
+                    }
+                }
+                for (y = 0; y < 36 && y < h; y++) {
+                    unsigned *row = bits + y * bpl;
+                    for (x = 0; x < w; x++) {
+                        row[x] = 0xffd4a017u;
+                    }
+                }
+                for (y = 92; y < 100 && y < h; y++) {
+                    unsigned *row = bits + y * bpl;
+                    for (x = 16; x < 88 && x < w; x++) {
+                        row[x] = 0xff06b6d4u;
+                    }
+                }
+                qt_hello_serial("[qt] fill bits\n");
+            }
+        }
     }
     store.endPaint();
     qt_hello_serial("[qt] paint\n");

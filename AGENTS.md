@@ -20,13 +20,13 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8: `[qt] QGuiApplication ctor ok` landed. Hang is **after ctor**
-(window / create / show / paint / `processEvents`). Skip
-`requestActivateWindow`, `handleExposeEvent`, and first-frame
-`processEvents` (`Q_EMIT awake` hangs). ISO must print
-`P8TEST_STAMP=hybrid-qpa`, `P8TEST_QPA=factory-override`, and
-`P8TEST_WINDOW=breadcrumbs`. Look for `window start` then
-`flush` then `QGuiApplication done` then `[wl] vfork parent`.
+W8: window path reached `beginPaint` / `painter`. PF CR2=0 on
+`QPainter::fillRect` (null raster engine / DummyFontDatabase).
+Do not QPainter. Write `QImage` bits. ISO must print
+`P8TEST_STAMP=hybrid-qpa`, `P8TEST_QPA=factory-override`,
+`P8TEST_WINDOW=breadcrumbs`, `P8TEST_PAINT=bits`. Look for
+`fill bits` then `flush` then `QGuiApplication done` then
+`[wl] vfork parent`.
 Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
