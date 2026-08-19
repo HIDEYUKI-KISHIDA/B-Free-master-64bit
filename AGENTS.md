@@ -20,11 +20,10 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8 blocked: mmap 32MiB is green. Serial
-`[qt] plugin registered` *before* ctor mmap (no `n=`) is the
-**old hello ELF**. New boot line is `hello hybrid-qpa`; ISO
-build must print `P8TEST_STAMP=hybrid-qpa`. Register QPA on
-hybrid heap; metadata is Header+CBOR. Do not overwrite
+W8 blocked: `hello hybrid-qpa` and `plugin registered n=01` are
+green. Hang was `QStaticPlugin::metaData()` (QJson) before QGui.
+Skip that dump; look for `plugin register done` then
+`plugin instance` / `ctor ok`. Do not overwrite
 `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not

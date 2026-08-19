@@ -7,8 +7,6 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QJsonArray>
-#include <QJsonObject>
 #include <QPainter>
 #include <QPluginLoader>
 #include <QStaticPlugin>
@@ -59,7 +57,6 @@ static void qt_hello_serial(const char *s)
 __attribute__((noinline)) static void hello_register_plugin(void)
 {
     int n;
-    int k;
 
     qt_hello_serial("[qt] plugin register on hybrid heap\n");
     qRegisterStaticPluginFunction(qt_static_plugin_QBfreeWlIntegrationPlugin());
@@ -73,20 +70,9 @@ __attribute__((noinline)) static void hello_register_plugin(void)
         b[3] = 0;
         qt_hello_serial(b);
     }
-    if (n > 0) {
-        const QJsonObject md = QPluginLoader::staticPlugins().at(0).metaData();
-        const QJsonArray keys = md.value(QStringLiteral("MetaData")).toObject().value(QStringLiteral("Keys")).toArray();
-        k = keys.size();
-        qt_hello_serial("[qt] plugin keys=");
-        {
-            char b[4];
-            b[0] = (char)('0' + ((k / 10) % 10));
-            b[1] = (char)('0' + (k % 10));
-            b[2] = '\n';
-            b[3] = 0;
-            qt_hello_serial(b);
-        }
-    }
+    /* Do not call QStaticPlugin::metaData() here — QJson/CBOR parse hung
+     * after n=01. QFactoryLoader will parse Keys during QGui ctor. */
+    qt_hello_serial("[qt] plugin register done\n");
 }
 
 static void hello_qt_msg(QtMsgType type, const QMessageLogContext &, const QString &msg)
