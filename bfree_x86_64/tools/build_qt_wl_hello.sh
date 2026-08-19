@@ -130,30 +130,6 @@ if ! "$CXX" "${CXXFLAGS[@]}" -c -o "$STUB/qbfree_wayland.o" "$STUB/qbfree_waylan
   echo "qt_wl_hello skip: QPA compile failed. C p8test stays." >&2
   exit 0
 fi
-if ! "$CXX" "${CXXFLAGS[@]}" -c -o "$STUB/qt_wl_hello.o" "$STUB/qt_wl_hello.cpp"; then
-  echo "qt_wl_hello skip: hello compile failed. C p8test stays." >&2
-  exit 0
-fi
-
-ARCHIVES=(
-  "$GUEST_QT/lib/libQt6Gui.a"
-  "$GUEST_QT/lib/libQt6Core.a"
-)
-for a in \
-  "$GUEST_QT/lib/libQt6BundledHarfbuzz.a" \
-  "$GUEST_QT/lib/libQt6BundledFreetype.a" \
-  "$GUEST_QT/lib/libQt6BundledLibpng.a" \
-  "$GUEST_QT/lib/libQt6BundledZLIB.a" \
-  "$GUEST_QT/lib/libQt6BundledPcre2.a"
-do
-  [[ -f "$a" ]] && ARCHIVES+=("$a")
-done
-for o in \
-  "$GUEST_QT/lib/objects-Release/Gui_resources_1/.qt/rcc/qrc_qpdf_init.cpp.o" \
-  "$GUEST_QT/lib/objects-Release/Gui_resources_2/.qt/rcc/qrc_gui_shaders_init.cpp.o"
-do
-  [[ -f "$o" ]] && ARCHIVES+=("$o")
-done
 
 STUBS=()
 # qt_futex + guest_mmap only. guest_platform_stub.o is the bfree QPA factory
@@ -169,39 +145,143 @@ if ! x86_64-elf-gcc -ffreestanding -fno-pic -c -o "$SYM_STUB" "$STUB/qt_wl_hello
 fi
 STUBS+=("$SYM_STUB")
 
-echo "[qt_wl_hello] linking with $GUEST_QT (no libqbfree.a)"
+BASE_ARCHIVES=(
+  "$GUEST_QT/lib/libQt6Gui.a"
+  "$GUEST_QT/lib/libQt6Core.a"
+)
+for a in \
+  "$GUEST_QT/lib/libQt6BundledHarfbuzz.a" \
+  "$GUEST_QT/lib/libQt6BundledFreetype.a" \
+  "$GUEST_QT/lib/libQt6BundledLibpng.a" \
+  "$GUEST_QT/lib/libQt6BundledZLIB.a" \
+  "$GUEST_QT/lib/libQt6BundledPcre2.a"
+do
+  [[ -f "$a" ]] && BASE_ARCHIVES+=("$a")
+done
+for o in \
+  "$GUEST_QT/lib/objects-Release/Gui_resources_1/.qt/rcc/qrc_qpdf_init.cpp.o" \
+  "$GUEST_QT/lib/objects-Release/Gui_resources_2/.qt/rcc/qrc_gui_shaders_init.cpp.o"
+do
+  [[ -f "$o" ]] && BASE_ARCHIVES+=("$o")
+done
+
 echo "[qt_wl_hello] g++=$(command -v x86_64-elf-g++ 2>/dev/null || echo missing)"
 echo "[qt_wl_hello] ld=$(command -v x86_64-elf-ld 2>/dev/null || echo missing)"
-# DrvFS (/mnt/c) redirects can land as 0-byte files; keep the log on /tmp.
-# Do not bash -s / qmake wrapper here (nested stdin ate the linker script).
 LINK_LOG="/tmp/qt_wl_hello.link.log"
 GDL_LF="/tmp/bfree-guest_desktop_link.sh"
 tr -d '\r' < "$ROOT/tools/guest_desktop_link.sh" > "$GDL_LF"
-set +e
-bash "$GDL_LF" \
-  -o "$STUB/qt_wl_hello.elf" \
-  "-T$DESK/desktop.ld" \
-  "${STUBS[@]}" \
-  "$STUB/qbfree_wayland.o" \
-  "$STUB/qt_wl_hello.o" \
-  "$STUB/wl_stub_flush.o" \
-  "${ARCHIVES[@]}" 2>&1 | tee "$LINK_LOG"
-link_rc=${PIPESTATUS[0]}
-set -e
-echo "[qt_wl_hello] link rc=$link_rc log_bytes=$(wc -c < "$LINK_LOG" | tr -d ' ')"
-if [[ "$link_rc" -ne 0 ]]; then
-  echo "qt_wl_hello skip: link failed. C p8test stays." >&2
-  echo "qt_wl_hello: unique undefined refs:" >&2
-  grep -E 'undefined reference|undefined symbol|ld: error:|file not recognized|invalid option|not found|failed' "$LINK_LOG" \
-    | sort -u | head -40 >&2 || true
-  echo "qt_wl_hello: full log $LINK_LOG" >&2
-  exit 0
+
+link_hello() {
+  local out="$1"
+  shift
+  echo "[qt_wl_hello] linking $out (no libqbfree.a)"
+  set +e
+  bash "$GDL_LF" \
+    -o "$out" \
+    "-T$DESK/desktop.ld" \
+    "${STUBS[@]}" \
+    "$STUB/qbfree_wayland.o" \
+    "$STUB/qt_wl_hello.o" \
+    "$STUB/wl_stub_flush.o" \
+    "$@" 2>&1 | tee "$LINK_LOG"
+  link_rc=${PIPESTATUS[0]}
+  set -e
+  echo "[qt_wl_hello] link rc=$link_rc log_bytes=$(wc -c < "$LINK_LOG" | tr -d ' ')"
+  if [[ "$link_rc" -ne 0 ]]; then
+    echo "qt_wl_hello: unique undefined refs:" >&2
+    grep -E 'undefined reference|undefined symbol|ld: error:|file not recognized|invalid option|not found|failed' "$LINK_LOG" \
+      | sort -u | head -40 >&2 || true
+    echo "qt_wl_hello: full log $LINK_LOG" >&2
+    return 1
+  fi
+  sz="$(wc -c < "$out")"
+  if [[ "$sz" -lt 1000000 ]]; then
+    echo "qt_wl_hello: ELF too small ($sz)" >&2
+    rm -f "$out"
+    return 1
+  fi
+  return 0
+}
+
+HELLO_D2B=0
+KEEP_ELF="$STUB/qt_wl_hello.elf.keep"
+if [[ -f "$STUB/qt_wl_hello.elf" ]]; then
+  cp -f "$STUB/qt_wl_hello.elf" "$KEEP_ELF"
 fi
+
+if [[ "${BFREE_D2B_QML:-1}" != "0" && -f "$GUEST_QT/lib/libQt6Qml.a" ]]; then
+  echo "[qt_wl_hello] D2b: try QQmlEngine (no beginCreate, no Quick types)"
+  CXXFLAGS_D2B=(
+    "${CXXFLAGS[@]}"
+    -DBFREE_D2B_QML=1 -DQT_QML_LIB
+    -I"$QT_INC/QtQml"
+    -I"$QT_INC/QtQml/$QT_VER"
+    -I"$QT_INC/QtQml/$QT_VER/QtQml"
+    -I"$QT_INC/QtQmlIntegration"
+    -I"$QT_INC/QtQmlMeta"
+    -I"$QT_INC/QtQmlMeta/$QT_VER"
+    -I"$QT_INC/QtQmlMeta/$QT_VER/QtQmlMeta"
+    -I"$QT_INC/QtQmlModels"
+    -I"$QT_INC/QtQmlModels/$QT_VER"
+    -I"$QT_INC/QtQmlModels/$QT_VER/QtQmlModels"
+    -I"$QT_INC/QtQmlWorkerScript"
+    -I"$QT_INC/QtQmlWorkerScript/$QT_VER"
+    -I"$QT_INC/QtQmlWorkerScript/$QT_VER/QtQmlWorkerScript"
+  )
+  D2B_ARCHIVES=()
+  for a in \
+    "$GUEST_QT/lib/libQt6QmlMeta.a" \
+    "$GUEST_QT/lib/libQt6QmlModels.a" \
+    "$GUEST_QT/lib/libQt6QmlWorkerScript.a" \
+    "$GUEST_QT/lib/libQt6Qml.a"
+  do
+    [[ -f "$a" ]] && D2B_ARCHIVES+=("$a")
+  done
+  if "$CXX" "${CXXFLAGS_D2B[@]}" -c -o "$STUB/qt_wl_hello.o" "$STUB/qt_wl_hello.cpp"; then
+    if link_hello "$STUB/qt_wl_hello.d2b.elf" "${D2B_ARCHIVES[@]}" "${BASE_ARCHIVES[@]}"; then
+      mv -f "$STUB/qt_wl_hello.d2b.elf" "$STUB/qt_wl_hello.elf"
+      HELLO_D2B=1
+      echo "[qt_wl_hello] D2b link ok"
+    else
+      echo "[qt_wl_hello] D2b link failed — fall back to D2 bits-only hello" >&2
+      rm -f "$STUB/qt_wl_hello.d2b.elf"
+    fi
+  else
+    echo "[qt_wl_hello] D2b compile failed — fall back to D2 bits-only hello" >&2
+  fi
+else
+  echo "[qt_wl_hello] D2b skip (BFREE_D2B_QML=0 or no libQt6Qml.a)"
+fi
+
+if [[ "$HELLO_D2B" != "1" ]]; then
+  if ! "$CXX" "${CXXFLAGS[@]}" -c -o "$STUB/qt_wl_hello.o" "$STUB/qt_wl_hello.cpp"; then
+    echo "qt_wl_hello skip: hello compile failed. C p8test stays." >&2
+    if [[ -f "$KEEP_ELF" ]]; then
+      mv -f "$KEEP_ELF" "$STUB/qt_wl_hello.elf"
+      echo "[qt_wl_hello] restored previous ELF" >&2
+    fi
+    exit 0
+  fi
+  if ! link_hello "$STUB/qt_wl_hello.elf" "${BASE_ARCHIVES[@]}"; then
+    echo "qt_wl_hello skip: link failed. C p8test stays." >&2
+    if [[ -f "$KEEP_ELF" ]]; then
+      mv -f "$KEEP_ELF" "$STUB/qt_wl_hello.elf"
+      echo "[qt_wl_hello] restored previous ELF" >&2
+    fi
+    exit 0
+  fi
+fi
+rm -f "$KEEP_ELF"
 
 sz="$(wc -c < "$STUB/qt_wl_hello.elf")"
 echo "QT_WL_HELLO=$STUB/qt_wl_hello.elf"
 echo "QT_WL_HELLO_BYTES=$sz"
 echo "QT_WL_HELLO_STAMP=hybrid-qpa"
+if [[ "$HELLO_D2B" == "1" ]]; then
+  echo "QT_WL_HELLO_D2B=engine"
+else
+  echo "QT_WL_HELLO_D2B=bits-only"
+fi
 if [[ "$sz" -lt 1000000 ]]; then
   echo "qt_wl_hello: ELF too small ($sz) — not a linked QGuiApplication" >&2
   rm -f "$STUB/qt_wl_hello.elf"

@@ -33,7 +33,16 @@ W8 **done** (gold/navy/cyan + `[wl] vfork parent`).
 `D2 argv -platform wayland` / `D2 fill desk` / `exit_group` /
 `[wl] vfork parent`. Window is wallpaper `#7A8FA8` + white card +
 EX/VW/TE tiles (not W8 gold). Surrounding EX/VW/TE is stub 仮 chrome.
-Keep 480×320 SHM. Do not link `libQt6Qml.a` yet. Do not
+Keep 480×320 SHM. Stub hello is ~35MB: `[wl] vfork parent` can
+appear several seconds after `[qt] exit_group` (`ppid=1` means the
+parent is still waiting). Grep again after the QEMU window is up;
+do not rebuild on a missing parent if `exit_group` already printed.
+**D2b hung:** `D2b engine enter` then `D2b engine operator new ok`,
+then `QQmlEngine` ctor never returned. Restore with
+`BFREE_D2B_QML=0 bash tools/build_qt_wl_hello.sh`. Do not retry
+`QQmlEngine` on this vfork child until asked. No `QQmlComponent`,
+no `loadUrl`, no `beginCreate`. Do not link
+`libQt6Qml.a` into `desktop.elf` from this path. Do not
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
 compositor `fork`(57). Do not map a from-source kernel onto the stub
 ISO (S2).
