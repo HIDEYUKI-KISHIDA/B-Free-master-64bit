@@ -2112,8 +2112,8 @@ static void draw_desk_chrome(unsigned int *p, unsigned int w, unsigned int h)
     }
 }
 
-/* Second xdg_toplevel: 480x320 app window. Qt Wayland client slot, not DesktopShell.qml.
- * Client-only marks ("shm" + rose bar) prove compositor did not paint this. */
+/* Second xdg_toplevel: 480x320 app window. D2 Qt client paints DesktopShell
+ * layout here; this fallback is C p8test only (green Qt / rose shm). */
 static void draw_xdg_window(unsigned int *p, unsigned int w, unsigned int h)
 {
     pool_rect(p, w, h, 0, 0, w, h, 0x00F1F5F9UL);
