@@ -20,11 +20,13 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8: paint/flush/`QGuiApplication done` landed. Hang is **after done**
-(QWindow/QBackingStore dtors or Qt atexit). Do not return through
-C++ destruction. `exit_group`(231) like C p8test. ISO must print
-`P8TEST_PAINT=bits` and `P8TEST_EXIT=exit_group`. Look for
-`[qt] exit_group` then `[wl] vfork parent`. Gold/navy/cyan, not C green.
+W8: paint/flush/`done`/`exit_group` landed. No `[wl] vfork parent`.
+g1-desk `waitpid(-1,WNOHANG)` zombies the vfork child; `clone`
+overwrites parent RIP. Hello stubs those (APP mmap compat only —
+do not overwrite `desktop_qt/guest_link_compat.o`). ISO must print
+`P8TEST_WAIT=skip`. Look for `[wl] vfork parent`. If the log has
+`[VFORK] parent resume` but no compositor `vfork parent`, RIP was
+clobbered. If `exit returned`, 231 came back (no child slot).
 Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not

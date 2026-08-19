@@ -1156,17 +1156,19 @@ extern "C" int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *at
         ++g_wrap_pthread_create_diag;
         bfree_guest_serial_lit("[wrap] pthread_create\n");
     }
-    if (bfree_guest_qv4_mmap_active)
+            if (bfree_guest_qv4_mmap_active)
         bfree_guest_qv4_trace_tag("pthread_create");
     for (int i = 0; i < BFREE_PTHREAD_SLOTS; ++i) {
         struct bfree_pthread_slot *slot = &g_pthread_slots[i];
         if (slot->fn == 0 && !slot->use_clone && !slot->coop_alive) {
+#ifndef BFREE_GUEST_APP_MMAP
             if (bfree_pthread_create_clone(slot, i, thread, start_routine, arg) == 0) {
                 if (g_wrap_pthread_create_diag <= 6u)
                     bfree_guest_serial_lit("[wrap] pthread_create clone\n");
                 return 0;
             }
-            /* Fall back to cooperative queue. */
+#endif
+            /* Hello: do not clone() — it overwrites vfork parent RIP. Coop only. */
             pthread_t id = (pthread_t)(uintptr_t)&g_pthread_worker_objs[i];
             slot->id = id;
             slot->arg = arg;
@@ -1801,6 +1803,56 @@ extern "C" void *mmap(void *addr, size_t length, int prot, int flags, int fd, of
 {
     return __mmap(addr, length, prot, flags, fd, offset);
 }
+
+#ifdef BFREE_GUEST_APP_MMAP
+/* g1-desk waitpid(-1, WNOHANG) force-zombies the live vfork child and
+ * clears g_guest_fork_active. clone() copies over g_bfree_fork_saved_* so
+ * exit_group resumes the wrong RIP. Hello must not issue those syscalls.
+ * desktop.elf keeps real waitpid (Terminal busybox). */
+extern "C" int waitpid(int pid, int *status, int options)
+{
+    (void)pid;
+    (void)options;
+    bfree_guest_serial_lit("[qt] skip waitpid\n");
+    if (status)
+        *status = 0;
+    errno = ECHILD;
+    return -1;
+}
+
+extern "C" int wait4(int pid, int *status, int options, void *rusage)
+{
+    (void)rusage;
+    return waitpid(pid, status, options);
+}
+
+extern "C" int waitid(int idtype, unsigned int id, void *infop, int options)
+{
+    (void)idtype;
+    (void)id;
+    (void)infop;
+    (void)options;
+    bfree_guest_serial_lit("[qt] skip waitid\n");
+    errno = ECHILD;
+    return -1;
+}
+
+extern "C" int clone(int (*fn)(void *), void *stack, int flags, void *arg, ...)
+{
+    (void)fn;
+    (void)stack;
+    (void)flags;
+    (void)arg;
+    bfree_guest_serial_lit("[qt] skip clone\n");
+    errno = EAGAIN;
+    return -1;
+}
+
+extern "C" int __clone(int (*fn)(void *), void *stack, int flags, void *arg, ...)
+{
+    return clone(fn, stack, flags, arg);
+}
+#endif
 
 /* APP role uses Linux numbers: 9=mmap, 26=msync. INIT/native still has 26=mmap.
  * p8test is APP. Do not treat msync's 0 as MAP_FIXED success (that printed

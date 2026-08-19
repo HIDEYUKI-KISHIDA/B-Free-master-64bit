@@ -49,9 +49,9 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
   - 済: `ctor mmap ok n=0x2000000`（32MiB）と fallback heap
   - 済: `plugin register done` と `operator new ok`
   - 済: `[qt] QPA factory keys` → `[qt] QPA factory create` → `[qt] QGuiApplication ctor ok`
-  - 済: `window start` → `show` → `beginPaint` → `QImage ok` → `fill bits` → `flush` → `QGuiApplication done`
-  - 今: `done` のあとで止まる（`QWindow` / `QBackingStore` デストラクタ、または Qt atexit）。`[wl] vfork parent` が無い
-  - 次: `done` のあと `exit_group`(231)。デストラクタは走らせない。ISO は `P8TEST_EXIT=exit_group`。成功は `[qt] exit_group` → `[wl] vfork parent`
+  - 済: `fill bits` → `flush` → `QGuiApplication done` → `exit_group`
+  - 今: `exit_group` のあと `[wl] vfork parent` が無い。231 は kernel の pause / busybox 再入、または `waitpid`/`clone` が vfork 状態を壊している
+  - 次: hello は `waitpid` / `clone` を出さない（`P8TEST_WAIT=skip`）。成功は `[wl] vfork parent`。`[qt] skip waitpid` が出てもよい。`exit returned` が出たら 231 が戻ってきた = 親スロットが無い
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:
