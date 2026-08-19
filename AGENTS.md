@@ -33,7 +33,12 @@ W8 **done** (gold/navy/cyan + `[wl] vfork parent`).
 `D2 argv -platform wayland` / `D2 fill desk` / `exit_group` /
 `[wl] vfork parent`. Window is wallpaper `#7A8FA8` + white card +
 EX/VW/TE tiles (not W8 gold). Surrounding EX/VW/TE is stub 仮 chrome.
-Keep 480×320 SHM. Do not link `libQt6Qml.a` yet. Do not
+Keep 480×320 SHM. **D2b started:** optional `QQmlEngine` on the Wayland
+hello (`[qt] D2b qml-engine` / `D2b engine enter` / `D2b engine ok`).
+No `QQmlComponent`, no `loadUrl`, no `qml_register_types`, no
+`beginCreate`. If D2b link fails, keep D2 bits-only hello. If it hangs
+after `D2b engine enter`, rebuild with `BFREE_D2B_QML=0`. Do not link
+`libQt6Qml.a` into `desktop.elf` from this path. Do not
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
 compositor `fork`(57). Do not map a from-source kernel onto the stub
 ISO (S2).

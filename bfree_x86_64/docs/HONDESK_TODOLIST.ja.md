@@ -6,10 +6,10 @@
 |------|------|-----|
 | **Native OS** | ゲストで動く OS 全体（カーネル + POSIX + 何かの机） | 起動できる。日次机あり |
 | **Wayland** | compositor がソケットを持ち、クライアントが窓を出す **手順** | W8 済（金窓）。W9 はまだ |
-| **本デスク** | 製品の机。compositor が画素を持ち、`DesktopShell.qml` が Qt Wayland クライアント | D1 済。D2 第一段済（QML を運んで bits。beginCreate しない）。D3 はまだ |
+| **本デスク** | 製品の机。compositor が画素を持ち、`DesktopShell.qml` が Qt Wayland クライアント | D1 済。D2 第一段済。D2b 着手（QQmlEngine。beginCreate しない）。D3 はまだ |
 | **GPU** | 絵を GPU で出す | まだ。今は全部ソフトウェア FB |
 
-**D1 済。D2 第一段済。** 日次 `bfree.iso` は上書きしない。GPU も触らない。`beginCreate` はやり直さない。製品 QML IR は合意してから。
+**D1 済。D2 第一段済。D2b 着手（QQmlEngine。beginCreate しない）。** 日次 `bfree.iso` は上書きしない。GPU も触らない。
 
 正本はこのファイル。`HONDESK_PHASES.ja.md` は前段 S0–S2 の記録。`AGENTS.md` と同期する。
 
@@ -63,12 +63,13 @@ C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机�
 
 ## C. 本デスク（製品の机。Wayland のあと）
 
-日次 N2 の机をこれに差し替える。W8 金窓・D1 wayland 済。**D2 第一段済（beginCreate しない）。** 日次 ISO は触らない。
+日次 N2 の机をこれに差し替える。W8 金窓・D1 wayland 済。**D2 第一段済。D2b 着手（beginCreate しない）。** 日次 ISO は触らない。
 
 - [x] **D1** step 4: stub の Qt クライアントが bfree QPA を描画に選ばない。`getenv QT_QPA_PLATFORM=wayland` → `exit_group` → `[wl] vfork parent`。日次 `bfree.iso` は **上書きしていない**（N2 の EX/TE は残す）。`desktop_qt/guest_link_compat.o` は上書きしていない。g1-desk の `desktop.elf` 注入は触っていない
 - [ ] **D2** `DesktopShell.qml` を **Wayland クライアント**として載せる（boot の `beginCreate` は死んでいる。やり直さない）
   - [x] 第一段: hello が `userland/compositor_stub/DesktopShell.qml` を運び、GuestMvpShell レイアウトを QImage bits で塗る。シリアル `D2 qml-client` → `hello wait-stub` → `getenv QT_QPA_PLATFORM=wayland` → `D2 argv -platform wayland` → `D2 fill desk` → `exit_group` → `[wl] vfork parent`。窓は 480×320。壁紙 `#7A8FA8` / 白カード / バー `#334155` / EX `#1D4ED8` / VW `#0F766E` / TE `#C2410C`（W8 の金／紺ではない）。周りの EX/VW/TE は stub 仮 chrome
-  - [ ] まだ: 製品 `gui_server/integration_gui/DesktopShell.qml` の IR。QQmlEngine / `libQt6Qml.a` / QQuick / `beginCreate` / `processEvents` は使わない
+  - [ ] **D2b** `QQmlEngine` を Wayland クライアントで作る。`beginCreate` / `loadUrl` / `processEvents` / `qml_register_types` はしない。シリアル `[qt] D2b qml-engine` `[qt] D2b engine enter` … `[qt] D2b engine ok`。リンク失敗時は第一段 hello に戻る。ハングしたら最後の行を見る。退避: `BFREE_D2B_QML=0 bash tools/build_qt_wl_hello.sh`
+  - [ ] まだ: 製品 QML の qmlcache `populate`（IR Ready）。`beginCreate` は使わない
 - [ ] **D3** 起動できるカーネルで `desktop.elf` を Wayland exec（旧 S2）。from-source kernel を stub ISO に載せない
 
 仮 chrome / 偽物 Explorer は製品にしない。GTK にしない。
