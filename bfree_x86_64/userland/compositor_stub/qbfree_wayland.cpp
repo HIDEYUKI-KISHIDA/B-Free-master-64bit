@@ -236,13 +236,10 @@ class QBfreeWlIntegrationPlugin : public QPlatformIntegrationPlugin
 public:
     QPlatformIntegration *create(const QString &system, const QStringList &) override
     {
-        if (system.compare(QLatin1String("wayland"), Qt::CaseInsensitive) == 0
-            || system.compare(QLatin1String("bfreewl"), Qt::CaseInsensitive) == 0
-            || system.compare(QLatin1String("bfree"), Qt::CaseInsensitive) == 0) {
-            qt_wl_serial("[qt] QPA wayland create\n");
-            return new QBfreeWlIntegration;
-        }
-        return nullptr;
+        /* Keys parse may still fail; once instance() runs, accept any QPA name. */
+        (void)system;
+        qt_wl_serial("[qt] QPA wayland create\n");
+        return new QBfreeWlIntegration;
     }
 };
 
@@ -266,26 +263,47 @@ static constexpr unsigned char qt_pluginMetaDataCbor[] = {
     0x63, 0x65, 0x2e, 0x35, 0x2e, 0x33, 0x03, 0x78, 0x19, 0x51, 0x42, 0x66,
     0x72, 0x65, 0x65, 0x57, 0x6c, 0x49, 0x6e, 0x74, 0x65, 0x67, 0x72, 0x61,
     0x74, 0x69, 0x6f, 0x6e, 0x50, 0x6c, 0x75, 0x67, 0x69, 0x6e, 0x04, 0xa1,
-    0x64, 0x4b, 0x65, 0x79, 0x73, 0x83, 0x67, 0x77, 0x61, 0x79, 0x6c, 0x61,
+    0x64, 0x4b, 0x65, 0x79, 0x73, 0x86, 0x67, 0x77, 0x61, 0x79, 0x6c, 0x61,
     0x6e, 0x64, 0x67, 0x62, 0x66, 0x72, 0x65, 0x65, 0x77, 0x6c, 0x65, 0x62,
-    0x66, 0x72, 0x65, 0x65
+    0x66, 0x72, 0x65, 0x65, 0x69, 0x6f, 0x66, 0x66, 0x73, 0x63, 0x72, 0x65,
+    0x65, 0x6e, 0x67, 0x6d, 0x69, 0x6e, 0x69, 0x6d, 0x61, 0x6c, 0x63, 0x78,
+    0x63, 0x62
 };
+
+static void qt_wl_hex8(const unsigned char *p)
+{
+    static const char hex[] = "0123456789abcdef";
+    char b[18];
+    int i;
+    for (i = 0; i < 8; i++) {
+        b[i * 2] = hex[p[i] >> 4];
+        b[i * 2 + 1] = hex[p[i] & 15];
+    }
+    b[16] = '\n';
+    b[17] = 0;
+    qt_wl_serial("[qt] plugin hdr=");
+    qt_wl_serial(b);
+}
 
 static QPluginMetaData qt_plugin_query_metadata_QBfreeWlIntegrationPlugin()
 {
-    static unsigned char raw[sizeof(QPluginMetaData::Header) + sizeof(qt_pluginMetaDataCbor)];
+    static unsigned char raw[4 + sizeof(qt_pluginMetaDataCbor)];
     static int once;
     if (!once) {
-        QPluginMetaData::Header hdr{};
         unsigned i;
-        const unsigned char *h = reinterpret_cast<const unsigned char *>(&hdr);
-        for (i = 0; i < sizeof(hdr); i++) {
-            raw[i] = h[i];
-        }
+        raw[0] = 1;
+        raw[1] = (unsigned char)QT_VERSION_MAJOR;
+        raw[2] = (unsigned char)QT_VERSION_MINOR;
+#ifdef QT_NO_DEBUG
+        raw[3] = 1;
+#else
+        raw[3] = (unsigned char)(1u | 0x80u);
+#endif
         for (i = 0; i < sizeof(qt_pluginMetaDataCbor); i++) {
-            raw[sizeof(hdr) + i] = qt_pluginMetaDataCbor[i];
+            raw[4 + i] = qt_pluginMetaDataCbor[i];
         }
         once = 1;
+        qt_wl_hex8(raw);
     }
     return {raw, sizeof(raw)};
 }

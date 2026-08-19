@@ -2659,8 +2659,13 @@ static char bfree_guest_env_noft[] = "QT_NO_FT_LIB=1";
 static char bfree_guest_env_theme[] = "QT_QPA_PLATFORMTHEME=";
 static char bfree_guest_env_qmlcache[] = "QML_DISABLE_DISK_CACHE=1";
 static char bfree_guest_env_fs[] = "BFREE_DESKTOP_PSEUDO_FULLSCREEN=1";
+#ifdef BFREE_GUEST_APP_MMAP
+static char bfree_guest_env_dbgplug[] = "QT_DEBUG_PLUGINS=1";
+static char bfree_guest_env_logrules[] = "QT_LOGGING_RULES=qt.qpa.*=true;qt.core.plugin.*=true";
+#else
 static char bfree_guest_env_dbgplug[] = "QT_DEBUG_PLUGINS=0";
 static char bfree_guest_env_logrules[] = "QT_LOGGING_RULES=qt.qpa.*=false";
+#endif
 static char bfree_guest_env_lcall[] = "LC_ALL=C";
 static char bfree_guest_env_home[] = "HOME=/";
 static char bfree_guest_env_tmp[] = "TMPDIR=/tmp";

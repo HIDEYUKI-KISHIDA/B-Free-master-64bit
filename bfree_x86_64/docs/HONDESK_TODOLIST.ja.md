@@ -47,9 +47,9 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
 - [x] **W7** step 2: `desktop.elf` ではない C クライアント `p8test.elf`（緑 `Qt` / `wayland` / バラ `shm`）
 - [ ] **W8** step 3: **いまここ。** 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
   - 済: `ctor mmap ok n=0x2000000`（32MiB）と fallback heap
-  - 済: `hello hybrid-qpa` と `plugin registered n=01`
-  - 今: `plugin keys=` の前で停止。`QStaticPlugin::metaData()` の QJson が原因
-  - 次: keys ダンプを外して QGui ctor へ。`plugin register done` → `plugin instance` → `ctor ok`
+  - 済: `plugin register done` と `operator new ok`
+  - 今: QGui ctor が `Could not find the Qt platform plugin`（`plugin instance` なし = Keys/IID 未一致）
+  - 次: Header を固定、create は全キー、APP は `QT_DEBUG_PLUGINS=1`。`plugin hdr=` と `QPA wayland create`
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:
