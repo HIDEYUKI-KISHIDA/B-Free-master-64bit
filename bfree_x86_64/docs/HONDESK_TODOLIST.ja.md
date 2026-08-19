@@ -9,7 +9,7 @@
 | **本デスク** | 製品の机。compositor が画素を持ち、`DesktopShell.qml` が Qt Wayland クライアント | まだ。日次の EX/TE 机はこれではない |
 | **GPU** | 絵を GPU で出す | まだ。今は全部ソフトウェア FB |
 
-**今やるのは W8 完了。** 次は D* ではない（合意してから）。GPU も触らない。
+**今やるのは D1。** 日次 `bfree.iso` は上書きしない。GPU も触らない。
 
 正本はこのファイル。`HONDESK_PHASES.ja.md` は前段 S0–S2 の記録。`AGENTS.md` と同期する。
 
@@ -63,9 +63,9 @@ C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机�
 
 ## C. 本デスク（製品の机。Wayland のあと）
 
-日次 N2 の机をこれに差し替える。W8 は金窓まで済。D* は合意してから。
+日次 N2 の机をこれに差し替える。W8 は金窓まで済。**今は D1**（stub クライアントが bfree を描画に選ばない）。日次 ISO は触らない。
 
-- [ ] **D1** step 4: 日次から `QT_QPA_PLATFORM=bfree` を外す
+- [ ] **D1** step 4: **いまここ。** 日次 `bfree.iso` は **上書きしない**（N2 の EX/TE 机を残す）。g1-desk の `desktop.elf` は kernel が `QT_QPA_PLATFORM=bfree` を注入する（カーネルは触らない）。D1 は **stub の Qt クライアント**が bfree QPA を描画に選ばないこと。hello の APP mmap compat は `QT_QPA_PLATFORM=wayland`。argv は `-platform wayland`。ISO は `P8TEST_D1=wayland`。シリアル `[qt] D1 wayland` と `getenv QT_QPA_PLATFORM=wayland`。金窓は残す。`desktop_qt/guest_link_compat.o` は上書きしない
 - [ ] **D2** `DesktopShell.qml` を **Wayland クライアント**として載せる（boot の `beginCreate` は死んでいる。やり直さない）
 - [ ] **D3** 起動できるカーネルで `desktop.elf` を Wayland exec（旧 S2）。from-source kernel を stub ISO に載せない
 

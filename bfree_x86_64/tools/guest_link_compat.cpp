@@ -2717,7 +2717,11 @@ extern "C" void bfree_guest_enable_main_bump_arena(void)
 }
 
 /* musl setenv/getenv iterate environ; freestanding guest uses static KEY=value rows. */
+#ifdef BFREE_GUEST_APP_MMAP
+static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=wayland";
+#else
 static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=bfree";
+#endif
 static char bfree_guest_env_quick[] = "QT_QUICK_BACKEND=software";
 static char bfree_guest_env_noft[] = "QT_NO_FT_LIB=1";
 static char bfree_guest_env_theme[] = "QT_QPA_PLATFORMTHEME=";
