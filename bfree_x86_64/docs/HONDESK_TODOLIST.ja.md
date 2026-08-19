@@ -68,7 +68,8 @@ C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机�
 - [x] **D1** step 4: stub の Qt クライアントが bfree QPA を描画に選ばない。`getenv QT_QPA_PLATFORM=wayland` → `exit_group` → `[wl] vfork parent`。日次 `bfree.iso` は **上書きしていない**（N2 の EX/TE は残す）。`desktop_qt/guest_link_compat.o` は上書きしていない。g1-desk の `desktop.elf` 注入は触っていない
 - [ ] **D2** `DesktopShell.qml` を **Wayland クライアント**として載せる（boot の `beginCreate` は死んでいる。やり直さない）
   - 着手: hello が `userland/compositor_stub/DesktopShell.qml` を運び、GuestMvpShell レイアウトを QImage bits で塗る（壁紙 `#7A8FA8` / 白カード / バー `#334155` / EX `#1D4ED8` / VW `#0F766E` / TE `#C2410C`）。シリアル `[qt] D2 qml-client` `[qt] D2 no-beginCreate` `[qt] D2 fill desk`。窓は 480×320 のまま。QQmlEngine / `libQt6Qml.a` はまだリンクしない
-  - まだ: 製品 `gui_server/integration_gui/DesktopShell.qml` の IR。QQuick / `beginCreate` / `processEvents` は使わない
+  - 観測: `D2 fill desk` + `exit_group` まで来た。`getenv=bfreewl` は古い APP mmap compat（D1 hedge）。`[wl] vfork parent` が無いときは `tools/guest_link_compat.cpp`（`QT_QPA_PLATFORM=wayland`）を入れて hello を作り直す
+  - まだ: 製品 `gui_server/integration_gui/DesktopShell.qml` の IR。QQuick / `beginCreate` / `processEvents` は使わない。親が起きて金窓が灰＋EX/VW/TE になるまで D2 未完
 - [ ] **D3** 起動できるカーネルで `desktop.elf` を Wayland exec（旧 S2）。from-source kernel を stub ISO に載せない
 
 仮 chrome / 偽物 Explorer は製品にしない。GTK にしない。

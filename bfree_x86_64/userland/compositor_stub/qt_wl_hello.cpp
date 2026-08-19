@@ -185,6 +185,12 @@ __attribute__((noinline)) static void hello_gui_session(void)
         qt_hello_serial("[qt] getenv QT_QPA_PLATFORM=");
         qt_hello_serial(p ? p : "(null)");
         qt_hello_serial("\n");
+        qt_hello_serial("[qt] D2 argv -platform ");
+        qt_hello_serial(g_arg_wl);
+        qt_hello_serial("\n");
+        if (!p || p[0] != 'w' || p[1] != 'a' || p[2] != 'y') {
+            qt_hello_serial("[qt] D2 QPA env not wayland (stale APP mmap compat)\n");
+        }
     }
     qt_hello_serial("[qt] D2 qml bytes=");
     d2_serial_u32((unsigned)(sizeof(g_d2_qml) - 1u));
