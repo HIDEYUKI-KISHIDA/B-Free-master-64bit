@@ -27,8 +27,8 @@ char *getenv(const char *);
 
 static char g_prog[] = "/p8test.elf";
 static char g_arg_platform[] = "-platform";
-static char g_arg_wayland[] = "wayland";
-static char *g_qt_argv[] = {g_prog, g_arg_platform, g_arg_wayland, nullptr};
+static char g_arg_wl[] = "bfreewl";
+static char *g_qt_argv[] = {g_prog, g_arg_platform, g_arg_wl, nullptr};
 static int g_qt_argc = 3;
 static QGuiApplication *g_app;
 

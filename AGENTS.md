@@ -21,12 +21,11 @@ D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
 W8 **done** (gold/navy/cyan + `[wl] vfork parent`).
-**D1 now:** stub Qt hello selects `wayland`, not bfree, as the
-painter (`-platform wayland`, APP mmap `getenv` = wayland). Do
-**not** overwrite daily `bfree.iso` (N2 EX/TE stays). Do not
-overwrite `desktop_qt/guest_link_compat.o`. Do not change g1-desk
-kernel `desktop.elf` env inject. ISO must print `P8TEST_D1=wayland`.
-Look for `[qt] D1 wayland` and `getenv QT_QPA_PLATFORM=wayland`,
+**D1 now:** stub hello does **not** select bfree QPA. Do not use
+`-platform wayland` (Qt extra threads; vfork parent never resumes).
+Use stub key `bfreewl`. Daily `bfree.iso` stays N2. Do not overwrite
+`desktop_qt/guest_link_compat.o`. ISO `P8TEST_D1=wayland`. Look for
+`[qt] D1 wayland`, `getenv QT_QPA_PLATFORM=bfreewl`, `[wl] vfork parent`,
 same gold window.
 Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /

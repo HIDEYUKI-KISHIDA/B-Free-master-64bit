@@ -248,6 +248,7 @@ QStringList QPlatformIntegrationFactory::keys(const QString &)
 {
     QStringList k;
     qt_wl_serial("[qt] QPA factory keys\n");
+    k.append(QString::fromLatin1("bfreewl"));
     k.append(QString::fromLatin1("bfree"));
     k.append(QString::fromLatin1("wayland"));
     k.append(QString::fromLatin1("offscreen"));

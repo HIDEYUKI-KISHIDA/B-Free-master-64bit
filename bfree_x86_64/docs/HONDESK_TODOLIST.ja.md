@@ -65,7 +65,7 @@ C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机�
 
 日次 N2 の机をこれに差し替える。W8 は金窓まで済。**今は D1**（stub クライアントが bfree を描画に選ばない）。日次 ISO は触らない。
 
-- [ ] **D1** step 4: **いまここ。** 日次 `bfree.iso` は **上書きしない**（N2 の EX/TE 机を残す）。g1-desk の `desktop.elf` は kernel が `QT_QPA_PLATFORM=bfree` を注入する（カーネルは触らない）。D1 は **stub の Qt クライアント**が bfree QPA を描画に選ばないこと。hello の APP mmap compat は `QT_QPA_PLATFORM=wayland`。argv は `-platform wayland`。ISO は `P8TEST_D1=wayland`。シリアル `[qt] D1 wayland` と `getenv QT_QPA_PLATFORM=wayland`。金窓は残す。`desktop_qt/guest_link_compat.o` は上書きしない
+- [ ] **D1** step 4: **いまここ。** 日次 `bfree.iso` は **上書きしない**。`-platform wayland` は Qt がスレッドを足して `exit_group` のあと親が起きない。hello は stub キー **`bfreewl`**（bfree QPA ではない）。ISO は `P8TEST_D1=wayland`。シリアル `[qt] D1 wayland` と `getenv QT_QPA_PLATFORM=bfreewl` と `[wl] vfork parent`。金窓は残す。`desktop_qt/guest_link_compat.o` は上書きしない
 - [ ] **D2** `DesktopShell.qml` を **Wayland クライアント**として載せる（boot の `beginCreate` は死んでいる。やり直さない）
 - [ ] **D3** 起動できるカーネルで `desktop.elf` を Wayland exec（旧 S2）。from-source kernel を stub ISO に載せない
 

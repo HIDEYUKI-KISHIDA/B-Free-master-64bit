@@ -2718,7 +2718,7 @@ extern "C" void bfree_guest_enable_main_bump_arena(void)
 
 /* musl setenv/getenv iterate environ; freestanding guest uses static KEY=value rows. */
 #ifdef BFREE_GUEST_APP_MMAP
-static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=wayland";
+static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=bfreewl";
 #else
 static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=bfree";
 #endif
