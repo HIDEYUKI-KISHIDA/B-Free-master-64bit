@@ -204,6 +204,25 @@ __attribute__((noinline)) static void hello_gui_session(void)
     /* Skip processEvents: Q_EMIT awake / sendPostedEvents hang; vfork waits for exit. */
 
     qt_hello_serial("[qt] QGuiApplication done\n");
+    /* Do not return: QWindow/QBackingStore dtors and Qt atexit hang.
+     * C p8test uses exit_group(231). Stack objects are leaked on purpose. */
+    qt_hello_serial("[qt] exit_group\n");
+    {
+        register long rax __asm__("rax") = 231;
+        register long rdi __asm__("rdi") = 0;
+        register long rsi __asm__("rsi") = 0;
+        register long rdx __asm__("rdx") = 0;
+        register long r10 __asm__("r10") = 0;
+        register long r8 __asm__("r8") = 0;
+        register long r9 __asm__("r9") = 0;
+        __asm__ volatile("syscall"
+                         : "+r"(rax)
+                         : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9)
+                         : "rcx", "r11", "memory");
+        (void)rax;
+    }
+    for (;;) {
+    }
 }
 
 int main(int argc, char **argv)

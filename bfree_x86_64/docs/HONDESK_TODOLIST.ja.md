@@ -49,9 +49,9 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
   - 済: `ctor mmap ok n=0x2000000`（32MiB）と fallback heap
   - 済: `plugin register done` と `operator new ok`
   - 済: `[qt] QPA factory keys` → `[qt] QPA factory create` → `[qt] QGuiApplication ctor ok`
-  - 済: `window start` → `show` → `beginPaint` → `painter`
-  - 今: `painter` の直後に PF CR2=0（`QPainter::fillRect`。raster engine / font DB が null）
-  - 次: QPainter を使わない。`QImage` の bits を直書き。ISO は `P8TEST_PAINT=bits`。シリアル `image` → `bits` → `fill bits` → `paint` → `flush` → `QGuiApplication done` → `[wl] vfork parent`
+  - 済: `window start` → `show` → `beginPaint` → `QImage ok` → `fill bits` → `flush` → `QGuiApplication done`
+  - 今: `done` のあとで止まる（`QWindow` / `QBackingStore` デストラクタ、または Qt atexit）。`[wl] vfork parent` が無い
+  - 次: `done` のあと `exit_group`(231)。デストラクタは走らせない。ISO は `P8TEST_EXIT=exit_group`。成功は `[qt] exit_group` → `[wl] vfork parent`
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:

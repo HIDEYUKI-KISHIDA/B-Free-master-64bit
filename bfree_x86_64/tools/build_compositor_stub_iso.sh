@@ -105,5 +105,10 @@ if grep -aq 'fill bits' "$QTCLI" 2>/dev/null; then
 else
   echo "P8TEST_PAINT=MISSING (stale qt_wl_hello.cpp — still QPainter fillRect)"
 fi
+if grep -aq 'exit_group' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_EXIT=exit_group"
+else
+  echo "P8TEST_EXIT=MISSING (stale qt_wl_hello.cpp — returns through Qt dtors)"
+fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"
