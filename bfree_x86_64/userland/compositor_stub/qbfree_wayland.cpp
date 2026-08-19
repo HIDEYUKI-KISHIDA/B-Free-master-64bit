@@ -253,7 +253,10 @@ static QObject *qt_plugin_instance_QBfreeWlIntegrationPlugin()
     return inst;
 }
 
-/* Qt 6.8 static-plugin CBOR (IID=2, className=3, MetaData=4). */
+/* Qt 6.8 static plugin: 4-byte Header then CBOR (IID=2, className=3, MetaData=4).
+ * QFactoryLoader slices sizeof(Header) then parses CBOR. Do not use
+ * QPluginMetaDataV2 with an array NTTP — gcc may decay it to a pointer and
+ * store only 8 bytes of payload, so Keys never match and create() is skipped. */
 static constexpr unsigned char qt_pluginMetaDataCbor[] = {
     0xa3, 0x02, 0x78, 0x3e, 0x6f, 0x72, 0x67, 0x2e, 0x71, 0x74, 0x2d, 0x70,
     0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x2e, 0x51, 0x74, 0x2e, 0x51, 0x50,
@@ -270,8 +273,21 @@ static constexpr unsigned char qt_pluginMetaDataCbor[] = {
 
 static QPluginMetaData qt_plugin_query_metadata_QBfreeWlIntegrationPlugin()
 {
-    static constexpr QPluginMetaDataV2<qt_pluginMetaDataCbor> md{};
-    return md;
+    static unsigned char raw[sizeof(QPluginMetaData::Header) + sizeof(qt_pluginMetaDataCbor)];
+    static int once;
+    if (!once) {
+        QPluginMetaData::Header hdr{};
+        unsigned i;
+        const unsigned char *h = reinterpret_cast<const unsigned char *>(&hdr);
+        for (i = 0; i < sizeof(hdr); i++) {
+            raw[i] = h[i];
+        }
+        for (i = 0; i < sizeof(qt_pluginMetaDataCbor); i++) {
+            raw[sizeof(hdr) + i] = qt_pluginMetaDataCbor[i];
+        }
+        once = 1;
+    }
+    return {raw, sizeof(raw)};
 }
 
 const QStaticPlugin qt_static_plugin_QBfreeWlIntegrationPlugin()

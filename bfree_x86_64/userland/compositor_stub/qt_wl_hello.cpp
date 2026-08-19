@@ -7,7 +7,10 @@
 #include <QColor>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QPainter>
+#include <QPluginLoader>
 #include <QStaticPlugin>
 #include <QString>
 #include <QWindow>
@@ -17,12 +20,12 @@ extern const QT_PREPEND_NAMESPACE(QStaticPlugin) qt_static_plugin_QBfreeWlIntegr
 
 extern "C" {
 void bfree_guest_refresh_libc_auxv(void);
-void bfree_guest_run_on_ctor_stack_plugins(void (*fn)(void));
 void bfree_guest_preflight_musl_heap(void);
 void bfree_guest_preflight_ctor_mmap(void);
 void bfree_guest_run_on_ctor_stack_hybrid(void (*fn)(void));
 int bfree_guest_ensure_fallback_heap(void);
 void bfree_guest_begin_hybrid_alloc(void);
+char *getenv(const char *);
 }
 
 static char g_prog[] = "/p8test.elf";
@@ -51,12 +54,39 @@ static void qt_hello_serial(const char *s)
                      : "rcx", "r11", "memory");
 }
 
-/* qRegister on the exec stack PFs (first Qt heap). desktop.elf uses BSS+bump. */
+/* qRegister on the exec stack PFs. BSS bump is reused by hybrid, so register
+ * here on fallback/hybrid heap so QFactoryLoader's QList stays valid. */
 __attribute__((noinline)) static void hello_register_plugin(void)
 {
-    qt_hello_serial("[qt] plugin register on ctor stack\n");
+    int n;
+    int k;
+
+    qt_hello_serial("[qt] plugin register on hybrid heap\n");
     qRegisterStaticPluginFunction(qt_static_plugin_QBfreeWlIntegrationPlugin());
-    qt_hello_serial("[qt] plugin registered\n");
+    n = QPluginLoader::staticPlugins().size();
+    qt_hello_serial("[qt] plugin registered n=");
+    {
+        char b[4];
+        b[0] = (char)('0' + ((n / 10) % 10));
+        b[1] = (char)('0' + (n % 10));
+        b[2] = '\n';
+        b[3] = 0;
+        qt_hello_serial(b);
+    }
+    if (n > 0) {
+        const QJsonObject md = QPluginLoader::staticPlugins().at(0).metaData();
+        const QJsonArray keys = md.value(QStringLiteral("MetaData")).toObject().value(QStringLiteral("Keys")).toArray();
+        k = keys.size();
+        qt_hello_serial("[qt] plugin keys=");
+        {
+            char b[4];
+            b[0] = (char)('0' + ((k / 10) % 10));
+            b[1] = (char)('0' + (k % 10));
+            b[2] = '\n';
+            b[3] = 0;
+            qt_hello_serial(b);
+        }
+    }
 }
 
 static void hello_qt_msg(QtMsgType type, const QMessageLogContext &, const QString &msg)
@@ -102,6 +132,13 @@ __attribute__((noinline)) static void hello_gui_session(void)
     bfree_guest_begin_hybrid_alloc();
     qt_hello_serial("[qt] hybrid alloc armed\n");
     qInstallMessageHandler(hello_qt_msg);
+    {
+        const char *p = getenv("QT_QPA_PLATFORM");
+        qt_hello_serial("[qt] getenv QT_QPA_PLATFORM=");
+        qt_hello_serial(p ? p : "(null)");
+        qt_hello_serial("\n");
+    }
+    hello_register_plugin();
     qt_hello_serial("[qt] before operator new\n");
     mem = ::operator new(sizeof(QGuiApplication));
     if (!mem) {
@@ -144,8 +181,6 @@ int main(int argc, char **argv)
 
     qt_hello_serial("[qt] QGuiApplication start\n");
     bfree_guest_refresh_libc_auxv();
-    bfree_guest_run_on_ctor_stack_plugins(hello_register_plugin);
-    qt_hello_serial("[qt] plugin ctor leave\n");
     bfree_guest_preflight_musl_heap();
     bfree_guest_preflight_ctor_mmap();
     qt_hello_serial("[qt] enter hybrid QGui session\n");

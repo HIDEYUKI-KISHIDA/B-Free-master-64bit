@@ -46,9 +46,9 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
 - [x] **W6** step 1: xdg-shell で窓（`[compositor] xdg-shell window`）
 - [x] **W7** step 2: `desktop.elf` ではない C クライアント `p8test.elf`（緑 `Qt` / `wayland` / バラ `shm`）
 - [ ] **W8** step 3: **いまここ。** 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
-  - 済: `operator new ok`
-  - 今: 古い ISO の `ctor mmap fail ret=0` は **msync(26) の 0**。256MiB MAP_FIXED は QEMU `-m 1024` で ENOMEM
-  - 次: APP は syscall **9 だけ**（26 は呼ばない）。ctor / fallback は **32/16MiB**。`mmap9=` と `ctor mmap ok n=`
+  - 済: `ctor mmap ok n=0x2000000`（32MiB）と fallback heap
+  - 今: `Could not find the Qt platform plugin` → `abort`。`plugin instance` が出ていない（Keys 未一致 or 登録 QList が bump 上書き）
+  - 次: hybrid ヒープで `qRegister`。メタデータは Header+CBOR。`plugin registered n=` と `QPA wayland create`
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:
