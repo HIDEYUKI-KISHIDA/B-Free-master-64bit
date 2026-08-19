@@ -48,8 +48,8 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
 - [ ] **W8** step 3: **いまここ。** 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
   - 済: `ctor mmap ok n=0x2000000`（32MiB）と fallback heap
   - 済: `plugin register done` と `operator new ok`
-  - 今: QGui ctor が `Could not find the Qt platform plugin`（`plugin instance` なし = Keys/IID 未一致）
-  - 次: Header を固定、create は全キー、APP は `QT_DEBUG_PLUGINS=1`。`plugin hdr=` と `QPA wayland create`
+  - 今: `plugin hdr=` が無い = **古い qbfree_wayland.o**。Keys 経由の QFactoryLoader は使わない
+  - 次: `QPlatformIntegrationFactory::create` を hello 側で定義。ISO に `P8TEST_QPA=factory-override`。シリアル `QPA factory keys` → `QPA factory create` → `ctor ok`
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:

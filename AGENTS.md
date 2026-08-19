@@ -20,11 +20,11 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8 blocked: `plugin register done` and `operator new ok` are
-green. QGui ctor still cannot see the stub QPA (`plugin instance`
-missing). Look for `plugin hdr=` (expect `01` then Qt major/minor
-then `a30278`) and Qt debug `Got keys`. create() accepts any
-platform name once instance() runs. Do not overwrite
+W8 blocked: last serial had no `plugin hdr=` — stale
+`qbfree_wayland.o`. Do not wait on QFactoryLoader Keys. Hello
+defines `QPlatformIntegrationFactory::create`. ISO must print
+`P8TEST_QPA=factory-override`. Look for `QPA factory keys` then
+`QPA factory create` then `ctor ok`. Do not overwrite
 `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not

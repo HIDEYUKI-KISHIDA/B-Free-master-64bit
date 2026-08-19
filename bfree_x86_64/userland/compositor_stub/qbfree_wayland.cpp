@@ -231,6 +231,32 @@ private:
     QBfreeWlScreen *m_screen;
 };
 
+class QPlatformIntegrationFactory
+{
+public:
+    static QStringList keys(const QString &platformPluginPath = QString());
+    static QPlatformIntegration *create(const QString &name, const QStringList &args, int &argc,
+                                        char **argv, const QString &platformPluginPath = QString());
+};
+
+QStringList QPlatformIntegrationFactory::keys(const QString &)
+{
+    QStringList k;
+    qt_wl_serial("[qt] QPA factory keys\n");
+    k.append(QString::fromLatin1("bfree"));
+    k.append(QString::fromLatin1("wayland"));
+    k.append(QString::fromLatin1("offscreen"));
+    return k;
+}
+
+QPlatformIntegration *QPlatformIntegrationFactory::create(const QString &name, const QStringList &,
+                                                          int &, char **, const QString &)
+{
+    (void)name;
+    qt_wl_serial("[qt] QPA factory create\n");
+    return new QBfreeWlIntegration;
+}
+
 class QBfreeWlIntegrationPlugin : public QPlatformIntegrationPlugin
 {
 public:
