@@ -20,9 +20,12 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8 blocked: `ctor mmap fail ret=0` was msync(26) success hiding
-Linux mmap(9). Do not treat ret=0 as MAP_FIXED. Retry 64/32MiB if
-256MiB ENOMEM. Hello still rebuilds `guest_link_compat_hello.o` only.
+W8 blocked: serial `ctor mmap fail ret=0` is the **old ISO**
+(msync 26 treated as mmap). APP hello compiles
+`guest_link_compat_hello.o` with `BFREE_GUEST_APP_MMAP`: Linux
+mmap **9 only** (never 26), ctor/fallback **32/16MiB**. Look for
+`compiling guest_link_compat for APP mmap` then `mmap9=` /
+`ctor mmap ok n=`. Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
 compositor `fork`(57). Do not map a from-source kernel onto the stub

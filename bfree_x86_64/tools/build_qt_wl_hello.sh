@@ -112,10 +112,10 @@ done
 # Do not overwrite desktop_qt/guest_link_compat.o (desktop.elf).
 COMPAT_HELLO="$STUB/guest_link_compat_hello.o"
 if [[ -n "$MUSL_INC" && -f "$ROOT/tools/guest_link_compat.cpp" ]]; then
-  echo "[qt_wl_hello] compiling guest_link_compat for APP mmap (syscall 9 then 26)"
+  echo "[qt_wl_hello] compiling guest_link_compat for APP mmap (syscall 9 only, 32MiB ctor)"
   if "$CXX" -m64 -mcmodel=large -mno-red-zone -fno-stack-protector \
       -fno-pic -fno-exceptions -fno-rtti -O2 -std=gnu++17 \
-      -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
+      -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ -DBFREE_GUEST_APP_MMAP=1 \
       -c -o "$COMPAT_HELLO" "$ROOT/tools/guest_link_compat.cpp"; then
     export BFREE_GUEST_COMPAT="$COMPAT_HELLO"
   else

@@ -1383,11 +1383,19 @@ static void *bfree_guest_mmap_ctor_stack_at(size_t stack_bytes, uintptr_t *top_o
     static uintptr_t g_mmap_va;
     static size_t g_mmap_bytes;
     static size_t g_mmap_actual;
+#ifdef BFREE_GUEST_APP_MMAP
+    /* QEMU -m 1024 cannot spare 256MiB for p8test. Hello QGui only needs 32MiB. */
+    static const size_t k_try[] = {
+        32U * 1024U * 1024U,
+        16U * 1024U * 1024U,
+    };
+#else
     static const size_t k_try[] = {
         256U * 1024U * 1024U,
         64U * 1024U * 1024U,
         32U * 1024U * 1024U,
     };
+#endif
     long ret;
     unsigned i;
     size_t n;
@@ -1744,8 +1752,10 @@ extern "C" void *__mmap(void *addr, size_t length, int prot, int flags, int fd, 
             }
         }
         ret = syscall(9L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
+#ifndef BFREE_GUEST_APP_MMAP
         if (ret < 0)
             ret = syscall(26L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
+#endif
         if (ret < 0 && bfree_guest_ctor_bump_hybrid
             && (bfree_guest_qv4_mmap_active || bfree_guest_on_mmap_ctor_stack)) {
             void *qv4 = bfree_guest_mmap_qv4_arena(length);
@@ -1755,16 +1765,29 @@ extern "C" void *__mmap(void *addr, size_t length, int prot, int flags, int fd, 
             }
         }
         bfree_guest_trace_mmap((unsigned long)length, ret);
+#ifdef BFREE_GUEST_APP_MMAP
+        if (ret > 0)
+            return (void *)(uintptr_t)ret;
+#else
         if (ret >= 0)
             return (void *)(uintptr_t)ret;
+#endif
         return (void *)-1L;
     }
+#ifdef BFREE_GUEST_APP_MMAP
+    ret = syscall(9L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
+#else
     ret = syscall(26L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
     if (ret < 0)
         ret = syscall(9L, (long)(uintptr_t)addr, (long)length, (long)prot, lflags, (long)fd, (long)offset);
+#endif
     bfree_guest_trace_mmap((unsigned long)length, ret);
     if (ret < 0)
         return (void *)-1L;
+#ifdef BFREE_GUEST_APP_MMAP
+    if (ret == 0)
+        return (void *)-1L;
+#endif
     if (anon && !(lflags & BFREE_MAP_FIXED)) {
         uint64_t r = (uint64_t)(uintptr_t)ret;
         /* Reject identity-PTE band only; kernel heap at 0x19xxxxxx is valid. */
@@ -1781,29 +1804,42 @@ extern "C" void *mmap(void *addr, size_t length, int prot, int flags, int fd, of
 
 /* APP role uses Linux numbers: 9=mmap, 26=msync. INIT/native still has 26=mmap.
  * p8test is APP. Do not treat msync's 0 as MAP_FIXED success (that printed
- * ctor mmap fail ret=0). */
+ * ctor mmap fail ret=0). Hello compiles with -DBFREE_GUEST_APP_MMAP and never
+ * calls 26. */
 static long bfree_guest_mmap_fixed_try(uintptr_t va, size_t bytes)
 {
     long flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
     long ret9;
-    long ret26;
 
     ret9 = syscall(9L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
     if (ret9 >= 0 && (uintptr_t)ret9 == va)
         return ret9;
-    ret26 = syscall(26L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
-    if (ret26 >= 0 && (uintptr_t)ret26 == va)
-        return ret26;
+#ifndef BFREE_GUEST_APP_MMAP
+    {
+        long ret26 = syscall(26L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+        if (ret26 >= 0 && (uintptr_t)ret26 == va)
+            return ret26;
+        bfree_guest_serial_lit("[desktop_qt] mmap9=");
+        bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret9);
+        bfree_guest_serial_lit(" mmap26=");
+        bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret26);
+        bfree_guest_serial_lit(" want=");
+        bfree_guest_serial_hex_u64((uint64_t)va);
+        bfree_guest_serial_lit(" n=");
+        bfree_guest_serial_hex_u64((uint64_t)bytes);
+        bfree_guest_serial_lit("\n");
+        return (ret9 < 0) ? ret9 : -1L;
+    }
+#else
     bfree_guest_serial_lit("[desktop_qt] mmap9=");
     bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret9);
-    bfree_guest_serial_lit(" mmap26=");
-    bfree_guest_serial_hex_u64((uint64_t)(unsigned long)ret26);
     bfree_guest_serial_lit(" want=");
     bfree_guest_serial_hex_u64((uint64_t)va);
     bfree_guest_serial_lit(" n=");
     bfree_guest_serial_hex_u64((uint64_t)bytes);
     bfree_guest_serial_lit("\n");
     return (ret9 < 0) ? ret9 : -1L;
+#endif
 }
 
 static int bfree_guest_mmap_fixed_anon(uintptr_t va, size_t bytes)
@@ -1823,7 +1859,6 @@ static void *bfree_guest_mmap_qv4_arena(size_t length)
     const size_t page = 4096U;
     size_t need;
     uintptr_t va;
-    long flags;
     long ret;
 
     if (length == 0)
@@ -1834,10 +1869,7 @@ static void *bfree_guest_mmap_qv4_arena(size_t length)
     va = bfree_guest_qv4_mmap_next;
     if (va + need > bfree_guest_qv4_mmap_end)
         return (void *)-1L;
-    flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
-    ret = syscall(9L, (long)va, (long)need, 3L, flags, -1L, 0L);
-    if (ret < 0)
-        ret = syscall(26L, (long)va, (long)need, 3L, flags, -1L, 0L);
+    ret = bfree_guest_mmap_fixed_try(va, need);
     if (ret < 0 || (uintptr_t)ret != va)
         return (void *)-1L;
     bfree_guest_qv4_mmap_next = va + need;
@@ -1849,7 +1881,6 @@ static void *bfree_guest_qv4_large_mmap(size_t length)
     const size_t page = 4096U;
     size_t need;
     uintptr_t va;
-    long flags;
     long ret;
 
     if (length < BFREE_GUEST_QV4_LARGE_THRESHOLD || bfree_guest_qv4_large_used)
@@ -1858,10 +1889,7 @@ static void *bfree_guest_qv4_large_mmap(size_t length)
     if (need > BFREE_GUEST_QV4_LARGE_BYTES)
         return 0;
     va = (uintptr_t)BFREE_GUEST_QV4_LARGE_VA;
-    flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
-    ret = syscall(9L, (long)va, (long)need, 3L, flags, -1L, 0L);
-    if (ret < 0)
-        ret = syscall(26L, (long)va, (long)need, 3L, flags, -1L, 0L);
+    ret = bfree_guest_mmap_fixed_try(va, need);
     if (ret < 0 || (uintptr_t)ret != va) {
         bfree_guest_serial_lit("[desktop_qt] qv4 large mmap fail ret=");
         bfree_guest_serial_hex_u64((uint64_t)(long)ret);
@@ -2126,21 +2154,37 @@ static void bfree_guest_fill_auxv_tables(void);
 
 extern "C" int bfree_guest_ensure_fallback_heap(void)
 {
-    if (bfree_guest_fallback_heap_base
-        && bfree_guest_fallback_heap_cap >= BFREE_GUEST_FALLBACK_HEAP_BYTES)
+#ifdef BFREE_GUEST_APP_MMAP
+    static const size_t k_try[] = {
+        32U * 1024U * 1024U,
+        16U * 1024U * 1024U,
+    };
+#else
+    static const size_t k_try[] = {
+        BFREE_GUEST_FALLBACK_HEAP_BYTES,
+    };
+#endif
+    unsigned i;
+    size_t n;
+
+    if (bfree_guest_fallback_heap_base && bfree_guest_fallback_heap_cap)
         return 0;
-    if (bfree_guest_mmap_fixed_anon((uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA,
-                                    BFREE_GUEST_FALLBACK_HEAP_BYTES) != 0) {
-        bfree_guest_serial_lit("[desktop_qt] fallback heap mmap fail\n");
-        return -1;
+    for (i = 0; i < (unsigned)(sizeof(k_try) / sizeof(k_try[0])); i++) {
+        n = k_try[i];
+        if (bfree_guest_mmap_fixed_anon((uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA, n) != 0)
+            continue;
+        bfree_guest_fallback_heap_base = (unsigned char *)(uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA;
+        bfree_guest_fallback_heap_cap = n;
+        bfree_guest_fallback_heap_off = 0;
+        bfree_guest_serial_lit("[desktop_qt] fallback heap ok va=");
+        bfree_guest_serial_hex_u64((uint64_t)(uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA);
+        bfree_guest_serial_lit(" n=");
+        bfree_guest_serial_hex_u64((uint64_t)n);
+        bfree_guest_serial_lit("\n");
+        return 0;
     }
-    bfree_guest_fallback_heap_base = (unsigned char *)(uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA;
-    bfree_guest_fallback_heap_cap = BFREE_GUEST_FALLBACK_HEAP_BYTES;
-    bfree_guest_fallback_heap_off = 0;
-    bfree_guest_serial_lit("[desktop_qt] fallback heap ok va=");
-    bfree_guest_serial_hex_u64((uint64_t)(uintptr_t)BFREE_GUEST_FALLBACK_HEAP_VA);
-    bfree_guest_serial_lit("\n");
-    return 0;
+    bfree_guest_serial_lit("[desktop_qt] fallback heap mmap fail\n");
+    return -1;
 }
 
 /* Map ctor stack + fallback before QGuiApplication (defer bump mmap to QML hybrid). */

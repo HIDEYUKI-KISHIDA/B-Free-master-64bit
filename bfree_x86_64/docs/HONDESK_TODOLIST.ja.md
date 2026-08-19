@@ -47,8 +47,8 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
 - [x] **W7** step 2: `desktop.elf` ではない C クライアント `p8test.elf`（緑 `Qt` / `wayland` / バラ `shm`）
 - [ ] **W8** step 3: **いまここ。** 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
   - 済: `operator new ok`
-  - 今: `ctor mmap fail ret=0` は **msync(26) の 0**。syscall 9 の失敗を隠していた
-  - 次: mmap9 の真の戻り値を出す。256MB が ENOMEM なら 64/32MB
+  - 今: 古い ISO の `ctor mmap fail ret=0` は **msync(26) の 0**。256MiB MAP_FIXED は QEMU `-m 1024` で ENOMEM
+  - 次: APP は syscall **9 だけ**（26 は呼ばない）。ctor / fallback は **32/16MiB**。`mmap9=` と `ctor mmap ok n=`
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:
