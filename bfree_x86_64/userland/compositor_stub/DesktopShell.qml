@@ -4,6 +4,6 @@ Item {
      * Do not QQmlEngine / beginCreate this file on the guest (CR2=0xC).
      * qt_wl_hello paints this layout into QImage bits (GuestMvpShell:
      * wallpaper #7A8FA8, card #F8FAFC, bar #334155, EX/VW/TE tiles). */
-    width: 480
-    height: 320
+    width: 1024
+    height: 768
 }

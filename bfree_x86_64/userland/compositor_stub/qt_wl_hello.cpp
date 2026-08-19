@@ -1,5 +1,6 @@
 /* Tiny guest QGuiApplication client. Not desktop.elf, not libqbfree.a.
  * D2: carries compositor_stub/DesktopShell.qml as a Wayland client scene.
+ * D2c: 1024×768 bits covering compositor output (not QQmlEngine).
  * D2b (BFREE_D2B_QML): QQmlEngine only. Do not beginCreate (CR2=0xC).
  * Paint GuestMvpShell layout in QImage bits, then exit_group so g1-desk
  * vfork parent can blit.
@@ -51,8 +52,8 @@ static const char g_d2_qml[] =
     "     * Do not QQmlEngine / beginCreate this file on the guest (CR2=0xC).\n"
     "     * qt_wl_hello paints this layout into QImage bits (GuestMvpShell:\n"
     "     * wallpaper #7A8FA8, card #F8FAFC, bar #334155, EX/VW/TE tiles). */\n"
-    "    width: 480\n"
-    "    height: 320\n"
+    "    width: 1024\n"
+    "    height: 768\n"
     "}\n";
 
 static void qt_hello_serial(const char *s)
@@ -243,18 +244,18 @@ __attribute__((noinline)) static void hello_gui_session(void)
     qt_hello_serial("[qt] window start\n");
     QWindow win;
     qt_hello_serial("[qt] window\n");
-    win.setGeometry(0, 0, 480, 320);
+    win.setGeometry(0, 0, 1024, 768);
     win.setSurfaceType(QSurface::RasterSurface);
     QBackingStore store(&win);
     qt_hello_serial("[qt] store\n");
     win.create();
     qt_hello_serial("[qt] create\n");
-    store.resize(QSize(480, 320));
+    store.resize(QSize(1024, 768));
     qt_hello_serial("[qt] resize\n");
     win.show();
     qt_hello_serial("[qt] show\n");
 
-    const QRect rect(0, 0, 480, 320);
+    const QRect rect(0, 0, 1024, 768);
     store.beginPaint(rect);
     qt_hello_serial("[qt] beginPaint\n");
     /* Do not QPainter::fillRect — dummy font DB / raster engine is null
@@ -278,13 +279,26 @@ __attribute__((noinline)) static void hello_gui_session(void)
                 bpl = img->bytesPerLine() / 4;
                 w = img->width();
                 h = img->height();
-                /* GuestMvpShell layout from DesktopShell.qml. Not W8 gold/navy. */
+                /* GuestMvpShell layout from DesktopShell.qml. Not W8 gold/navy.
+                 * Scale from the 480×320 first hop so D2c 1024×768 still
+                 * shows wallpaper / card / EX VW TE / bar. */
                 d2_fill(bits, bpl, w, h, 0, 0, w, h, 0xff7a8fa8u);
-                d2_fill(bits, bpl, w, h, 40, 28, 400, 200, 0xfff8fafcu);
-                d2_fill(bits, bpl, w, h, 56, 48, 48, 48, 0xff1d4ed8u);
-                d2_fill(bits, bpl, w, h, 120, 48, 48, 48, 0xff0f766eu);
-                d2_fill(bits, bpl, w, h, 184, 48, 48, 48, 0xffc2410cu);
-                d2_fill(bits, bpl, w, h, 0, h - 36, w, 36, 0xff334155u);
+                d2_fill(bits, bpl, w, h, w * 40 / 480, h * 28 / 320, w * 400 / 480,
+                        h * 200 / 320, 0xfff8fafcu);
+                d2_fill(bits, bpl, w, h, w * 56 / 480, h * 48 / 320, w * 48 / 480,
+                        w * 48 / 480, 0xff1d4ed8u);
+                d2_fill(bits, bpl, w, h, w * 120 / 480, h * 48 / 320, w * 48 / 480,
+                        w * 48 / 480, 0xff0f766eu);
+                d2_fill(bits, bpl, w, h, w * 184 / 480, h * 48 / 320, w * 48 / 480,
+                        w * 48 / 480, 0xffc2410cu);
+                d2_fill(bits, bpl, w, h, 0, h - (h * 36 / 320), w, h * 36 / 320,
+                        0xff334155u);
+                qt_hello_serial("[qt] D2c fullscreen\n");
+                qt_hello_serial("[qt] D2c ");
+                d2_serial_u32((unsigned)w);
+                qt_hello_serial("x");
+                d2_serial_u32((unsigned)h);
+                qt_hello_serial("\n");
                 qt_hello_serial("[qt] D2 fill desk\n");
                 qt_hello_serial("[qt] fill bits\n");
             }
@@ -355,6 +369,7 @@ int main(int argc, char **argv)
     qt_hello_serial("[qt] hello hybrid-qpa\n");
     qt_hello_serial("[qt] D1 wayland\n");
     qt_hello_serial("[qt] D2 qml-client\n");
+    qt_hello_serial("[qt] D2c fullscreen\n");
     qt_hello_serial("[qt] D2 no-beginCreate\n");
 #ifdef BFREE_D2B_QML
     qt_hello_serial("[qt] D2b qml-engine\n");
