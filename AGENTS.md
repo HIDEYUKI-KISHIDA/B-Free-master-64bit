@@ -12,31 +12,23 @@ trees at the repo root (`kernel_arm/`, `userland_arm/`) are source-only (no
 Makefile) and `smartphone-tron-os/` is spec/docs only.
 
 ### 本デスク / Native OS progress
-Canonical map: `bfree_x86_64/docs/HONDESK_PHASES.ja.md`. Keep this
-section in sync with that file. Product = guest compositor owns pixels;
-`DesktopShell.qml` is a **Qt Wayland client**; GPU + Qt. Not GTK.
+Canonical checklist: `bfree_x86_64/docs/HONDESK_TODOLIST.ja.md`.
+Four tracks (do not mix): **Native OS** = whole guest OS (boots; daily
+bfree-QPA desk is N2, not Wayland, not GPU). **Wayland** = compositor
+socket + client windows (W7 C done, **W8 Qt hello is current**).
+**本デスク** = product desk (`DesktopShell.qml` as Qt Wayland client;
+D* not started). **GPU** = accel (G* not started). Current work is
+**W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-Agreed 本デスク order (do not skip):
-- **Step 1** stub xdg-shell window — **done**
-- **Step 2** small client ≠ `desktop.elf` — **done (C `p8test.elf`)**;
-  green `Qt` / `wayland` / rose `shm`; `[wl] vfork parent`
-- **Step 3** Qt Wayland, no bfree QPA as the painter — **now / blocked**.
-  53MB `QGuiApplication` prints `start` then hangs (exec-stack
-  `qRegister`). Gray wallpaper. Next: ctor-stack plugin + hybrid QGui
-  then **return 0**. Proof: gold `0xD4A017` / navy `0x1E3A8A` / cyan
-  `0x06B6D4`. Restore C:
-  `BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh`
-- **Step 4** drop bfree QPA on daily; `DesktopShell.qml` as Wayland
-  client — **not started**
-Stub ladder that reached step 1–2: **S0** FB fill → in-process wire →
-`vfork`(58) → AF_UNIX → cursor → 仮 chrome → **S1** compositor owns
-the socket. **S2** (`desktop.elf` Wayland exec on a bootable kernel)
-must not map a from-source kernel onto the stub ISO.
-Parallel tracks (do not mix in): daily `bfree.iso` bfree-QPA desk is
-done (not Wayland, not GPU). GPU not started. Gate 1 /
-`beginCreate` on bfree QPA is dead (`CR2=0xC`, `threads=no`); do not
-retry. Do not `execve("desktop.elf")` on g1-desk. Do not compositor
-`fork`(57).
+W8 blocked: 53MB `QGuiApplication` prints `start` then hangs
+(exec-stack `qRegister`). Gray wallpaper. Next: ctor-stack plugin +
+hybrid QGui then **return 0**. Proof: gold `0xD4A017` / navy
+`0x1E3A8A` / cyan `0x06B6D4`. Restore C (W7):
+`BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh`.
+Do not start D* or G* before W8 paints. Do not retry Gate 1 /
+`beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
+compositor `fork`(57). Do not map a from-source kernel onto the stub
+ISO (S2).
 
 ### Toolchain (installed by the startup update script)
 - A prebuilt **`x86_64-elf` cross GCC 13.2.0** is installed to
@@ -402,7 +394,8 @@ and paint captured stdout. That is a
 real busybox process, not `desktop.elf`. From-source kernel on the
 stub ISO still kills QEMU. 本デスク still needs a **bootable**
 kernel that execs `desktop.elf` as a Wayland client (not bfree QPA).
-Phases: `bfree_x86_64/docs/HONDESK_PHASES.ja.md` (step 1–4, S0–S2). QEMU hides the
+Phases / TODOLIST: `bfree_x86_64/docs/HONDESK_TODOLIST.ja.md` (W8 current).
+S0–S2 history: `bfree_x86_64/docs/HONDESK_PHASES.ja.md`. QEMU hides the
 host cursor when grabbed (`Ctrl+Alt+G`); the guest must paint
 its own. Still not `desktop.elf` / not product QML.
 That is S1 toward 本デスク (compositor owns the socket).

@@ -1,22 +1,15 @@
-# 本デスク phases
+# 本デスク phases（記録）
 
-正本の作業順です。エージェントは `AGENTS.md` の「本デスク / Native OS progress」とこのファイルを同じ意味で使います。
+チェックボックスの正本は `HONDESK_TODOLIST.ja.md`。
+Native OS / Wayland / 本デスク / GPU は **4 トラック**。混ぜない。
 
-**ゴール（Native OS デスク）:** ゲスト compositor が画素を持つ。`DesktopShell.qml` は **Qt Wayland クライアント**。GPU + Qt。GTK ではない。compositor が描いた偽物 Explorer ではない。
-
-スクリプトは `bfree_x86_64/` から実行する（`$HOME` からではない）。
-
-日次 `bfree.iso` と `kernel.elf.g1-desk` は上書きしない。
-
----
-
-## いまどこ
-
-**本デスク step 3 の途中。** C の Wayland 窓はできている。本物の `QGuiApplication` は `start` のあと hang（灰色 wallpaper）。GPU と製品 QML はまだ。
+このファイルは stub はしご（S0–S2）の記録だけ残す。
 
 ---
 
 ## 本デスク 4 steps（合意した順番）
+
+TODOLIST では W6 / W7 / W8 / D1+D2。飛ばさない。
 
 これが「本デスクに行く」作業順。飛ばさない。
 
