@@ -9,7 +9,7 @@
 | **本デスク** | 製品の机。compositor が画素を持ち、`DesktopShell.qml` が Qt Wayland クライアント | D1 済（stub が bfree を選ばない）。D2 はまだ |
 | **GPU** | 絵を GPU で出す | まだ。今は全部ソフトウェア FB |
 
-**今やるのは D1 完了。** 次は D2（合意してから）。日次 `bfree.iso` は上書きしない。GPU も触らない。
+**D1 済。** 次は D2（合意してから）。日次 `bfree.iso` は上書きしない。GPU も触らない。
 
 正本はこのファイル。`HONDESK_PHASES.ja.md` は前段 S0–S2 の記録。`AGENTS.md` と同期する。
 
