@@ -46,6 +46,9 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
 - [x] **W6** step 1: xdg-shell で窓（`[compositor] xdg-shell window`）
 - [x] **W7** step 2: `desktop.elf` ではない C クライアント `p8test.elf`（緑 `Qt` / `wayland` / バラ `shm`）
 - [ ] **W8** step 3: **いまここ。** 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
+  - 済: ctor スタックで `plugin registered`、`musl malloc preflight OK`
+  - 今: `[qt] before QGuiApplication ctor` のあと `Page Fault CR2=0`（`SURVIVE`）。`ctor ok` まで出ていない
+  - 次: desktop.elf と同じ fallback+hybrid のあと `operator new` を確認してから ctor
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:
@@ -54,14 +57,7 @@ W8 の完了条件:
 - 画面: 金 `0xD4A017` / 紺 `0x1E3A8A` / シアン `0x06B6D4`（C の緑ではない）
 - `qRegister` は ctor スタック。`mmap noreturn` 禁止
 
-W8 が灰色のとき C に戻す:
-
-```
-cd /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64
-export PATH="$HOME/xshim:$HOME/x86_64-elf-toolchain/bin:$PATH"
-BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh
-qemu-system-x86_64 -cdrom bfree-compositor-stub.iso -m 1024 -vga std -serial file:/tmp/bfree_comp_stub.log
-```
+C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机だけ欲しい退避。
 
 ---
 

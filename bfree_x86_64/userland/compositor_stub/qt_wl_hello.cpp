@@ -2,6 +2,7 @@
  * not libqbfree.a. Same stack/malloc bring-up as desktop.elf, but MUST
  * return 0 after first-frame flush so g1-desk vfork parent can blit.
  * Do not call bfree_guest_enter_preflighted_mmap_noreturn. */
+#include <new>
 #include <QBackingStore>
 #include <QColor>
 #include <QCoreApplication>
@@ -19,6 +20,8 @@ void bfree_guest_run_on_ctor_stack_plugins(void (*fn)(void));
 void bfree_guest_preflight_musl_heap(void);
 void bfree_guest_preflight_ctor_mmap(void);
 void bfree_guest_run_on_ctor_stack_hybrid(void (*fn)(void));
+int bfree_guest_ensure_fallback_heap(void);
+void bfree_guest_begin_hybrid_alloc(void);
 }
 
 static char g_prog[] = "/p8test.elf";
@@ -26,6 +29,7 @@ static char g_arg_platform[] = "-platform";
 static char g_arg_bfree[] = "bfree";
 static char *g_qt_argv[] = {g_prog, g_arg_platform, g_arg_bfree, nullptr};
 static int g_qt_argc = 3;
+static QGuiApplication *g_app;
 
 static void qt_hello_serial(const char *s)
 {
@@ -55,14 +59,31 @@ __attribute__((noinline)) static void hello_register_plugin(void)
 }
 
 /* wrap_getenv reports QT_QPA_PLATFORM=bfree. Match that key. Return after
- * flush — vfork waits for child exit, not exec. */
+ * flush — vfork waits for child exit, not exec.
+ * Observed: plugin register ok, then PF CR2=0 between "before ctor" and
+ * "ctor ok". desktop.elf uses fallback+hybrid then `new QGuiApplication`.
+ * -fno-exceptions `new T` on a null operator new still runs T's ctor at
+ * this==0 → CR2=0. Check operator new before placement-new. */
 __attribute__((noinline)) static void hello_gui_session(void)
 {
+    void *mem;
+
     __asm__ volatile("andq $-16, %%rsp" ::: "rsp");
     qt_hello_serial("[qt] before QGuiApplication ctor\n");
     QCoreApplication::setSetuidAllowed(true);
-    QGuiApplication::setDesktopSettingsAware(false);
-    QGuiApplication app(g_qt_argc, g_qt_argv);
+    qt_hello_serial("[qt] setuid ok\n");
+    bfree_guest_refresh_libc_auxv();
+    (void)bfree_guest_ensure_fallback_heap();
+    bfree_guest_begin_hybrid_alloc();
+    qt_hello_serial("[qt] hybrid alloc armed\n");
+    qt_hello_serial("[qt] before operator new\n");
+    mem = ::operator new(sizeof(QGuiApplication));
+    if (!mem) {
+        qt_hello_serial("[qt] operator new returned 0\n");
+        return;
+    }
+    qt_hello_serial("[qt] operator new ok\n");
+    g_app = new (mem) QGuiApplication(g_qt_argc, g_qt_argv);
     qt_hello_serial("[qt] QGuiApplication ctor ok\n");
 
     QWindow win;
@@ -85,7 +106,7 @@ __attribute__((noinline)) static void hello_gui_session(void)
     store.flush(rect);
 
     for (int i = 0; i < 8; i++) {
-        app.processEvents();
+        g_app->processEvents();
     }
     qt_hello_serial("[qt] QGuiApplication done\n");
 }

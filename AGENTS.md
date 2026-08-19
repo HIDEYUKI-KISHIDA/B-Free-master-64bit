@@ -20,11 +20,13 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8 blocked: 53MB `QGuiApplication` prints `start` then hangs
-(exec-stack `qRegister`). Gray wallpaper. Next: ctor-stack plugin +
-hybrid QGui then **return 0**. Proof: gold `0xD4A017` / navy
-`0x1E3A8A` / cyan `0x06B6D4`. Restore C (W7):
-`BFREE_P8TEST_C=1 bash tools/build_compositor_stub_iso.sh`.
+W8 blocked: plugin register on ctor stack works (`plugin registered`,
+`musl malloc preflight OK`). Then `[qt] before QGuiApplication ctor`
+and `Page Fault CR2=0` (`SURVIVE`). Next: same fallback+hybrid as
+`desktop.elf`, check `operator new` before placement-new (null `new T`
+with `-fno-exceptions` is CR2=0). Proof: gold `0xD4A017` / navy
+`0x1E3A8A` / cyan `0x06B6D4`. Restore C (W7) only as a fallback desk,
+not as the W8 path.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
 compositor `fork`(57). Do not map a from-source kernel onto the stub
