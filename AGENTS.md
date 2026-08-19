@@ -20,11 +20,10 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8: `hello wait-stub` → `exit_group` → `[VFORK] parent resume`
-→ `[wl] vfork parent` landed. Confirm gold/navy/cyan window and
-`[wl] client shm blit` (not C green `Qt`/`wayland`/`shm`). Do not
-start D* or G* until the gold window is confirmed. Do not overwrite
-`desktop_qt/guest_link_compat.o`.
+W8 **done**: gold title `0xD4A017` / navy `0x1E3A8A` / cyan mark
+`0x06B6D4` plus `[wl] vfork parent`. EX/VW/TE around it is stub
+仮 chrome, not daily bfree QPA, not 本デスク. Do not start D* or
+G* until asked. Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
