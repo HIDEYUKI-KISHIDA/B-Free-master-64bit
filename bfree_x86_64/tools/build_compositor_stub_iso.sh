@@ -110,10 +110,10 @@ if grep -aq 'exit_group' "$QTCLI" 2>/dev/null; then
 else
   echo "P8TEST_EXIT=MISSING (stale qt_wl_hello.cpp — returns through Qt dtors)"
 fi
-if grep -aq 'skip waitpid' "$QTCLI" 2>/dev/null; then
+if grep -aq 'hello wait-stub' "$QTCLI" 2>/dev/null; then
   echo "P8TEST_WAIT=skip"
 else
-  echo "P8TEST_WAIT=MISSING (stale guest_link_compat — waitpid/clone may kill vfork)"
+  echo "P8TEST_WAIT=MISSING (stale qt_wl_hello.cpp / guest_link_compat.cpp — waitpid/clone may kill vfork)"
 fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"

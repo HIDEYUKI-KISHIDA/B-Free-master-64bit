@@ -20,13 +20,10 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8: paint/flush/`done`/`exit_group` landed. No `[wl] vfork parent`.
-g1-desk `waitpid(-1,WNOHANG)` zombies the vfork child; `clone`
-overwrites parent RIP. Hello stubs those (APP mmap compat only —
-do not overwrite `desktop_qt/guest_link_compat.o`). ISO must print
-`P8TEST_WAIT=skip`. Look for `[wl] vfork parent`. If the log has
-`[VFORK] parent resume` but no compositor `vfork parent`, RIP was
-clobbered. If `exit returned`, 231 came back (no child slot).
+W8: `exit_group` then silence (no VFORK uart). Child never
+`exit_from_fork`. Hello must print `[qt] hello wait-stub` at start
+or the ELF is stale. `syscall()` intercepts clone/wait4 in the
+APP mmap compat object only. ISO `P8TEST_WAIT=skip`.
 Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not

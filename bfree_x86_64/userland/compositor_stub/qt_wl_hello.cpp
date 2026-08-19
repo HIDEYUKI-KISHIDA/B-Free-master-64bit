@@ -239,6 +239,7 @@ int main(int argc, char **argv)
     (void)argv;
 
     qt_hello_serial("[qt] hello hybrid-qpa\n");
+    qt_hello_serial("[qt] hello wait-stub\n");
     qt_hello_serial("[qt] QGuiApplication start\n");
     bfree_guest_refresh_libc_auxv();
     bfree_guest_preflight_musl_heap();
