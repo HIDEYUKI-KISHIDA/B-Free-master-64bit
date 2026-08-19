@@ -96,15 +96,32 @@ if [[ -n "$_inc" ]]; then
     fi
   done
 fi
+MUSL_INC=""
 for musl in \
   "${BFREE_ELF_LIBM_DIR:-}/prefix/include" \
   "$ROOT/out/x86_64-elf-libm/prefix/include" \
   "$HOME/out/x86_64-elf-libm/prefix/include"; do
   if [[ -f "$musl/stdint.h" ]]; then
+    MUSL_INC="$musl"
     CXXFLAGS+=(-idirafter "$musl")
     break
   fi
 done
+
+# p8test is APP: Linux mmap is 9, 26 is msync. Rebuild compat for hello only.
+# Do not overwrite desktop_qt/guest_link_compat.o (desktop.elf).
+COMPAT_HELLO="$STUB/guest_link_compat_hello.o"
+if [[ -n "$MUSL_INC" && -f "$ROOT/tools/guest_link_compat.cpp" ]]; then
+  echo "[qt_wl_hello] compiling guest_link_compat for APP mmap (syscall 9 then 26)"
+  if "$CXX" -m64 -mcmodel=large -mno-red-zone -fno-stack-protector \
+      -fno-pic -fno-exceptions -fno-rtti -O2 -std=gnu++17 \
+      -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
+      -c -o "$COMPAT_HELLO" "$ROOT/tools/guest_link_compat.cpp"; then
+    export BFREE_GUEST_COMPAT="$COMPAT_HELLO"
+  else
+    echo "[qt_wl_hello] compat hello compile failed; desktop guest_link_compat.o (26=msync on APP)" >&2
+  fi
+fi
 
 make -C "$STUB" wl_stub_flush.o
 if ! "$CXX" "${CXXFLAGS[@]}" -c -o "$STUB/qbfree_wayland.o" "$STUB/qbfree_wayland.cpp"; then

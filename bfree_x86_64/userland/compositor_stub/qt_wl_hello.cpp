@@ -9,6 +9,7 @@
 #include <QGuiApplication>
 #include <QPainter>
 #include <QStaticPlugin>
+#include <QString>
 #include <QWindow>
 #include <QtPlugin>
 
@@ -58,6 +59,30 @@ __attribute__((noinline)) static void hello_register_plugin(void)
     qt_hello_serial("[qt] plugin registered\n");
 }
 
+static void hello_qt_msg(QtMsgType type, const QMessageLogContext &, const QString &msg)
+{
+    char buf[96];
+    int n;
+    int i;
+
+    if (type == QtFatalMsg) {
+        qt_hello_serial("[qt] QtFatal\n");
+    } else if (type == QtCriticalMsg) {
+        qt_hello_serial("[qt] QtCritical\n");
+    }
+    n = msg.size();
+    if (n > 80) {
+        n = 80;
+    }
+    for (i = 0; i < n; i++) {
+        unsigned u = (unsigned)msg.at(i).unicode();
+        buf[i] = (u < 128u) ? (char)u : '?';
+    }
+    buf[i] = '\n';
+    buf[i + 1] = 0;
+    qt_hello_serial(buf);
+}
+
 /* wrap_getenv reports QT_QPA_PLATFORM=bfree. Match that key. Return after
  * flush — vfork waits for child exit, not exec.
  * Observed: plugin register ok, then PF CR2=0 between "before ctor" and
@@ -76,6 +101,7 @@ __attribute__((noinline)) static void hello_gui_session(void)
     (void)bfree_guest_ensure_fallback_heap();
     bfree_guest_begin_hybrid_alloc();
     qt_hello_serial("[qt] hybrid alloc armed\n");
+    qInstallMessageHandler(hello_qt_msg);
     qt_hello_serial("[qt] before operator new\n");
     mem = ::operator new(sizeof(QGuiApplication));
     if (!mem) {

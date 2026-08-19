@@ -248,6 +248,7 @@ public:
 
 static QObject *qt_plugin_instance_QBfreeWlIntegrationPlugin()
 {
+    qt_wl_serial("[qt] plugin instance\n");
     static QBfreeWlIntegrationPlugin *inst = new QBfreeWlIntegrationPlugin;
     return inst;
 }

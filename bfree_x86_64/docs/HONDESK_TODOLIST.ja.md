@@ -46,9 +46,9 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
 - [x] **W6** step 1: xdg-shell で窓（`[compositor] xdg-shell window`）
 - [x] **W7** step 2: `desktop.elf` ではない C クライアント `p8test.elf`（緑 `Qt` / `wayland` / バラ `shm`）
 - [ ] **W8** step 3: **いまここ。** 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
-  - 済: ctor スタックで `plugin registered`、`musl malloc preflight OK`
-  - 今: `[qt] before QGuiApplication ctor` のあと `Page Fault CR2=0`（`SURVIVE`）。`ctor ok` まで出ていない
-  - 次: desktop.elf と同じ fallback+hybrid のあと `operator new` を確認してから ctor
+  - 済: ctor スタックで `plugin registered`、`musl malloc preflight OK`、`operator new ok`
+  - 今: APP 役割では Linux `mmap` は **9**。compat が **26** だけだと `msync` になり `fallback heap mmap fail` → `abort()`
+  - 次: hello 専用 `guest_link_compat` で syscall 9 を試す。desktop.elf の `.o` は上書きしない
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:

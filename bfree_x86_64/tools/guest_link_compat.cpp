@@ -1372,6 +1372,8 @@ static void *bfree_guest_alloc_ctor_stack(uintptr_t *top_out)
 extern "C" long syscall(long number, ...);
 extern "C" void bfree_guest_serial_hex_u64(uint64_t v);
 
+static long bfree_guest_mmap_fixed_try(uintptr_t va, size_t bytes);
+
 /* libc mmap() ignores MAP_FIXED; use syscall(9/26) at a fixed VA above desktop.elf. */
 static int bfree_guest_mmap_ctor_stack_reset;
 
@@ -1380,7 +1382,6 @@ static void *bfree_guest_mmap_ctor_stack_at(size_t stack_bytes, uintptr_t *top_o
     uintptr_t va = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA;
     static uintptr_t g_mmap_va;
     static size_t g_mmap_bytes;
-    long flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
     long ret;
 
     if (!top_out || stack_bytes == 0)
@@ -1396,8 +1397,8 @@ static void *bfree_guest_mmap_ctor_stack_at(size_t stack_bytes, uintptr_t *top_o
     }
     g_mmap_va = 0;
     g_mmap_bytes = 0;
-    /* B-Free guest mmap is syscall 26 only (syscall 9 is Linux mmap in compat layer but avoid dup). */
-    ret = syscall(26L, (long)va, (long)stack_bytes, 3L, flags, -1L, 0L);
+    /* APP: Linux mmap is 9. Native mmap is 26. Try both (p8test is APP). */
+    ret = bfree_guest_mmap_fixed_try(va, stack_bytes);
     if (ret < 0 || (uintptr_t)ret != va) {
         bfree_guest_serial_lit("[desktop_qt] ctor mmap fail ret=");
         bfree_guest_serial_hex_u64((uint64_t)(uintptr_t)ret);
@@ -1761,14 +1762,26 @@ extern "C" void *mmap(void *addr, size_t length, int prot, int flags, int fd, of
     return __mmap(addr, length, prot, flags, fd, offset);
 }
 
-static int bfree_guest_mmap_fixed_anon(uintptr_t va, size_t bytes)
+/* APP role uses Linux numbers: 9=mmap, 26=msync. INIT/native still has 26=mmap.
+ * p8test.elf is APP (compositor vfork+exec). syscall(26)-only is msync → fail. */
+static long bfree_guest_mmap_fixed_try(uintptr_t va, size_t bytes)
 {
     long flags = BFREE_MAP_PRIVATE | BFREE_MAP_ANONYMOUS | BFREE_MAP_FIXED;
     long ret;
 
+    ret = syscall(9L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+    if (ret < 0 || (uintptr_t)ret != va)
+        ret = syscall(26L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+    return ret;
+}
+
+static int bfree_guest_mmap_fixed_anon(uintptr_t va, size_t bytes)
+{
+    long ret;
+
     if (bytes == 0)
         return -1;
-    ret = syscall(26L, (long)va, (long)bytes, 3L, flags, -1L, 0L);
+    ret = bfree_guest_mmap_fixed_try(va, bytes);
     if (ret < 0 || (uintptr_t)ret != va)
         return -1;
     return 0;
