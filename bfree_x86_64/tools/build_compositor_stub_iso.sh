@@ -115,5 +115,10 @@ if grep -aq 'hello wait-stub' "$QTCLI" 2>/dev/null; then
 else
   echo "P8TEST_WAIT=MISSING (stale qt_wl_hello.cpp / guest_link_compat.cpp — waitpid/clone may kill vfork)"
 fi
+if grep -aq 'D1 wayland' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_D1=wayland"
+else
+  echo "P8TEST_D1=MISSING (hello still selects bfree as painter)"
+fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"

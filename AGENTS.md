@@ -15,20 +15,19 @@ Makefile) and `smartphone-tron-os/` is spec/docs only.
 Canonical checklist: `bfree_x86_64/docs/HONDESK_TODOLIST.ja.md`.
 Four tracks (do not mix): **Native OS** = whole guest OS (boots; daily
 bfree-QPA desk is N2, not Wayland, not GPU). **Wayland** = compositor
-socket + client windows (W7 C done, **W8 Qt hello is current**).
-**本デスク** = product desk (`DesktopShell.qml` as Qt Wayland client;
-D* not started). **GPU** = accel (G* not started). Current work is
-**W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
-Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8 **done**: gold title `0xD4A017` / navy `0x1E3A8A` / cyan mark
-`0x06B6D4` plus `[wl] vfork parent`. EX/VW/TE around it is stub
-仮 chrome, not daily bfree QPA, not 本デスク. Do not start D* or
-G* until asked. Do not overwrite `desktop_qt/guest_link_compat.o`.
-Do not overwrite `desktop_qt/guest_link_compat.o`.
-Do not start D* or G* before W8 paints. Do not retry Gate 1 /
-`beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
-compositor `fork`(57). Do not map a from-source kernel onto the stub
-ISO (S2).
+socket + client windows (W7 C done, **W8 done**). **本デスク** =
+product desk (`DesktopShell.qml` as Qt Wayland client; **D1 done**,
+D2/D3 not started). **GPU** = accel (G* not started). Stub history:
+`docs/HONDESK_PHASES.ja.md`. Scripts live under `bfree_x86_64/`
+(`cd` there, not `$HOME`).
+W8 **done** (gold/navy/cyan + `[wl] vfork parent`).
+**D1 done:** stub hello `getenv QT_QPA_PLATFORM=wayland` then
+`exit_group` then `[wl] vfork parent`. Daily `bfree.iso` was
+**not** overwritten (N2 EX/TE stays). Do not overwrite
+`desktop_qt/guest_link_compat.o`. D2 (`DesktopShell.qml` as
+Wayland client) waits until asked. Do not `beginCreate`. Do not
+`execve("desktop.elf")` on g1-desk. Do not compositor `fork`(57).
+Do not map a from-source kernel onto the stub ISO (S2).
 
 ### Toolchain (installed by the startup update script)
 - A prebuilt **`x86_64-elf` cross GCC 13.2.0** is installed to

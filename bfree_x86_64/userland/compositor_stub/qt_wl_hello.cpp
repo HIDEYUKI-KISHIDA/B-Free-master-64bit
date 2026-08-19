@@ -27,8 +27,8 @@ char *getenv(const char *);
 
 static char g_prog[] = "/p8test.elf";
 static char g_arg_platform[] = "-platform";
-static char g_arg_bfree[] = "bfree";
-static char *g_qt_argv[] = {g_prog, g_arg_platform, g_arg_bfree, nullptr};
+static char g_arg_wl[] = "wayland";
+static char *g_qt_argv[] = {g_prog, g_arg_platform, g_arg_wl, nullptr};
 static int g_qt_argc = 3;
 static QGuiApplication *g_app;
 
@@ -98,7 +98,8 @@ static void hello_qt_msg(QtMsgType type, const QMessageLogContext &, const QStri
     qt_hello_serial(buf);
 }
 
-/* wrap_getenv reports QT_QPA_PLATFORM=bfree. Match that key. Return after
+/* D1: hello APP mmap compat reports QT_QPA_PLATFORM=wayland.
+ * wrap_getenv for desktop.elf stays bfree (daily N2). Return after
  * flush — vfork waits for child exit, not exec.
  * Observed: plugin register ok, then PF CR2=0 between "before ctor" and
  * "ctor ok". desktop.elf uses fallback+hybrid then `new QGuiApplication`.
@@ -259,6 +260,7 @@ int main(int argc, char **argv)
     (void)argv;
 
     qt_hello_serial("[qt] hello hybrid-qpa\n");
+    qt_hello_serial("[qt] D1 wayland\n");
     qt_hello_serial("[qt] hello wait-stub\n");
     qt_hello_serial("[qt] QGuiApplication start\n");
     bfree_guest_refresh_libc_auxv();
