@@ -3857,13 +3857,17 @@ extern "C" long syscall(long number, ...)
 
 #ifdef BFREE_GUEST_APP_MMAP
     /* musl wait4/clone use this syscall(), not libc waitpid(). */
-    if (number == 56L || number == 57L || number == 58L) {
+    if (number == 56L || number == 57L || number == 58L || number == 435L) {
         bfree_guest_serial_lit("[qt] skip clone\n");
         return -11L;
     }
     if (number == 61L || number == 247L) {
         bfree_guest_serial_lit("[qt] skip waitpid\n");
         return -10L;
+    }
+    if (number == 130L) {
+        bfree_guest_serial_lit("[qt] skip sigsuspend\n");
+        return -4L;
     }
 #endif
 
