@@ -50,10 +50,9 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
   - 済: `plugin register done` と `operator new ok`
   - 済: `[qt] QPA factory keys` → `[qt] QPA factory create` → `[qt] QGuiApplication ctor ok`
   - 済: `fill bits` → `flush` → `QGuiApplication done` → `exit_group`
-  - 今: `exit_group` のあと `[wl] vfork parent` が無い。231 は kernel の pause / busybox 再入、または `waitpid`/`clone` が vfork 状態を壊している
-  - 済: `[qt] hello wait-stub`（新しい ELF）→ `exit_group`。skip wait/clone は出ていない（libc 経由ではない）
-  - 今: 231 が戻らない。`[VFORK]` も `[wl] vfork parent` も無い
-  - 次: 終了直前の `ppid=1`（vfork スロットあり）か `ppid=0`（スロット消失）。ISO は `hello wait-stub`
+  - 済: `[qt] hello wait-stub` → `exit_group` → `[VFORK] parent resume` → `[wl] vfork parent`
+  - 今: 画面が金 `0xD4A017` / 紺 `0x1E3A8A` / シアン `0x06B6D4` か。シリアル `[wl] client shm blit`。C の緑タイトルは失敗
+  - 次: 金窓が確認できたら W8 完了。D* / G* はまだやらない
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:

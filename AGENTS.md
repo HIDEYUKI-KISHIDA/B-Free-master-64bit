@@ -20,10 +20,11 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8: new ELF prints `hello wait-stub` then `exit_group` with no
-`skip clone`/`waitpid` and no kernel `[VFORK]`. 231 does not
-return. Next serial is `ppid=1` (fork_active) vs `ppid=0` (slot
-gone). clone3 (435) and sigsuspend (130) are also stubbed.
+W8: `hello wait-stub` → `exit_group` → `[VFORK] parent resume`
+→ `[wl] vfork parent` landed. Confirm gold/navy/cyan window and
+`[wl] client shm blit` (not C green `Qt`/`wayland`/`shm`). Do not
+start D* or G* until the gold window is confirmed. Do not overwrite
+`desktop_qt/guest_link_compat.o`.
 Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not

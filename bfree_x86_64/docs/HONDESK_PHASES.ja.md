@@ -17,7 +17,7 @@ TODOLIST では W6 / W7 / W8 / D1+D2。飛ばさない。
 |------|------|------|-------------------|
 | **1** | stub xdg-shell。クライアントが窓を作る | **済** | `[compositor] xdg-shell window` |
 | **2** | `desktop.elf` ではない小さいクライアント | **済（C）** | `p8test.elf` = C `qt_wl_client.elf`。緑タイトル `Qt` / `wayland` / バラ色 `shm`。`[qt] p8test.elf wayland client` `[wl] vfork parent` `[wl] client shm blit`。`hello.elf` は exec 失敗時の予備 |
-| **3** | カーネル + **Qt Wayland**（bfree QPA を選ばない） | **いまここ / exit_group** | bits 塗って flush 済み。`[qt] exit_group` まで緑。`[wl] vfork parent` 待ち。hello は waitpid/clone 禁止 |
+| **3** | カーネル + **Qt Wayland**（bfree QPA を選ばない） | **いまここ / vfork parent** | `exit_group` → `[wl] vfork parent` まで緑。証明は金/紺/シアン窓と `[wl] client shm blit` |
 | **4** | 日次から bfree QPA を外す。`DesktopShell.qml` を Wayland クライアントとして載せる | **未着手** | 日次 `bfree.iso` を差し替えるのは step 3 が塗れてから。`execve("desktop.elf")` を g1-desk でやらない |
 
 step 3 の中（Qt hello）:
