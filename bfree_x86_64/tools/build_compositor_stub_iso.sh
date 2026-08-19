@@ -132,5 +132,10 @@ if grep -aq 'D2 qml-client' "$QTCLI" 2>/dev/null; then
 else
   echo "P8TEST_D2=MISSING (hello still W8 gold/navy; apply qt_wl_hello.cpp + DesktopShell.qml)"
 fi
+if grep -aq 'D2b qml-engine' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_D2B=engine"
+else
+  echo "P8TEST_D2B=MISSING (QQmlEngine not linked; D2 bits-only or BFREE_D2B_QML=0)"
+fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"

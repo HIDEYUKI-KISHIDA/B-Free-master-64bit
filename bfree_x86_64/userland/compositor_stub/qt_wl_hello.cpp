@@ -1,7 +1,8 @@
 /* Tiny guest QGuiApplication client. Not desktop.elf, not libqbfree.a.
  * D2: carries compositor_stub/DesktopShell.qml as a Wayland client scene.
- * Do not QQmlEngine / beginCreate (CR2=0xC). Paint GuestMvpShell layout
- * in QImage bits, then exit_group so g1-desk vfork parent can blit.
+ * D2b (BFREE_D2B_QML): QQmlEngine only. Do not beginCreate (CR2=0xC).
+ * Paint GuestMvpShell layout in QImage bits, then exit_group so g1-desk
+ * vfork parent can blit.
  * Do not call bfree_guest_enter_preflighted_mmap_noreturn. */
 #include <new>
 #include <QBackingStore>
@@ -13,6 +14,10 @@
 #include <QString>
 #include <QWindow>
 #include <QtPlugin>
+#ifdef BFREE_D2B_QML
+#include <QQmlEngine>
+#include <QStringList>
+#endif
 
 extern const QT_PREPEND_NAMESPACE(QStaticPlugin) qt_static_plugin_QBfreeWlIntegrationPlugin();
 
@@ -24,6 +29,11 @@ void bfree_guest_run_on_ctor_stack_hybrid(void (*fn)(void));
 int bfree_guest_ensure_fallback_heap(void);
 void bfree_guest_begin_hybrid_alloc(void);
 char *getenv(const char *);
+#ifdef BFREE_D2B_QML
+void bfree_guest_qv4_preflight_arena(void);
+void bfree_guest_qv4_mmap_scope_begin(void);
+void bfree_guest_qv4_set_active_engine(void *);
+#endif
 }
 
 static char g_prog[] = "/p8test.elf";
@@ -206,6 +216,30 @@ __attribute__((noinline)) static void hello_gui_session(void)
     g_app = new (mem) QGuiApplication(g_qt_argc, g_qt_argv);
     qt_hello_serial("[qt] QGuiApplication ctor ok\n");
 
+#ifdef BFREE_D2B_QML
+    /* D2b: QQmlEngine on the Wayland client. No QQmlComponent, no loadUrl,
+     * no qml_register_types, no beginCreate, no processEvents. */
+    qt_hello_serial("[qt] D2b engine enter\n");
+    bfree_guest_qv4_preflight_arena();
+    qt_hello_serial("[qt] D2b qv4 preflight\n");
+    bfree_guest_qv4_mmap_scope_begin();
+    qt_hello_serial("[qt] D2b qv4 scope\n");
+    {
+        void *emem = ::operator new(sizeof(QQmlEngine));
+        QQmlEngine *eng;
+        if (!emem) {
+            qt_hello_serial("[qt] D2b engine new 0\n");
+        } else {
+            qt_hello_serial("[qt] D2b engine operator new ok\n");
+            eng = new (emem) QQmlEngine();
+            eng->setImportPathList(QStringList());
+            eng->setPluginPathList(QStringList());
+            bfree_guest_qv4_set_active_engine(eng);
+            qt_hello_serial("[qt] D2b engine ok\n");
+        }
+    }
+#endif
+
     qt_hello_serial("[qt] window start\n");
     QWindow win;
     qt_hello_serial("[qt] window\n");
@@ -322,6 +356,9 @@ int main(int argc, char **argv)
     qt_hello_serial("[qt] D1 wayland\n");
     qt_hello_serial("[qt] D2 qml-client\n");
     qt_hello_serial("[qt] D2 no-beginCreate\n");
+#ifdef BFREE_D2B_QML
+    qt_hello_serial("[qt] D2b qml-engine\n");
+#endif
     qt_hello_serial("[qt] hello wait-stub\n");
     qt_hello_serial("[qt] QGuiApplication start\n");
     bfree_guest_refresh_libc_auxv();
