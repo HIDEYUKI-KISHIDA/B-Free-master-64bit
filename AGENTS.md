@@ -17,17 +17,22 @@ Four tracks (do not mix): **Native OS** = whole guest OS (boots; daily
 bfree-QPA desk is N2, not Wayland, not GPU). **Wayland** = compositor
 socket + client windows (W7 C done, **W8 done**). **本デスク** =
 product desk (`DesktopShell.qml` as Qt Wayland client; **D1 done**,
-D2/D3 not started). **GPU** = accel (G* not started). Stub history:
+**D2 started** — stub hello carries `compositor_stub/DesktopShell.qml`
+and paints GuestMvpShell bits; **no** `QQmlEngine` / `beginCreate`.
+D3 not started). **GPU** = accel (G* not started). Stub history:
 `docs/HONDESK_PHASES.ja.md`. Scripts live under `bfree_x86_64/`
 (`cd` there, not `$HOME`).
 W8 **done** (gold/navy/cyan + `[wl] vfork parent`).
 **D1 done:** stub hello `getenv QT_QPA_PLATFORM=wayland` then
 `exit_group` then `[wl] vfork parent`. Daily `bfree.iso` was
 **not** overwritten (N2 EX/TE stays). Do not overwrite
-`desktop_qt/guest_link_compat.o`. D2 (`DesktopShell.qml` as
-Wayland client) waits until asked. Do not `beginCreate`. Do not
-`execve("desktop.elf")` on g1-desk. Do not compositor `fork`(57).
-Do not map a from-source kernel onto the stub ISO (S2).
+`desktop_qt/guest_link_compat.o`. **D2 started:** serial
+`[qt] D2 qml-client` / `D2 no-beginCreate` / `D2 fill desk`; window
+is wallpaper `#7A8FA8` + white card + EX/VW/TE tiles (not W8 gold).
+Keep 480×320 SHM. Do not link `libQt6Qml.a` yet. Do not
+`beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
+compositor `fork`(57). Do not map a from-source kernel onto the stub
+ISO (S2).
 
 ### Toolchain (installed by the startup update script)
 - A prebuilt **`x86_64-elf` cross GCC 13.2.0** is installed to
