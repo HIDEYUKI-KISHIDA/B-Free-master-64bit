@@ -17,7 +17,7 @@ TODOLIST では W6 / W7 / W8 / D1+D2。飛ばさない。
 |------|------|------|-------------------|
 | **1** | stub xdg-shell。クライアントが窓を作る | **済** | `[compositor] xdg-shell window` |
 | **2** | `desktop.elf` ではない小さいクライアント | **済（C）** | `p8test.elf` = C `qt_wl_client.elf`。緑タイトル `Qt` / `wayland` / バラ色 `shm`。`[qt] p8test.elf wayland client` `[wl] vfork parent` `[wl] client shm blit`。`hello.elf` は exec 失敗時の予備 |
-| **3** | カーネル + **Qt Wayland**（bfree QPA を選ばない） | **いまここ / 止まっている** | 53MB `qt_wl_hello.elf` を `p8test.elf` に載せる。証明は金 `0xD4A017` / 紺 `0x1E3A8A` / シアン `0x06B6D4`。`ctor mmap ok n=0x2000000` まで緑。今は `Could not find the Qt platform plugin`。hybrid で qRegister + Header+CBOR |
+| **3** | カーネル + **Qt Wayland**（bfree QPA を選ばない） | **済（W8）** | 金バー / 紺本体 / シアン印。`[wl] vfork parent`。C の緑ではない |
 | **4** | 日次から bfree QPA を外す。`DesktopShell.qml` を Wayland クライアントとして載せる | **未着手** | 日次 `bfree.iso` を差し替えるのは step 3 が塗れてから。`execve("desktop.elf")` を g1-desk でやらない |
 
 step 3 の中（Qt hello）:

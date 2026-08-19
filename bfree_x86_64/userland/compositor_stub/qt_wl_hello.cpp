@@ -4,10 +4,9 @@
  * Do not call bfree_guest_enter_preflighted_mmap_noreturn. */
 #include <new>
 #include <QBackingStore>
-#include <QColor>
 #include <QCoreApplication>
 #include <QGuiApplication>
-#include <QPainter>
+#include <QImage>
 #include <QPluginLoader>
 #include <QStaticPlugin>
 #include <QString>
@@ -135,29 +134,123 @@ __attribute__((noinline)) static void hello_gui_session(void)
     g_app = new (mem) QGuiApplication(g_qt_argc, g_qt_argv);
     qt_hello_serial("[qt] QGuiApplication ctor ok\n");
 
+    qt_hello_serial("[qt] window start\n");
     QWindow win;
+    qt_hello_serial("[qt] window\n");
     win.setGeometry(0, 0, 480, 320);
     win.setSurfaceType(QSurface::RasterSurface);
     QBackingStore store(&win);
+    qt_hello_serial("[qt] store\n");
     win.create();
+    qt_hello_serial("[qt] create\n");
     store.resize(QSize(480, 320));
+    qt_hello_serial("[qt] resize\n");
     win.show();
+    qt_hello_serial("[qt] show\n");
 
     const QRect rect(0, 0, 480, 320);
     store.beginPaint(rect);
+    qt_hello_serial("[qt] beginPaint\n");
+    /* Do not QPainter::fillRect — dummy font DB / raster engine is null
+     * (PF CR2=0 right after [qt] painter). Write QImage bits. */
     {
-        QPainter p(store.paintDevice());
-        p.fillRect(0, 0, 480, 320, QColor(0x1e, 0x3a, 0x8a));
-        p.fillRect(0, 0, 480, 36, QColor(0xd4, 0xa0, 0x17));
-        p.fillRect(16, 92, 72, 8, QColor(0x06, 0xb6, 0xd4));
+        QImage *img = static_cast<QImage *>(store.paintDevice());
+        unsigned *bits;
+        int bpl;
+        int w;
+        int h;
+        int x;
+        int y;
+
+        if (!img || img->isNull()) {
+            qt_hello_serial("[qt] image null\n");
+        } else {
+            qt_hello_serial("[qt] image\n");
+            bits = (unsigned *)img->bits();
+            if (!bits) {
+                qt_hello_serial("[qt] bits 0\n");
+            } else {
+                qt_hello_serial("[qt] bits\n");
+                bpl = img->bytesPerLine() / 4;
+                w = img->width();
+                h = img->height();
+                for (y = 0; y < h; y++) {
+                    unsigned *row = bits + y * bpl;
+                    for (x = 0; x < w; x++) {
+                        row[x] = 0xff1e3a8au;
+                    }
+                }
+                for (y = 0; y < 36 && y < h; y++) {
+                    unsigned *row = bits + y * bpl;
+                    for (x = 0; x < w; x++) {
+                        row[x] = 0xffd4a017u;
+                    }
+                }
+                for (y = 92; y < 100 && y < h; y++) {
+                    unsigned *row = bits + y * bpl;
+                    for (x = 16; x < 88 && x < w; x++) {
+                        row[x] = 0xff06b6d4u;
+                    }
+                }
+                qt_hello_serial("[qt] fill bits\n");
+            }
+        }
     }
     store.endPaint();
+    qt_hello_serial("[qt] paint\n");
     store.flush(rect);
+    qt_hello_serial("[qt] flush\n");
 
-    for (int i = 0; i < 8; i++) {
-        g_app->processEvents();
-    }
+    /* Skip processEvents: Q_EMIT awake / sendPostedEvents hang; vfork waits for exit. */
+
     qt_hello_serial("[qt] QGuiApplication done\n");
+    /* Do not return: QWindow/QBackingStore dtors and Qt atexit hang.
+     * C p8test uses exit_group(231). Stack objects are leaked on purpose.
+     * getppid: 1 = g_guest_fork_active still set; 0 = vfork slot already gone. */
+    {
+        register long rax __asm__("rax") = 110;
+        register long rdi __asm__("rdi") = 0;
+        register long rsi __asm__("rsi") = 0;
+        register long rdx __asm__("rdx") = 0;
+        register long r10 __asm__("r10") = 0;
+        register long r8 __asm__("r8") = 0;
+        register long r9 __asm__("r9") = 0;
+        __asm__ volatile("syscall"
+                         : "+r"(rax)
+                         : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9)
+                         : "rcx", "r11", "memory");
+        if (rax == 1)
+            qt_hello_serial("[qt] ppid=1\n");
+        else if (rax == 0)
+            qt_hello_serial("[qt] ppid=0\n");
+        else
+            qt_hello_serial("[qt] ppid=other\n");
+    }
+    qt_hello_serial("[qt] exit_group\n");
+    {
+        register long rax __asm__("rax") = 231;
+        register long rdi __asm__("rdi") = 0;
+        register long rsi __asm__("rsi") = 0;
+        register long rdx __asm__("rdx") = 0;
+        register long r10 __asm__("r10") = 0;
+        register long r8 __asm__("r8") = 0;
+        register long r9 __asm__("r9") = 0;
+        __asm__ volatile("syscall"
+                         : "+r"(rax)
+                         : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9)
+                         : "rcx", "r11", "memory");
+        qt_hello_serial("[qt] exit returned\n");
+        rax = 60;
+        rdi = 0;
+        __asm__ volatile("syscall"
+                         : "+r"(rax)
+                         : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9)
+                         : "rcx", "r11", "memory");
+        qt_hello_serial("[qt] exit60 returned\n");
+        (void)rax;
+    }
+    for (;;) {
+    }
 }
 
 int main(int argc, char **argv)
@@ -166,6 +259,7 @@ int main(int argc, char **argv)
     (void)argv;
 
     qt_hello_serial("[qt] hello hybrid-qpa\n");
+    qt_hello_serial("[qt] hello wait-stub\n");
     qt_hello_serial("[qt] QGuiApplication start\n");
     bfree_guest_refresh_libc_auxv();
     bfree_guest_preflight_musl_heap();

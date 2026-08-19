@@ -119,7 +119,9 @@ if [[ -n "$MUSL_INC" && -f "$ROOT/tools/guest_link_compat.cpp" ]]; then
       -c -o "$COMPAT_HELLO" "$ROOT/tools/guest_link_compat.cpp"; then
     export BFREE_GUEST_COMPAT="$COMPAT_HELLO"
   else
-    echo "[qt_wl_hello] compat hello compile failed; desktop guest_link_compat.o (26=msync on APP)" >&2
+    echo "qt_wl_hello skip: APP mmap compat compile failed. C p8test stays." >&2
+    echo "Do not link desktop_qt/guest_link_compat.o into hello." >&2
+    exit 0
   fi
 fi
 

@@ -60,16 +60,14 @@ class QBfreeWlWindow : public QPlatformWindow
 public:
     explicit QBfreeWlWindow(QWindow *window) : QPlatformWindow(window)
     {
-        QPlatformWindow::requestActivateWindow();
+        /* Skip requestActivateWindow(): Q_EMIT / posted events hang after ctor. */
     }
 
     void setVisible(bool visible) override
     {
         QPlatformWindow::setVisible(visible);
-        if (visible) {
-            const QSize sz = window()->size();
-            QWindowSystemInterface::handleExposeEvent(window(), QRect(QPoint(0, 0), sz));
-        }
+        /* Skip handleExposeEvent: first-show re-entry hangs before flush. */
+        (void)visible;
     }
 };
 
@@ -84,6 +82,11 @@ public:
     {
         if (m_image.size() != size) {
             m_image = QImage(size, QImage::Format_RGB32);
+            if (m_image.isNull()) {
+                qt_wl_serial("[qt] QImage null\n");
+            } else {
+                qt_wl_serial("[qt] QImage ok\n");
+            }
         }
     }
 
@@ -114,16 +117,16 @@ public:
 };
 
 /* Guest libstdc++ is threads=no; Unix epoll dispatcher is not linked.
- * First-frame hello calls processEvents a few times then exits so vfork
- * parent can blit. Do not call createUnixEventDispatcher(). */
+ * Do not Q_EMIT awake() / sendPostedEvents / sendWindowSystemEvents —
+ * those hang after QGui ctor. First-frame hello paints then return 0;
+ * g1-desk vfork waits for child exit. */
 class QBfreeWlEventDispatcher : public QAbstractEventDispatcher
 {
 public:
     bool processEvents(QEventLoop::ProcessEventsFlags flags) override
     {
-        Q_EMIT awake();
-        QCoreApplication::sendPostedEvents();
-        return QWindowSystemInterface::sendWindowSystemEvents(flags);
+        (void)flags;
+        return false;
     }
 
     void registerSocketNotifier(QSocketNotifier *notifier) override { (void)notifier; }
@@ -195,11 +198,13 @@ public:
 
     QPlatformWindow *createPlatformWindow(QWindow *window) const override
     {
+        qt_wl_serial("[qt] QPA platform window\n");
         return new QBfreeWlWindow(window);
     }
 
     QPlatformBackingStore *createPlatformBackingStore(QWindow *window) const override
     {
+        qt_wl_serial("[qt] QPA backing store\n");
         return new QBfreeWlBackingStore(window);
     }
 

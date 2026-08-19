@@ -5,11 +5,11 @@
 | 言葉 | 意味 | 今 |
 |------|------|-----|
 | **Native OS** | ゲストで動く OS 全体（カーネル + POSIX + 何かの机） | 起動できる。日次机あり |
-| **Wayland** | compositor がソケットを持ち、クライアントが窓を出す **手順** | C まで済。Qt は灰色で停止 |
+| **Wayland** | compositor がソケットを持ち、クライアントが窓を出す **手順** | W8 済（金窓）。W9 はまだ |
 | **本デスク** | 製品の机。compositor が画素を持ち、`DesktopShell.qml` が Qt Wayland クライアント | まだ。日次の EX/TE 机はこれではない |
 | **GPU** | 絵を GPU で出す | まだ。今は全部ソフトウェア FB |
 
-**今やるのは W8 だけ**（Qt が stub Wayland で 1 枚塗って終わる）。本デスクも GPU も触らない。
+**今やるのは W8 完了。** 次は D* ではない（合意してから）。GPU も触らない。
 
 正本はこのファイル。`HONDESK_PHASES.ja.md` は前段 S0–S2 の記録。`AGENTS.md` と同期する。
 
@@ -45,18 +45,17 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
 - [x] **W5** ゲスト矢印カーソル
 - [x] **W6** step 1: xdg-shell で窓（`[compositor] xdg-shell window`）
 - [x] **W7** step 2: `desktop.elf` ではない C クライアント `p8test.elf`（緑 `Qt` / `wayland` / バラ `shm`）
-- [ ] **W8** step 3: **いまここ。** 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
-  - 済: `ctor mmap ok n=0x2000000`（32MiB）と fallback heap
-  - 済: `plugin register done` と `operator new ok`
-  - 今: `plugin hdr=` が無い = **古い qbfree_wayland.o**。Keys 経由の QFactoryLoader は使わない
-  - 次: `QPlatformIntegrationFactory::create` を hello 側で定義。ISO に `P8TEST_QPA=factory-override`。シリアル `QPA factory keys` → `QPA factory create` → `ctor ok`
+- [x] **W8** step 3: 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
+  - 済: `ctor mmap ok` / factory create / `ctor ok` / `fill bits` / `flush` / `exit_group`
+  - 済: `[qt] hello wait-stub` → `[VFORK] parent resume` → `[wl] vfork parent`
+  - 済: 画面は金バー `0xD4A017` / 紺 `0x1E3A8A` / シアン印 `0x06B6D4`（C の緑タイトルではない）。周りの EX/VW/TE は stub 仮 chrome
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:
 
-- シリアル: `plugin registered` → `ctor ok` → `QPA wayland create` → `[wl] vfork parent`
+- シリアル: `hello hybrid-qpa` → `QPA factory create` → `ctor ok` → `QGuiApplication done` → `[wl] vfork parent`
 - 画面: 金 `0xD4A017` / 紺 `0x1E3A8A` / シアン `0x06B6D4`（C の緑ではない）
-- `qRegister` は ctor スタック。`mmap noreturn` 禁止
+- hello は **return 0**。`mmap noreturn` 禁止。`processEvents` は初回フレームでは回さない
 
 C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机だけ欲しい退避。
 
@@ -64,7 +63,7 @@ C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机�
 
 ## C. 本デスク（製品の机。Wayland のあと）
 
-日次 N2 の机をこれに差し替える。W8 が緑（金窓）になるまで着手しない。
+日次 N2 の机をこれに差し替える。W8 は金窓まで済。D* は合意してから。
 
 - [ ] **D1** step 4: 日次から `QT_QPA_PLATFORM=bfree` を外す
 - [ ] **D2** `DesktopShell.qml` を **Wayland クライアント**として載せる（boot の `beginCreate` は死んでいる。やり直さない）
