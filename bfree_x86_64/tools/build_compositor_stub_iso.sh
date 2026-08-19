@@ -95,5 +95,10 @@ if grep -aq 'QPA factory keys' "$QTCLI" 2>/dev/null; then
 else
   echo "P8TEST_QPA=MISSING (stale qbfree_wayland.cpp — rebuild will not skip QFactoryLoader)"
 fi
+if grep -aq 'window start' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_WINDOW=breadcrumbs"
+else
+  echo "P8TEST_WINDOW=MISSING (stale qt_wl_hello.cpp — no post-ctor serials)"
+fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"

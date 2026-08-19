@@ -135,28 +135,37 @@ __attribute__((noinline)) static void hello_gui_session(void)
     g_app = new (mem) QGuiApplication(g_qt_argc, g_qt_argv);
     qt_hello_serial("[qt] QGuiApplication ctor ok\n");
 
+    qt_hello_serial("[qt] window start\n");
     QWindow win;
+    qt_hello_serial("[qt] window\n");
     win.setGeometry(0, 0, 480, 320);
     win.setSurfaceType(QSurface::RasterSurface);
     QBackingStore store(&win);
+    qt_hello_serial("[qt] store\n");
     win.create();
+    qt_hello_serial("[qt] create\n");
     store.resize(QSize(480, 320));
+    qt_hello_serial("[qt] resize\n");
     win.show();
+    qt_hello_serial("[qt] show\n");
 
     const QRect rect(0, 0, 480, 320);
     store.beginPaint(rect);
+    qt_hello_serial("[qt] beginPaint\n");
     {
         QPainter p(store.paintDevice());
+        qt_hello_serial("[qt] painter\n");
         p.fillRect(0, 0, 480, 320, QColor(0x1e, 0x3a, 0x8a));
         p.fillRect(0, 0, 480, 36, QColor(0xd4, 0xa0, 0x17));
         p.fillRect(16, 92, 72, 8, QColor(0x06, 0xb6, 0xd4));
     }
     store.endPaint();
+    qt_hello_serial("[qt] paint\n");
     store.flush(rect);
+    qt_hello_serial("[qt] flush\n");
 
-    for (int i = 0; i < 8; i++) {
-        g_app->processEvents();
-    }
+    /* Skip processEvents: Q_EMIT awake / sendPostedEvents hang; vfork waits for exit. */
+
     qt_hello_serial("[qt] QGuiApplication done\n");
 }
 

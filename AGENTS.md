@@ -20,12 +20,14 @@ socket + client windows (W7 C done, **W8 Qt hello is current**).
 D* not started). **GPU** = accel (G* not started). Current work is
 **W8 only**. Stub history: `docs/HONDESK_PHASES.ja.md`.
 Scripts live under `bfree_x86_64/` (`cd` there, not `$HOME`).
-W8 blocked: last serial had no `plugin hdr=` — stale
-`qbfree_wayland.o`. Do not wait on QFactoryLoader Keys. Hello
-defines `QPlatformIntegrationFactory::create`. ISO must print
-`P8TEST_QPA=factory-override`. Look for `QPA factory keys` then
-`QPA factory create` then `ctor ok`. Do not overwrite
-`desktop_qt/guest_link_compat.o`.
+W8: `[qt] QGuiApplication ctor ok` landed. Hang is **after ctor**
+(window / create / show / paint / `processEvents`). Skip
+`requestActivateWindow`, `handleExposeEvent`, and first-frame
+`processEvents` (`Q_EMIT awake` hangs). ISO must print
+`P8TEST_STAMP=hybrid-qpa`, `P8TEST_QPA=factory-override`, and
+`P8TEST_WINDOW=breadcrumbs`. Look for `window start` then
+`flush` then `QGuiApplication done` then `[wl] vfork parent`.
+Do not overwrite `desktop_qt/guest_link_compat.o`.
 Do not start D* or G* before W8 paints. Do not retry Gate 1 /
 `beginCreate`. Do not `execve("desktop.elf")` on g1-desk. Do not
 compositor `fork`(57). Do not map a from-source kernel onto the stub
@@ -422,7 +424,7 @@ errors "Qt has not been ported to this OS"). Same define as
 `Makefile.guest-elf`. The stub QPA must **not** call
 `createUnixEventDispatcher()` (undefined on this static guest Qt /
 `threads=no` libstdc++). It uses a local `QAbstractEventDispatcher`
-and first-frame `processEvents` then `return 0`. A failed Qt link
+and a no-op `processEvents` then `return 0`. A failed Qt link
 writes `userland/compositor_stub/qt_wl_hello.link.log` and keeps C
 p8test; do not treat `P8_KIND=C p8test` as a script crash.
 Invoke the linker via a CR-stripped copy in `/tmp` (not

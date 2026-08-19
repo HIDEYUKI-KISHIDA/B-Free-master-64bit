@@ -48,15 +48,16 @@ qemu-system-x86_64 -cdrom bfree.iso -m 1024 -vga std -serial file:/tmp/bfree_ser
 - [ ] **W8** step 3: **いまここ。** 本物 `QGuiApplication` が stub QPA で金/紺/シアンを塗って **return 0**
   - 済: `ctor mmap ok n=0x2000000`（32MiB）と fallback heap
   - 済: `plugin register done` と `operator new ok`
-  - 今: `plugin hdr=` が無い = **古い qbfree_wayland.o**。Keys 経由の QFactoryLoader は使わない
-  - 次: `QPlatformIntegrationFactory::create` を hello 側で定義。ISO に `P8TEST_QPA=factory-override`。シリアル `QPA factory keys` → `QPA factory create` → `ctor ok`
+  - 済: `[qt] QPA factory keys` → `[qt] QPA factory create` → `[qt] QGuiApplication ctor ok`
+  - 今: ctor のあとで止まる（window / create / show / paint / `processEvents`）
+  - 次: `requestActivateWindow` / `handleExposeEvent` / `processEvents` を外す。ISO は `P8TEST_WINDOW=breadcrumbs`。シリアル `window start` → `window` → `store` → `create` → `resize` → `show` → `beginPaint` → `painter` → `paint` → `flush` → `QGuiApplication done` → `[wl] vfork parent`
 - [ ] **W9** 本物 qtwayland（`wl_seat` / `SCM_RIGHTS`）。W8 のあと。今やらない
 
 W8 の完了条件:
 
-- シリアル: `plugin registered` → `ctor ok` → `QPA wayland create` → `[wl] vfork parent`
+- シリアル: `hello hybrid-qpa` → `QPA factory create` → `ctor ok` → `QGuiApplication done` → `[wl] vfork parent`
 - 画面: 金 `0xD4A017` / 紺 `0x1E3A8A` / シアン `0x06B6D4`（C の緑ではない）
-- `qRegister` は ctor スタック。`mmap noreturn` 禁止
+- hello は **return 0**。`mmap noreturn` 禁止。`processEvents` は初回フレームでは回さない
 
 C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机だけ欲しい退避。
 
