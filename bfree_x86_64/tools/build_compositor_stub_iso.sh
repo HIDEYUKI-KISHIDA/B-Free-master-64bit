@@ -120,5 +120,17 @@ if grep -aq 'D1 wayland' "$QTCLI" 2>/dev/null; then
 else
   echo "P8TEST_D1=MISSING (hello still selects bfree as painter)"
 fi
+if grep -aq 'QT_QPA_PLATFORM=bfreewl' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_QPA_ENV=bfreewl (stale APP mmap compat — apply tools/guest_link_compat.cpp)"
+elif grep -aq 'QT_QPA_PLATFORM=wayland' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_QPA_ENV=wayland"
+else
+  echo "P8TEST_QPA_ENV=MISSING"
+fi
+if grep -aq 'D2 qml-client' "$QTCLI" 2>/dev/null; then
+  echo "P8TEST_D2=qml-client"
+else
+  echo "P8TEST_D2=MISSING (hello still W8 gold/navy; apply qt_wl_hello.cpp + DesktopShell.qml)"
+fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"

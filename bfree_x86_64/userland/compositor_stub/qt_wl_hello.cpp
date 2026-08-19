@@ -1,6 +1,7 @@
-/* Tiny guest QGuiApplication client. Not desktop.elf, not DesktopShell.qml,
- * not libqbfree.a. Same stack/malloc bring-up as desktop.elf, but MUST
- * return 0 after first-frame flush so g1-desk vfork parent can blit.
+/* Tiny guest QGuiApplication client. Not desktop.elf, not libqbfree.a.
+ * D2: carries compositor_stub/DesktopShell.qml as a Wayland client scene.
+ * Do not QQmlEngine / beginCreate (CR2=0xC). Paint GuestMvpShell layout
+ * in QImage bits, then exit_group so g1-desk vfork parent can blit.
  * Do not call bfree_guest_enter_preflighted_mmap_noreturn. */
 #include <new>
 #include <QBackingStore>
@@ -31,6 +32,18 @@ static char g_arg_wl[] = "wayland";
 static char *g_qt_argv[] = {g_prog, g_arg_platform, g_arg_wl, nullptr};
 static int g_qt_argc = 3;
 static QGuiApplication *g_app;
+
+/* Keep in sync with compositor_stub/DesktopShell.qml. Do not instantiate. */
+static const char g_d2_qml[] =
+    "import QtQuick\n"
+    "Item {\n"
+    "    /* D2: product desk scene carried by the stub Wayland client (p8test).\n"
+    "     * Do not QQmlEngine / beginCreate this file on the guest (CR2=0xC).\n"
+    "     * qt_wl_hello paints this layout into QImage bits (GuestMvpShell:\n"
+    "     * wallpaper #7A8FA8, card #F8FAFC, bar #334155, EX/VW/TE tiles). */\n"
+    "    width: 480\n"
+    "    height: 320\n"
+    "}\n";
 
 static void qt_hello_serial(const char *s)
 {
@@ -98,6 +111,55 @@ static void hello_qt_msg(QtMsgType type, const QMessageLogContext &, const QStri
     qt_hello_serial(buf);
 }
 
+static void d2_fill(unsigned *bits, int bpl, int w, int h, int x0, int y0, int rw,
+                   int rh, unsigned argb)
+{
+    int x;
+    int y;
+
+    if (x0 < 0) {
+        rw += x0;
+        x0 = 0;
+    }
+    if (y0 < 0) {
+        rh += y0;
+        y0 = 0;
+    }
+    if (rw <= 0 || rh <= 0 || x0 >= w || y0 >= h) {
+        return;
+    }
+    for (y = y0; y < y0 + rh && y < h; y++) {
+        unsigned *row = bits + y * bpl;
+        for (x = x0; x < x0 + rw && x < w; x++) {
+            row[x] = argb;
+        }
+    }
+}
+
+static void d2_serial_u32(unsigned v)
+{
+    char b[12];
+    int i;
+    unsigned n;
+
+    if (v == 0) {
+        qt_hello_serial("0");
+        return;
+    }
+    n = v;
+    i = 0;
+    while (n && i < (int)sizeof(b) - 1) {
+        b[i++] = (char)('0' + (n % 10u));
+        n /= 10u;
+    }
+    while (i > 0) {
+        char one[2];
+        one[0] = b[--i];
+        one[1] = 0;
+        qt_hello_serial(one);
+    }
+}
+
 /* D1: hello APP mmap compat reports QT_QPA_PLATFORM=wayland.
  * wrap_getenv for desktop.elf stays bfree (daily N2). Return after
  * flush — vfork waits for child exit, not exec.
@@ -123,7 +185,16 @@ __attribute__((noinline)) static void hello_gui_session(void)
         qt_hello_serial("[qt] getenv QT_QPA_PLATFORM=");
         qt_hello_serial(p ? p : "(null)");
         qt_hello_serial("\n");
+        qt_hello_serial("[qt] D2 argv -platform ");
+        qt_hello_serial(g_arg_wl);
+        qt_hello_serial("\n");
+        if (!p || p[0] != 'w' || p[1] != 'a' || p[2] != 'y') {
+            qt_hello_serial("[qt] D2 QPA env not wayland (stale APP mmap compat)\n");
+        }
     }
+    qt_hello_serial("[qt] D2 qml bytes=");
+    d2_serial_u32((unsigned)(sizeof(g_d2_qml) - 1u));
+    qt_hello_serial("\n");
     hello_register_plugin();
     qt_hello_serial("[qt] before operator new\n");
     mem = ::operator new(sizeof(QGuiApplication));
@@ -160,8 +231,6 @@ __attribute__((noinline)) static void hello_gui_session(void)
         int bpl;
         int w;
         int h;
-        int x;
-        int y;
 
         if (!img || img->isNull()) {
             qt_hello_serial("[qt] image null\n");
@@ -175,24 +244,14 @@ __attribute__((noinline)) static void hello_gui_session(void)
                 bpl = img->bytesPerLine() / 4;
                 w = img->width();
                 h = img->height();
-                for (y = 0; y < h; y++) {
-                    unsigned *row = bits + y * bpl;
-                    for (x = 0; x < w; x++) {
-                        row[x] = 0xff1e3a8au;
-                    }
-                }
-                for (y = 0; y < 36 && y < h; y++) {
-                    unsigned *row = bits + y * bpl;
-                    for (x = 0; x < w; x++) {
-                        row[x] = 0xffd4a017u;
-                    }
-                }
-                for (y = 92; y < 100 && y < h; y++) {
-                    unsigned *row = bits + y * bpl;
-                    for (x = 16; x < 88 && x < w; x++) {
-                        row[x] = 0xff06b6d4u;
-                    }
-                }
+                /* GuestMvpShell layout from DesktopShell.qml. Not W8 gold/navy. */
+                d2_fill(bits, bpl, w, h, 0, 0, w, h, 0xff7a8fa8u);
+                d2_fill(bits, bpl, w, h, 40, 28, 400, 200, 0xfff8fafcu);
+                d2_fill(bits, bpl, w, h, 56, 48, 48, 48, 0xff1d4ed8u);
+                d2_fill(bits, bpl, w, h, 120, 48, 48, 48, 0xff0f766eu);
+                d2_fill(bits, bpl, w, h, 184, 48, 48, 48, 0xffc2410cu);
+                d2_fill(bits, bpl, w, h, 0, h - 36, w, 36, 0xff334155u);
+                qt_hello_serial("[qt] D2 fill desk\n");
                 qt_hello_serial("[qt] fill bits\n");
             }
         }
@@ -261,6 +320,8 @@ int main(int argc, char **argv)
 
     qt_hello_serial("[qt] hello hybrid-qpa\n");
     qt_hello_serial("[qt] D1 wayland\n");
+    qt_hello_serial("[qt] D2 qml-client\n");
+    qt_hello_serial("[qt] D2 no-beginCreate\n");
     qt_hello_serial("[qt] hello wait-stub\n");
     qt_hello_serial("[qt] QGuiApplication start\n");
     bfree_guest_refresh_libc_auxv();
