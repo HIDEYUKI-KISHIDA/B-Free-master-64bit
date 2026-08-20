@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # D2c smoke: 1024×768 Wayland client SHM covers stub chrome.
-# Requires: patched kernel (vfile 32KiB × 128 slots), compositor stub ISO,
+# Requires: patched kernel (vfile 48KiB × 72 slots), compositor stub ISO,
 #           qt_wl_hello.elf when guest Qt prefix exists (else C p8test only).
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,7 +9,7 @@ cd "$ROOT"
 export PATH="${HOME}/x86_64-elf-toolchain/bin:${PATH:-}"
 LOG="${BFREE_D2C_LOG:-/tmp/bfree_d2c_stub.log}"
 ISO="${BFREE_STUB_ISO:-$ROOT/bfree-compositor-stub.iso}"
-QEMU_SECS="${BFREE_D2C_QEMU_SECS:-50}"
+QEMU_SECS="${BFREE_D2C_QEMU_SECS:-90}"
 KERNEL="${BFREE_STUB_KERNEL:-$ROOT/kernel/kernel.elf}"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "missing: $1" >&2; exit 1; }; }
@@ -54,6 +54,10 @@ if grep -aq 'wl shm put wr=0xffffffffffffffe4' "$LOG"; then
 fi
 if grep -aq 'wl shm put=0xffffffffffffffe4' "$LOG"; then
   echo "FAIL: wl shm put returned EINVAL aggregate"
+  fail=1
+fi
+if grep -aqE 'wl shm put open=0xffffffffffffffe8|wl shm put=0xffffffffffffffe8' "$LOG"; then
+  echo "FAIL: wl shm put EMFILE (vfile slots exhausted? need 72 slots, no /tmp/wlm)"
   fail=1
 fi
 put_ok="$(grep -ao 'wl shm put=0x[0-9a-f]*' "$LOG" | tail -1 || true)"

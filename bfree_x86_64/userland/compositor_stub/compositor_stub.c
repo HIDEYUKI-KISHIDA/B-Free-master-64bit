@@ -55,8 +55,8 @@
 #define MS_SYNC 4
 _Static_assert((WL_APP_MAX_BYTES + (unsigned)WL_TILE_BYTES - 1U) / (unsigned)WL_TILE_BYTES <= 99U,
                "wl tile names are 2 digits");
-/* 1024×768×4 = 3145728 = 64 × 49152 (48KiB) tiles — fits 2-digit /tmp/wl00–wl63
- * and g1-desk vfile slots (64) without a second pass. */
+/* 1024×768×4 = 3145728 = 64 × 49152 (48KiB) tiles — /tmp/wl00–wl63.
+ * Kernel vfile slots (72): wayland-0 + 64 tiles + Qt /tmp headroom; no /tmp/wlm. */
 #define WL_SURF_MAX_W 1024
 #define WL_SURF_MAX_H 768
 
@@ -2464,23 +2464,15 @@ static unsigned wl_shm_tiles(unsigned app_bytes)
 #ifdef WL_AS_CLIENT
 static long wl_shm_put(const unsigned char *app, unsigned app_bytes)
 {
-    static const char magp[] = "/tmp/wlm";
-    static const char mag[] = "SHM1";
     char path[12];
     unsigned i;
     unsigned tiles;
     long fd;
     long w;
-    long magfd;
     unsigned total = 0;
 
     if (app_bytes > WL_APP_MAX_BYTES) {
         app_bytes = WL_APP_MAX_BYTES;
-    }
-    magfd = sys6(SYS_OPEN, (long)(unsigned long)magp, O_RDWR | O_CREAT | O_TRUNC, 420, 0, 0, 0);
-    if (magfd >= 0) {
-        (void)sys6(SYS_WRITE, magfd, (long)(unsigned long)mag, 4, 0, 0, 0);
-        (void)sys6(SYS_CLOSE, magfd, 0, 0, 0, 0, 0);
     }
     tiles = wl_shm_tiles(app_bytes);
     if (tiles > 99U) {
@@ -2531,28 +2523,15 @@ static long wl_shm_put(const unsigned char *app, unsigned app_bytes)
 #ifndef WL_AS_CLIENT
 static long wl_shm_get(unsigned char *app, unsigned app_bytes)
 {
-    static const char magp[] = "/tmp/wlm";
     char path[12];
-    char mag[4];
     unsigned i;
     unsigned tiles;
     long fd;
     long r;
-    long magfd;
     unsigned total = 0;
 
     if (app_bytes > WL_APP_MAX_BYTES) {
         app_bytes = WL_APP_MAX_BYTES;
-    }
-    magfd = sys6(SYS_OPEN, (long)(unsigned long)magp, O_RDWR, 0, 0, 0, 0);
-    if (magfd < 0) {
-        return magfd;
-    }
-    r = sys6(SYS_READ, magfd, (long)(unsigned long)mag, 4, 0, 0, 0);
-    (void)sys6(SYS_CLOSE, magfd, 0, 0, 0, 0, 0);
-    if (r != 4 || mag[0] != 'S' || mag[1] != 'H' || mag[2] != 'M' || mag[3] != '1') {
-        serial("[wl] shm magic miss\n", 20);
-        return -1;
     }
     tiles = wl_shm_tiles(app_bytes);
     if (tiles > 99U) {
