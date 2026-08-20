@@ -2892,12 +2892,15 @@ void _start(void)
         }
     }
 
-    /* vfork parent resumes after child exit_group. pid local may be -1 after
-     * stack restore; child pid is in /tmp/wlcp (written before exec). */
-    if (listen_fd >= 0 && pid != 0) {
+    /* vfork parent resumes after child exit_group. Shared stack may leave
+     * pid==0 even though we are the parent; child pid is in /tmp/wlcp. */
+    if (listen_fd >= 0) {
         long child_pid = wl_vfork_pid_load();
         serial(parentm, sizeof(parentm) - 1);
         if (child_pid <= 0 && pid > 0) {
+            child_pid = pid;
+        }
+        if (child_pid <= 0 && pid < 0) {
             child_pid = pid;
         }
         if (child_pid > 0) {

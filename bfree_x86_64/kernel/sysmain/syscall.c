@@ -20774,20 +20774,10 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         if (g_guest_pdeathsig > 0 && g_coop_side == 0 && g_guest_fork_active) {
             bfree_guest_sig_raise(g_guest_pdeathsig);
         }
-        if (g_guest_thread_active) {
-            long te = bfree_guest_thread_exit(arg1);
-
-            /* Thread switch / clone child — not whole-process death. */
-            if (bfree_sysret_is_thread_magic(te) || bfree_sysret_is_magic(te)) {
-                return te;
-            }
-            /* Non-main thread exited but others remain. */
-            if (g_guest_thread_active && te != -1) {
-                return te;
-            }
-            /* Main thread exit or stale g_guest_thread_active — vfork exit below. */
-            g_guest_thread_active = 0;
-        }
+        /*
+         * vfork+exec child (Qt D2c) may have CLONE_THREAD live. Process death
+         * must resume the vfork parent — never BFREE_SYSRET_THREAD_SWITCH first.
+         */
         bfree_process_heal_focus_for_exit();
         if (g_guest_fork_active || bfree_process_child_active()) {
             /* Heal: execve_reset / nested paths may clear the flag while the
@@ -20800,6 +20790,20 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
             }
             bfree_guest_fork_child_pipe_close_writers();
             return bfree_guest_exit_from_fork(arg1);
+        }
+        if (g_guest_thread_active) {
+            long te = bfree_guest_thread_exit(arg1);
+
+            /* Thread switch / clone child — not whole-process death. */
+            if (bfree_sysret_is_thread_magic(te) || bfree_sysret_is_magic(te)) {
+                return te;
+            }
+            /* Non-main thread exited but others remain. */
+            if (g_guest_thread_active && te != -1) {
+                return te;
+            }
+            /* Main thread exit or stale g_guest_thread_active — fall through. */
+            g_guest_thread_active = 0;
         }
         /* Last-resort: a nofork applet (or ash itself) called _exit. Re-enter
          * busybox instead of parking the only task in an infinite pause.
