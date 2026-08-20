@@ -66,6 +66,8 @@ int bfree_process_slot_of_pid(int pid);
 int bfree_process_child_active(void);
 /* Re-focus g_active on a runnable child before exit_group vfork resume. */
 void bfree_process_heal_focus_for_exit(void);
+/* Scan live slots (parent_pt or VFORK) so exit_group always finds the session. */
+int bfree_process_heal_vfork_exit_session(void);
 int bfree_process_child_pid(void);
 int bfree_process_child_has_private_as(void);
 int bfree_process_child_fork_pt_idx(void);

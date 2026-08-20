@@ -468,6 +468,30 @@ void bfree_process_heal_focus_for_exit(void)
     }
 }
 
+int bfree_process_heal_vfork_exit_session(void)
+{
+    int i;
+
+    bfree_process_heal_focus_for_exit();
+    if (g_active >= 0 &&
+        bfree_process_is_live_state(g_children[g_active].state) &&
+        (g_children[g_active].parent_pt != 0 ||
+         g_children[g_active].state == BFREE_PROC_VFORK)) {
+        return 1;
+    }
+    for (i = 0; i < BFREE_PROC_MAX_CHILDREN; ++i) {
+        if (!bfree_process_is_live_state(g_children[i].state)) {
+            continue;
+        }
+        if (g_children[i].parent_pt != 0 ||
+            g_children[i].state == BFREE_PROC_VFORK) {
+            g_active = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int bfree_process_pid_is_stopped(int pid)
 {
     int slot = bfree_process_slot_of_pid(pid);

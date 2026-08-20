@@ -331,6 +331,7 @@ static int g_guest_fork_status_ready;
  * Distinct from has_private_as: vfork+exec also gains a private AS, but the
  * parent was frozen and still needs the shared-AS stack snapshot restored. */
 static int g_guest_fork_was_as_copy;
+static int g_vfork_parent_immute_valid;
 static int g_guest_next_pid = 2;
 static uintptr_t g_guest_clear_child_tid;
 static int g_guest_thread_active;
@@ -970,8 +971,12 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
     }
 
     parent_fs = bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE);
-    g_guest_fork_saved_fsbase = parent_fs;
-    bfree_guest_thread_save_parent_ctx();
+    /* vfork parent park: clone in the exec'd child must not clobber fork_saved_*
+     * (immune holds compositor resume; guest_link_compat blocks libc clone). */
+    if (!g_vfork_parent_immute_valid) {
+        g_guest_fork_saved_fsbase = parent_fs;
+        bfree_guest_thread_save_parent_ctx();
+    }
 
     child = &g_gthr[child_idx];
     child->used = 1;
@@ -1306,7 +1311,6 @@ static uint64_t g_vfork_parent_immute_r13;
 static uint64_t g_vfork_parent_immute_r14;
 static uint64_t g_vfork_parent_immute_r15;
 static uint64_t g_vfork_parent_immute_rdx;
-static int g_vfork_parent_immute_valid;
 
 static void bfree_guest_vfork_parent_immute_save(void)
 {
@@ -1521,8 +1525,10 @@ static long bfree_guest_exit_from_fork(long status)
 {
     int *cleartid;
     size_t i;
+    int as_copy;
 
-    int as_copy = g_guest_fork_was_as_copy;
+    uart_puts("[VFORK] exit_from_fork enter\n");
+    as_copy = g_guest_fork_was_as_copy;
     /* Capture before exit_restore_as clears parent_pt / has_private_as. */
     page_table_t *resume_pt = bfree_process_parent_pt();
     if (!resume_pt && knl_current_task) {
@@ -20774,12 +20780,19 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         if (g_guest_pdeathsig > 0 && g_coop_side == 0 && g_guest_fork_active) {
             bfree_guest_sig_raise(g_guest_pdeathsig);
         }
+        uart_puts("[VFORK] eg fa=");
+        uart_puthex64((uint64_t)(unsigned)g_guest_fork_active);
+        uart_puts(" ca=");
+        uart_puthex64((uint64_t)(unsigned)bfree_process_child_active());
+        uart_puts(" ta=");
+        uart_puthex64((uint64_t)(unsigned)g_guest_thread_active);
+        uart_puts("\n");
         /*
          * vfork+exec child (Qt D2c) may have CLONE_THREAD live. Process death
          * must resume the vfork parent — never BFREE_SYSRET_THREAD_SWITCH first.
          */
-        bfree_process_heal_focus_for_exit();
-        if (g_guest_fork_active || bfree_process_child_active()) {
+        if (bfree_process_heal_vfork_exit_session() ||
+            g_guest_fork_active || bfree_process_child_active()) {
             /* Heal: execve_reset / nested paths may clear the flag while the
              * private-AS child is still live (desktop Terminal→busybox). */
             if (!g_guest_fork_active) {
