@@ -20,6 +20,11 @@ if [[ ! -s "$KERNEL" ]]; then
   echo "missing kernel: $KERNEL (make -C kernel)" >&2
   exit 1
 fi
+if ! strings "$KERNEL" | grep -qF '[VFORK] eg'; then
+  echo "FAIL: $KERNEL lacks [VFORK] eg marker — rebuild with:" >&2
+  echo "  make -C kernel clean && make -C kernel RELEASE=1" >&2
+  exit 1
+fi
 
 if [[ ! -s "$ROOT/bfree-desk.iso" && ! -s "$ROOT/bfree.iso" ]]; then
   bash "$ROOT/tools/make_desk_iso.sh"

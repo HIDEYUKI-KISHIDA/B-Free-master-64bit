@@ -347,7 +347,12 @@ __attribute__((noinline)) static void hello_gui_session(void)
                          : "+r"(rax)
                          : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9)
                          : "rcx", "r11", "memory");
-        qt_hello_serial("[qt] exit returned\n");
+        if (rax == (long)-4089)
+            qt_hello_serial("[qt] exit ret=THREAD_SWITCH\n");
+        else if (rax == (long)-4093)
+            qt_hello_serial("[qt] exit ret=FORK_PARENT\n");
+        else
+            qt_hello_serial("[qt] exit returned\n");
         rax = 60;
         rdi = 0;
         __asm__ volatile("syscall"
