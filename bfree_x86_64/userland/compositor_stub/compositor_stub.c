@@ -48,14 +48,15 @@
 #define SYS_MSYNC 26
 #define SYS_MEMFD 319
 #define WL_SHM_FD 8
-#define WL_TILE_BYTES 32768
+#define WL_TILE_BYTES 49152
 #define WL_APP_W 1024U
 #define WL_APP_H 768U
 #define WL_APP_MAX_BYTES (WL_APP_W * WL_APP_H * 4U)
 #define MS_SYNC 4
 _Static_assert((WL_APP_MAX_BYTES + (unsigned)WL_TILE_BYTES - 1U) / (unsigned)WL_TILE_BYTES <= 99U,
                "wl tile names are 2 digits");
-/* Cap only the mmap length. Do not put this in BSS — 1024x768 NOBITS hung load_elf. */
+/* 1024×768×4 = 3145728 = 64 × 49152 (48KiB) tiles — fits 2-digit /tmp/wl00–wl63
+ * and g1-desk vfile slots (64) without a second pass. */
 #define WL_SURF_MAX_W 1024
 #define WL_SURF_MAX_H 768
 
@@ -2498,7 +2499,14 @@ static long wl_shm_put(const unsigned char *app, unsigned app_bytes)
             serial_hex("wl shm put open=", fd);
             return fd;
         }
-        (void)sys6(SYS_FTRUNCATE, fd, (long)WL_TILE_BYTES, 0, 0, 0, 0);
+        {
+            long tr = sys6(SYS_FTRUNCATE, fd, (long)WL_TILE_BYTES, 0, 0, 0, 0);
+            if (tr < 0) {
+                serial_hex("wl shm put trunc=", tr);
+                (void)sys6(SYS_CLOSE, fd, 0, 0, 0, 0, 0);
+                return tr;
+            }
+        }
         while (off < chunk) {
             unsigned c = chunk - off;
             if (c > 4096U) {

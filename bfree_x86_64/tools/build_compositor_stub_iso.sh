@@ -140,7 +140,7 @@ fi
 if grep -aq 'D2c fullscreen' "$QTCLI" 2>/dev/null; then
   echo "P8TEST_D2C=fullscreen"
 else
-  echo "P8TEST_D2C=MISSING (hello still 480x320 window; apply qt_wl_hello.cpp + compositor_stub.c)"
+  echo "P8TEST_D2C=MISSING (hello still 480x320 window; apply qt_wl_hello.cpp + compositor_stub.c 48KiB tiles)"
 fi
 echo "TRAMP_BYTES=$(wc -c < "$TRAMP")"
 echo "KERNEL_REBUILD=no"
