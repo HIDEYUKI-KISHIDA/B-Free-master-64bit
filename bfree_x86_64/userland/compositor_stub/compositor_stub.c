@@ -40,6 +40,7 @@
 #define SYS_ACCEPT 43
 #define SYS_BIND 49
 #define SYS_LISTEN 50
+#define SYS_GETPID 39
 #define SYS_VFORK 58
 #define SYS_EXECVE 59
 #define SYS_EXIT 60
@@ -2801,14 +2802,19 @@ void _start(void)
     cli_fd = -1;
     acc_fd = -1;
     pid = -1;
-    if (listen_fd >= 0) {
-        pid = sys6(SYS_VFORK, 0, 0, 0, 0, 0, 0);
-        serial_hex("wl vfork=", pid);
-    }
+    {
+        static long g_wl_vfork_child_pid;
 
-    if (pid == 0) {
-        unsigned char hdr[4];
-        serial(childm, sizeof(childm) - 1);
+        g_wl_vfork_child_pid = -1;
+        if (listen_fd >= 0) {
+            pid = sys6(SYS_VFORK, 0, 0, 0, 0, 0, 0);
+            serial_hex("wl vfork=", pid);
+        }
+
+        if (pid == 0) {
+            unsigned char hdr[4];
+            g_wl_vfork_child_pid = sys6(SYS_GETPID, 0, 0, 0, 0, 0, 0);
+            serial(childm, sizeof(childm) - 1);
         p8_argv[0] = p8_path;
         p8_argv[1] = 0;
         p8_envp[0] = env_qpa;
@@ -2841,37 +2847,33 @@ void _start(void)
         (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
         for (;;) {
         }
-    }
+        }
 
-    if (pid > 0 && listen_fd >= 0) {
-        unsigned char hdr[4];
-        unsigned int wlen;
-        serial(parentm, sizeof(parentm) - 1);
-        acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
-        serial_hex("wl accept=", acc_fd);
-        if (acc_fd >= 0) {
-            serial(accepm, sizeof(accepm) - 1);
-            nread = wl_read_all(acc_fd, hdr, 4);
-            wlen = (nread == 4) ? get_u32(hdr) : 0;
-            if (wlen > 0 && wlen <= 512) {
-                nread = wl_read_all(acc_fd, msg, wlen);
-                serial_hex("wl bytes=", nread);
-                (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
-                paint_desk_only(st.pool, desk_w, desk_h);
-                {
-                    unsigned int app_bytes = app_w * app_h * 4U;
-                    long got = wl_shm_get(st.pool + desk_w * desk_h * 4U, app_bytes);
-                    serial_hex("wl shm get=", got);
-                    if (got == (long)app_bytes) {
-                        serial(shmok, sizeof(shmok) - 1);
-                    } else {
-                        draw_xdg_window((unsigned int *)(void *)(st.pool + desk_w * desk_h * 4U),
-                                        app_w, app_h);
-                    }
+        /* vfork parent resumes after child exit_group. Stack restore leaves
+         * pid=-1 (snapshot from before vfork return); child pid lives in BSS. */
+        if (listen_fd >= 0 && pid != 0) {
+            long child_pid = g_wl_vfork_child_pid;
+
+            serial(parentm, sizeof(parentm) - 1);
+            if (child_pid > 0) {
+                (void)sys6(SYS_WAITPID, child_pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
+            }
+            paint_desk_only(st.pool, desk_w, desk_h);
+            {
+                unsigned int app_bytes = app_w * app_h * 4U;
+                long got = wl_shm_get(st.pool + desk_w * desk_h * 4U, app_bytes);
+                serial_hex("wl shm get=", got);
+                if (got == (long)app_bytes) {
+                    serial(shmok, sizeof(shmok) - 1);
+                } else {
+                    draw_xdg_window((unsigned int *)(void *)(st.pool + desk_w * desk_h * 4U),
+                                    app_w, app_h);
                 }
-                if (nread > 0) {
-                    wl_dispatch(&st, msg, (unsigned int)nread);
-                }
+            }
+            msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
+            serial_hex("wl bytes=", (long)msglen);
+            if (msglen > 0) {
+                wl_dispatch(&st, msg, msglen);
             }
         }
     }

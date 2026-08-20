@@ -49,7 +49,7 @@ fail=0
 grep -aq 'D2c fullscreen' "$LOG" || { echo "MISS: D2c fullscreen"; fail=1; }
 grep -aq 'vfork parent' "$LOG" || { echo "MISS: vfork parent"; fail=1; }
 if grep -aq 'wl shm put wr=0xffffffffffffffe4' "$LOG"; then
-  echo "FAIL: wl shm put EINVAL (kernel vfile < 32KiB?)"
+  echo "FAIL: wl shm put EINVAL (kernel vfile < 48KiB?)"
   fail=1
 fi
 if grep -aq 'wl shm put=0xffffffffffffffe4' "$LOG"; then
@@ -63,10 +63,12 @@ fi
 put_ok="$(grep -ao 'wl shm put=0x[0-9a-f]*' "$LOG" | tail -1 || true)"
 if [[ -n "$put_ok" ]]; then
   echo "OK: $put_ok"
-  if grep -aq 'wl shm get=0x0000000000000000' "$LOG"; then
-    echo "WARN: parent read 0 bytes (check tile count / slots)"
-    fail=1
-  fi
+fi
+grep -aq 'wl shm get=' "$LOG" || { echo "MISS: wl shm get"; fail=1; }
+get_ok="$(grep -ao 'wl shm get=0x[0-9a-f]*' "$LOG" | tail -1 || true)"
+if [[ -n "$get_ok" && "$get_ok" == *"0000000000000000"* ]]; then
+  echo "WARN: parent read 0 shm bytes"
+  fail=1
 fi
 if [[ -f "$ROOT/userland/compositor_stub/qt_wl_hello.elf" ]]; then
   sz="$(wc -c < "$ROOT/userland/compositor_stub/qt_wl_hello.elf")"
