@@ -20,7 +20,9 @@ product desk (`DesktopShell.qml` as Qt Wayland client; **D1 done**,
 **D2 first hop done** — stub hello carries
 `compositor_stub/DesktopShell.qml`, paints GuestMvpShell bits,
 `getenv=wayland`, `exit_group`, `[wl] vfork parent`. **no**
-`QQmlEngine` / `beginCreate`. Product QML IR waits until asked.
+`QQmlEngine` / `beginCreate`. **D2c:** client SHM is 1024×768
+(48KiB×64 tiles, `view[1]` at 0,0) so stub chrome is covered; needs g1-desk vfile 48KiB.
+Product QML IR waits until asked.
 D3 not started). **GPU** = accel (G* not started). Stub history:
 `docs/HONDESK_PHASES.ja.md`. Scripts live under `bfree_x86_64/`
 (`cd` there, not `$HOME`).
@@ -32,8 +34,11 @@ W8 **done** (gold/navy/cyan + `[wl] vfork parent`).
 `D2 qml-client` / `hello wait-stub` / `getenv=wayland` /
 `D2 argv -platform wayland` / `D2 fill desk` / `exit_group` /
 `[wl] vfork parent`. Window is wallpaper `#7A8FA8` + white card +
-EX/VW/TE tiles (not W8 gold). Surrounding EX/VW/TE is stub 仮 chrome.
-Keep 480×320 SHM. Stub hello is ~35MB: `[wl] vfork parent` can
+EX/VW/TE tiles (not W8 gold). **D2c:** 1024×768 client SHM at
+(0,0) covers stub chrome (`D2c fullscreen`). Tiles are 48KiB×64
+(`/tmp/wl00`–`wl63`). Release g1-desk at 16KiB vfile → `wl shm put trunc=-28`.
+Smoke: `bash tools/_d2c_compositor_stub_smoke.sh`. Do not keep 480×320 after D2c.
+Stub hello is ~35MB: `[wl] vfork parent` can
 appear several seconds after `[qt] exit_group` (`ppid=1` means the
 parent is still waiting). Grep again after the QEMU window is up;
 do not rebuild on a missing parent if `exit_group` already printed.
@@ -361,7 +366,7 @@ paints a lookalike window on the compositor FB (`[wl] desk open`).
 The Wayland client now sends **two `xdg_toplevel`s** from **p8test.elf**
 (g1-desk named module, **not** `desktop.elf`):
 fullscreen desk chrome (icons + Start bar, title `bar`) and a
-480×320 app window. Compositor `vfork` (Linux nr **58**) then
+1024×768 D2c app window (covers chrome). Compositor `vfork` (Linux nr **58**) then
 `execve("/p8test.elf")` with `QT_QPA_PLATFORM=wayland` (no bfree inject —
 that is only for `desktop.elf`). Do **not** `fork` (nr 57) the compositor:
 AS-copy COWs the hardware FB (solid wallpaper, `[COW] break` on every

@@ -4,16 +4,17 @@
  * Built as qt_wl_client.elf (-DWL_QT_CLIENT). Exec env is
  * QT_QPA_PLATFORM=wayland. Not desktop.elf (bfree QPA steals FB). hello.elf
  * stays the fallback if p8test execve returns. Two xdg_toplevels: desk
- * chrome + small app window. App pixels go through /tmp/wlXX vfile tiles
- * (16KB each, no SCM_RIGHTS; a 3.7MB AF_UNIX dump deadlocks). Spawn with
+ * chrome + app window. App pixels go through /tmp/wlXX vfile tiles
+ * (32KB each, 2-digit names wl00–wl99, no SCM_RIGHTS; a 3.7MB AF_UNIX
+ * dump deadlocks). 1024×768 app = 96 tiles. Spawn with
  * vfork (nr 58). Do not fork (nr 57) the compositor: AS-copy COWs the
  * hardware FB (gray wallpaper, [COW] break on every mouse, unusable).
  * First-frame clients exit after shm/wire so vfork parent can blit.
- * Compositor blits those tiles; it does not paint the Qt window. Desk
- * chrome still compositor-side (full FB > 64 vfiles). Not product
- * DesktopShell.qml. Real QGuiApplication is qt_wl_hello.elf mapped as
- * p8test.elf when the guest Qt prefix can link it; otherwise this C
- * client stays in the slot.
+ * Compositor blits those tiles; it does not paint the Qt window. D2c
+ * app view is fullscreen at (0,0) so client bits cover stub chrome.
+ * Not product DesktopShell.qml IR. Real QGuiApplication is
+ * qt_wl_hello.elf mapped as p8test.elf when the guest Qt prefix can
+ * link it; otherwise this C client stays in the slot.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
  */
 #define BFREE_FB0_FD 0x2000
@@ -47,10 +48,15 @@
 #define SYS_MSYNC 26
 #define SYS_MEMFD 319
 #define WL_SHM_FD 8
-#define WL_TILE_BYTES 16384
-#define WL_APP_MAX_BYTES (480U * 320U * 4U)
+#define WL_TILE_BYTES 49152
+#define WL_APP_W 1024U
+#define WL_APP_H 768U
+#define WL_APP_MAX_BYTES (WL_APP_W * WL_APP_H * 4U)
 #define MS_SYNC 4
-/* Cap only the mmap length. Do not put this in BSS — 1024x768 NOBITS hung load_elf. */
+_Static_assert((WL_APP_MAX_BYTES + (unsigned)WL_TILE_BYTES - 1U) / (unsigned)WL_TILE_BYTES <= 99U,
+               "wl tile names are 2 digits");
+/* 1024×768×4 = 3145728 = 64 × 49152 (48KiB) tiles — fits 2-digit /tmp/wl00–wl63
+ * and g1-desk vfile slots (64) without a second pass. */
 #define WL_SURF_MAX_W 1024
 #define WL_SURF_MAX_H 768
 
@@ -1758,8 +1764,8 @@ static void wl_dispatch(struct wl_state *st, const unsigned char *msg, unsigned 
             serial("[wl] get_toplevel desk\n", 24);
         } else if (id == 12 && op == 1) {
             st->xdg = 1;
-            st->view[1].x = 540;
-            st->view[1].y = 48;
+            st->view[1].x = 0;
+            st->view[1].y = 0;
             serial("[wl] get_toplevel\n", 19);
         } else if ((id == 10 || id == 13) && op == 2) {
             serial("[wl] xdg set_title\n", 20);
@@ -2112,8 +2118,9 @@ static void draw_desk_chrome(unsigned int *p, unsigned int w, unsigned int h)
     }
 }
 
-/* Second xdg_toplevel: 480x320 app window. D2 Qt client paints DesktopShell
- * layout here; this fallback is C p8test only (green Qt / rose shm). */
+/* Second xdg_toplevel: 1024x768 app window (D2c, covers stub chrome).
+ * D2 Qt client paints DesktopShell layout here; this fallback is C
+ * p8test only (green Qt / rose shm). */
 static void draw_xdg_window(unsigned int *p, unsigned int w, unsigned int h)
 {
     pool_rect(p, w, h, 0, 0, w, h, 0x00F1F5F9UL);
@@ -2128,7 +2135,7 @@ static void draw_xdg_window(unsigned int *p, unsigned int w, unsigned int h)
 
 /* Two xdg_toplevels, one pool.
  *   5/9/10 + buf 7  = fullscreen desk (bar/icons)
- *   11/12/13 + buf 14 = 480x320 app window
+ *   11/12/13 + buf 14 = 1024x768 app window
  * Keep compositor=3 shm=4 pool=6 — dispatch already uses those ids. */
 static unsigned wl_client_build(unsigned char *m, unsigned int dw, unsigned int dh,
                                 unsigned int aw, unsigned int ah)
@@ -2476,6 +2483,10 @@ static long wl_shm_put(const unsigned char *app, unsigned app_bytes)
         (void)sys6(SYS_CLOSE, magfd, 0, 0, 0, 0, 0);
     }
     tiles = wl_shm_tiles(app_bytes);
+    if (tiles > 99U) {
+        serial("[wl] shm tiles>99\n", 18);
+        return -1;
+    }
     for (i = 0; i < tiles; i++) {
         unsigned off = 0;
         unsigned chunk = app_bytes - i * (unsigned)WL_TILE_BYTES;
@@ -2488,7 +2499,14 @@ static long wl_shm_put(const unsigned char *app, unsigned app_bytes)
             serial_hex("wl shm put open=", fd);
             return fd;
         }
-        (void)sys6(SYS_FTRUNCATE, fd, (long)WL_TILE_BYTES, 0, 0, 0, 0);
+        {
+            long tr = sys6(SYS_FTRUNCATE, fd, (long)WL_TILE_BYTES, 0, 0, 0, 0);
+            if (tr < 0) {
+                serial_hex("wl shm put trunc=", tr);
+                (void)sys6(SYS_CLOSE, fd, 0, 0, 0, 0, 0);
+                return tr;
+            }
+        }
         while (off < chunk) {
             unsigned c = chunk - off;
             if (c > 4096U) {
@@ -2537,6 +2555,10 @@ static long wl_shm_get(unsigned char *app, unsigned app_bytes)
         return -1;
     }
     tiles = wl_shm_tiles(app_bytes);
+    if (tiles > 99U) {
+        serial("[wl] shm tiles>99\n", 18);
+        return -1;
+    }
     for (i = 0; i < tiles; i++) {
         unsigned off = 0;
         unsigned chunk = app_bytes - i * (unsigned)WL_TILE_BYTES;
@@ -2572,7 +2594,7 @@ static long wl_shm_get(unsigned char *app, unsigned app_bytes)
 
 #ifdef WL_STUB_LIB
 /* Linked into qt_wl_hello.elf (real QGuiApplication). Same tiles + wire as
- * the C p8test client. Desk chrome stays compositor-side. */
+ * the C p8test client. D2c app view is fullscreen; stub chrome is covered. */
 long wl_stub_flush_app(const unsigned char *app, unsigned w, unsigned h)
 {
     static const char shmm[] = "[qt] QGuiApplication shm\n";
@@ -2591,14 +2613,14 @@ long wl_stub_flush_app(const unsigned char *app, unsigned w, unsigned h)
     app_w = w;
     app_h = h;
     if (app_w == 0 || app_h == 0) {
-        app_w = 480;
-        app_h = 320;
+        app_w = WL_APP_W;
+        app_h = WL_APP_H;
     }
-    if (app_w > 480U) {
-        app_w = 480;
+    if (app_w > WL_APP_W) {
+        app_w = WL_APP_W;
     }
-    if (app_h > 320U) {
-        app_h = 320;
+    if (app_h > WL_APP_H) {
+        app_h = WL_APP_H;
     }
     app_bytes = app_w * app_h * 4U;
     putn = wl_shm_put(app, app_bytes);
@@ -2634,8 +2656,8 @@ void _start(void)
 #endif
     unsigned int desk_w = 1024;
     unsigned int desk_h = 768;
-    unsigned int app_w = 480;
-    unsigned int app_h = 320;
+    unsigned int app_w = WL_APP_W;
+    unsigned int app_h = WL_APP_H;
     unsigned int pool_bytes;
     long mapped;
     long cli_fd;
@@ -2647,6 +2669,7 @@ void _start(void)
     serial(hello, sizeof(hello) - 1);
 #ifdef WL_QT_CLIENT
     serial(qpa, sizeof(qpa) - 1);
+    serial("[qt] D2c fullscreen\n", 20);
 #endif
     pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
     mapped = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
@@ -2759,8 +2782,8 @@ void _start(void)
         st.view[i].x = 0;
         st.view[i].y = 0;
     }
-    st.view[1].x = 540;
-    st.view[1].y = 48;
+    st.view[1].x = 0;
+    st.view[1].y = 0;
 
     /* Desk wallpaper color — not magenta. Magenta under the desk flashes
      * through full-FB present / cursor restore. Proof-of-life fill is over. */
@@ -2775,11 +2798,11 @@ void _start(void)
     if (desk_h > WL_SURF_MAX_H) {
         desk_h = WL_SURF_MAX_H;
     }
-    app_w = 480;
-    app_h = 320;
+    app_w = WL_APP_W;
+    app_h = WL_APP_H;
     pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
-    map_bytes =
-        (unsigned int)WL_SURF_MAX_W * (unsigned int)WL_SURF_MAX_H * 4U + 480U * 320U * 4U;
+    map_bytes = (unsigned int)WL_SURF_MAX_W * (unsigned int)WL_SURF_MAX_H * 4U +
+                WL_APP_W * WL_APP_H * 4U;
     {
         long shm_map = sys6(9, 0, (long)map_bytes, PROT_READ | PROT_WRITE,
                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -2793,6 +2816,7 @@ void _start(void)
     st.pool_size = pool_bytes;
     serial_hex("wl desk w=", (long)desk_w);
     serial_hex("wl desk h=", (long)desk_h);
+    serial("[wl] D2c fullscreen\n", 20);
 
     listen_fd = wl_listen_unix();
     cli_fd = -1;
