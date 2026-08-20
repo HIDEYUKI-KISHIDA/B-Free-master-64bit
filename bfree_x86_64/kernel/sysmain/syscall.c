@@ -1040,11 +1040,13 @@ static long bfree_guest_thread_exit(long status)
     (void)status;
     preempt_disable();
     if (!bfree_gthr_mt()) {
+        g_guest_thread_active = 0;
         preempt_enable();
         return -1;
     }
     idx = g_gthr_cur;
     if (idx < 0 || !g_gthr[idx].used) {
+        g_guest_thread_active = 0;
         preempt_enable();
         return -1;
     }
@@ -16226,6 +16228,11 @@ static int bfree_sysret_is_magic(long r)
            r == BFREE_SYSRET_SIGNAL;
 }
 
+static int bfree_sysret_is_thread_magic(long r)
+{
+    return r == BFREE_SYSRET_THREAD_CHILD || r == BFREE_SYSRET_THREAD_SWITCH;
+}
+
 
 static void bfree_guest_sig_raise(int sig)
 {
@@ -20770,17 +20777,25 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         if (g_guest_thread_active) {
             long te = bfree_guest_thread_exit(arg1);
 
-            /* Non-main thread switch, or still in MT: take the gthr result. */
-            if (g_guest_thread_active || te != -1) {
+            /* Thread switch / clone child — not whole-process death. */
+            if (bfree_sysret_is_thread_magic(te) || bfree_sysret_is_magic(te)) {
                 return te;
             }
-            /* Main thread tore down all guest threads — process exit below. */
+            /* Non-main thread exited but others remain. */
+            if (g_guest_thread_active && te != -1) {
+                return te;
+            }
+            /* Main thread exit or stale g_guest_thread_active — vfork exit below. */
+            g_guest_thread_active = 0;
         }
+        bfree_process_heal_focus_for_exit();
         if (g_guest_fork_active || bfree_process_child_active()) {
             /* Heal: execve_reset / nested paths may clear the flag while the
              * private-AS child is still live (desktop Terminal→busybox). */
             if (!g_guest_fork_active) {
+                int heal_pid = bfree_process_child_pid();
                 g_guest_fork_active = 1;
+                g_guest_fork_pid = heal_pid > 0 ? heal_pid : 1;
                 uart_puts("[VFORK] exit heal fork_active for child_active\n");
             }
             bfree_guest_fork_child_pipe_close_writers();

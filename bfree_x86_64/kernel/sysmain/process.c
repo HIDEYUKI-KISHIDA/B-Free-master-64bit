@@ -452,6 +452,22 @@ int bfree_process_child_active(void)
     return ch && bfree_process_is_runnable_state(ch->state);
 }
 
+void bfree_process_heal_focus_for_exit(void)
+{
+    int i;
+
+    bfree_process_heal_active();
+    if (g_active >= 0) {
+        return;
+    }
+    for (i = 0; i < BFREE_PROC_MAX_CHILDREN; ++i) {
+        if (bfree_process_is_runnable_state(g_children[i].state)) {
+            g_active = i;
+            return;
+        }
+    }
+}
+
 int bfree_process_pid_is_stopped(int pid)
 {
     int slot = bfree_process_slot_of_pid(pid);
