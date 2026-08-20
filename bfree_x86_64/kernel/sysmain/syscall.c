@@ -1666,6 +1666,10 @@ static long bfree_guest_exit_from_fork(long status)
                     : (parent_waiting && wr > 0
                            ? (uint64_t)wr
                            : (uint64_t)(long)g_guest_fork_pid);
+            if (g_bfree_fork_parent_ret == 0ULL && g_guest_fork_pid > 0 &&
+                !g_guest_waitid_active) {
+                g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+            }
         }
         uart_puts("[VFORK] parent resume rip=");
         uart_puthex64(g_bfree_fork_saved_rcx);

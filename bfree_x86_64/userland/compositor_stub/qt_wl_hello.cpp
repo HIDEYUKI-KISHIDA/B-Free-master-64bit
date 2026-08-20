@@ -365,6 +365,7 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
+    qt_hello_serial("[qt] build=d2c-vfork-3\n");
     qt_hello_serial("[qt] hello hybrid-qpa\n");
     qt_hello_serial("[qt] D1 wayland\n");
     qt_hello_serial("[qt] D2 qml-client\n");

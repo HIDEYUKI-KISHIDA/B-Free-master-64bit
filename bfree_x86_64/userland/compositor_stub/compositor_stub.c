@@ -2854,6 +2854,10 @@ void _start(void)
     }
 
     if (pid == 0) {
+        long self = sys6(SYS_GETPID, 0, 0, 0, 0, 0, 0);
+        /* vfork parent FORK_PARENT resume can leave rax=0 on shared stack;
+         * compositor is pid 1 — only pid!=1 is the vfork child slot. */
+        if (self != 1) {
         unsigned char hdr[4];
         long cpid = sys6(SYS_GETPID, 0, 0, 0, 0, 0, 0);
         wl_vfork_pid_store(cpid);
@@ -2889,6 +2893,7 @@ void _start(void)
         }
         (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
         for (;;) {
+        }
         }
     }
 
