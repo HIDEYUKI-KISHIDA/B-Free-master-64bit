@@ -1292,6 +1292,53 @@ static uint8_t g_guest_fork_stack_save[BFREE_VFORK_STACK_SAVE_BYTES] __attribute
 static uint64_t g_guest_fork_stack_save_base;
 static int g_guest_fork_stack_save_valid;
 
+/* vfork parent resume: immune copy of fork_saved_* at enter. Child syscalls
+ * (coop publish, thread switch) must not clobber the frozen parent frame. */
+static uint64_t g_vfork_parent_immute_rcx;
+static uint64_t g_vfork_parent_immute_r11;
+static uint64_t g_vfork_parent_immute_rsp;
+static uint64_t g_vfork_parent_immute_rbx;
+static uint64_t g_vfork_parent_immute_rbp;
+static uint64_t g_vfork_parent_immute_r12;
+static uint64_t g_vfork_parent_immute_r13;
+static uint64_t g_vfork_parent_immute_r14;
+static uint64_t g_vfork_parent_immute_r15;
+static uint64_t g_vfork_parent_immute_rdx;
+static int g_vfork_parent_immute_valid;
+
+static void bfree_guest_vfork_parent_immute_save(void)
+{
+    g_vfork_parent_immute_rcx = g_bfree_fork_saved_rcx;
+    g_vfork_parent_immute_r11 = g_bfree_fork_saved_r11;
+    g_vfork_parent_immute_rsp = g_bfree_fork_saved_rsp;
+    g_vfork_parent_immute_rbx = g_bfree_fork_saved_rbx;
+    g_vfork_parent_immute_rbp = g_bfree_fork_saved_rbp;
+    g_vfork_parent_immute_r12 = g_bfree_fork_saved_r12;
+    g_vfork_parent_immute_r13 = g_bfree_fork_saved_r13;
+    g_vfork_parent_immute_r14 = g_bfree_fork_saved_r14;
+    g_vfork_parent_immute_r15 = g_bfree_fork_saved_r15;
+    g_vfork_parent_immute_rdx = g_bfree_fork_saved_rdx;
+    g_vfork_parent_immute_valid = 1;
+}
+
+static void bfree_guest_vfork_parent_immute_restore(void)
+{
+    if (!g_vfork_parent_immute_valid) {
+        return;
+    }
+    g_bfree_fork_saved_rcx = g_vfork_parent_immute_rcx;
+    g_bfree_fork_saved_r11 = g_vfork_parent_immute_r11;
+    g_bfree_fork_saved_rsp = g_vfork_parent_immute_rsp;
+    g_bfree_fork_saved_rbx = g_vfork_parent_immute_rbx;
+    g_bfree_fork_saved_rbp = g_vfork_parent_immute_rbp;
+    g_bfree_fork_saved_r12 = g_vfork_parent_immute_r12;
+    g_bfree_fork_saved_r13 = g_vfork_parent_immute_r13;
+    g_bfree_fork_saved_r14 = g_vfork_parent_immute_r14;
+    g_bfree_fork_saved_r15 = g_vfork_parent_immute_r15;
+    g_bfree_fork_saved_rdx = g_vfork_parent_immute_rdx;
+    g_vfork_parent_immute_valid = 0;
+}
+
 /* Minimal Linux waitid / SIGCHLD constants (used by exit-from-fork too). */
 #define BFREE_P_ALL  0
 #define BFREE_P_PID  1
@@ -1425,6 +1472,9 @@ static long bfree_guest_fork_enter(int copy_as)
     g_guest_fork_saved_brk = g_guest_brk;
     if (!copy_as) {
         (void)bfree_guest_vfork_stack_snapshot(g_bfree_fork_saved_rsp);
+        bfree_guest_vfork_parent_immute_save();
+    } else {
+        g_vfork_parent_immute_valid = 0;
     }
 
     if (copy_as) {
@@ -1595,6 +1645,9 @@ static long bfree_guest_exit_from_fork(long status)
             }
             bfree_coop_arm_parent_resume();
         } else {
+            if (!as_copy) {
+                bfree_guest_vfork_parent_immute_restore();
+            }
             g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
             g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
             g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
@@ -16894,6 +16947,9 @@ static long bfree_guest_exit_from_fork_signal(int sig)
     }
     g_bfree_sysret_exec_cr3 = 0;
     g_guest_sig_pending &= ~(1ULL << 16); /* SIGCHLD */
+    if (!as_copy) {
+        bfree_guest_vfork_parent_immute_restore();
+    }
     uart_puts("[VFORK] signal exit sig=");
     uart_puthex64((uint64_t)(unsigned)st);
     uart_puts("\n");

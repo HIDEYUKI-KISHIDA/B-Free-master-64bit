@@ -43,7 +43,7 @@ timeout "$QEMU_SECS" qemu-system-x86_64 \
 
 sleep 2
 echo "[d2c] serial grep:"
-grep -aE 'D2c fullscreen|D2 fill desk|exit_group|vfork parent|wl shm put=|wl shm get=' "$LOG" | head -40 || true
+grep -aE 'D2c fullscreen|D2 fill desk|exit_group|vfork parent|VFORK] parent resume|wl shm put=|wl shm get=' "$LOG" | head -40 || true
 
 fail=0
 grep -aq 'D2c fullscreen' "$LOG" || { echo "MISS: D2c fullscreen"; fail=1; }
