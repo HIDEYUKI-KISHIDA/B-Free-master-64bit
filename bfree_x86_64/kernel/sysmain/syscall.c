@@ -3500,7 +3500,8 @@ static int bfree_guest_eventfd_index(int fd)
 #define BFREE_GUEST_GROUP_FD        0x3704
 #define BFREE_GUEST_PROFILE_FD      0x3705
 #define BFREE_GUEST_BUSYBOX_FD      0x3706
-#define BFREE_GUEST_VFILE_SLOTS     64
+/* D2c: /tmp/wayland-0 + 64 wl tiles (+ Qt /tmp) — 64 slots + /tmp/wlm was EMFILE. */
+#define BFREE_GUEST_VFILE_SLOTS     72
 #define BFREE_GUEST_VFILE_SIZE      49152
 /* Keep clear of dir magics (0x3700..0x3736), OFD (0x3800), UNIX (0x3900),
  * PTY (0x3A00), and INET (0x3B00). Prior 0x3710 collided with ROOT_DIR;
