@@ -438,6 +438,7 @@ static long bfree_linux_read_signalfd(long fd, long buf, long count);
 static int bfree_guest_sig_take_eintr(void);
 static long bfree_guest_sig_try_deliver(long ret);
 static long bfree_guest_exit_from_fork_signal(int sig);
+static long bfree_guest_linux_exit_group(long arg1);
 static void bfree_guest_flocks_drop_pid(int pid);
 static int bfree_user_stack_poke_bytes(uint64_t user_vaddr, const char *bytes, uint64_t len);
 static int bfree_user_stack_peek_bytes(uint64_t user_vaddr, char *bytes, uint64_t len);
@@ -5716,9 +5717,12 @@ static void bfree_guest_exec_reset_subsystems(int is_busybox)
     bfree_guest_pipe_reset_all();
     bfree_guest_fd_ensure_init();
     /* Drop stale fork/coop only — full process_init here races AS-copy
-     * fork PT readiness and faulted the first applet (wc) on heap PTEs. */
-    g_guest_fork_active = 0;
-    g_guest_fork_pid = 0;
+     * fork PT readiness and faulted the first applet (wc) on heap PTEs.
+     * vfork+exec D2c: immune slot must keep fork_active until exit_group. */
+    if (!g_vfork_parent_immute_valid) {
+        g_guest_fork_active = 0;
+        g_guest_fork_pid = 0;
+    }
     g_guest_fork_status_ready = 0;
     g_guest_fork_was_as_copy = 0;
     g_coop_side = 0;
@@ -11836,6 +11840,25 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     uart_puts(" cr3=");
     uart_puthex64(g_bfree_sysret_exec_cr3);
     uart_puts("\n");
+    /* vfork+exec child: exec_reset / heal paths may clear fork_active; restore
+     * so exit_group always resumes the compositor parent (D2c). */
+    if (is_child && g_vfork_parent_immute_valid) {
+        int heal_pid;
+
+        (void)bfree_process_heal_vfork_exit_session();
+        heal_pid = bfree_process_child_pid();
+        g_guest_fork_active = 1;
+        g_guest_fork_pid = heal_pid > 0 ? heal_pid : g_guest_fork_pid;
+        if (g_guest_fork_pid <= 0) {
+            g_guest_fork_pid = 2;
+        }
+        uart_puts("[VFORK] exec child heal pid=");
+        uart_puthex64((uint64_t)(unsigned)g_guest_fork_pid);
+        uart_puts(" im=");
+        uart_puthex64((uint64_t)(unsigned)g_vfork_parent_immute_valid);
+        uart_puts("\n");
+    }
+    bfree_security_set_role(BFREE_ROLE_APP);
     return BFREE_SYSRET_EXEC_TRANSFER;
 }
 
@@ -11846,6 +11869,14 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
 static long sys_linux_clone(long flags, long newsp, long ptid, long ctid, long tls)
 {
     unsigned long f = (unsigned long)flags;
+
+    /* vfork child (Qt D2c): CLONE_THREAD overwrites fork_saved_* and makes
+     * exit_group prefer THREAD_SWITCH. guest_link_compat blocks libc clone;
+     * musl may still syscall(56) — reject here while parent is parked. */
+    if (g_vfork_parent_immute_valid &&
+        (f & (unsigned long)BFREE_LINUX_CLONE_THREAD) != 0UL) {
+        return -11; /* EAGAIN */
+    }
 
     /* Serial shared-AS coop threads (H26). No preemptive parallel schedule. */
     if ((f & (unsigned long)BFREE_LINUX_CLONE_THREAD) != 0UL) {
@@ -21423,6 +21454,11 @@ long knl_syscall_handler(long num, long arg1, long arg2, long arg3, long arg4, l
         uart_puthex64((uint64_t)(unsigned long)num);
         uart_puts("\n");
         --g_bfree_post_exec_syscalls;
+    }
+    /* Linux _exit / exit_group: route before role gate so vfork+exec children
+     * always hit vfork parent resume (D2c compositor stub). */
+    if (num == 60 || num == 231) {
+        return bfree_guest_linux_exit_group(arg1);
     }
     if (bfree_security_get_role() == BFREE_ROLE_APP) {
         return bfree_dispatch_app_role_syscall(num, arg1, arg2, arg3, arg4, arg5);

@@ -52,6 +52,12 @@ grep -aE 'D2c fullscreen|D2 fill desk|exit_group|vfork parent|VFORK] eg|VFORK] e
 
 fail=0
 grep -aq 'D2c fullscreen' "$LOG" || { echo "MISS: D2c fullscreen"; fail=1; }
+if grep -aq 'exit_group' "$LOG"; then
+  grep -aqF '[VFORK] eg fa=' "$LOG" || {
+    echo "FAIL: exit_group without kernel [VFORK] eg (stale kernel.elf on ISO?)"
+    fail=1
+  }
+fi
 grep -aq 'vfork parent' "$LOG" || { echo "MISS: vfork parent"; fail=1; }
 if grep -aq 'wl shm put wr=0xffffffffffffffe4' "$LOG"; then
   echo "FAIL: wl shm put EINVAL (kernel vfile < 48KiB?)"
