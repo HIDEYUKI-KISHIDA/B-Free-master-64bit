@@ -22,15 +22,26 @@ for d in "$HOME/out/bfree-qt6-guest-static" /root/out/bfree-qt6-guest-static; do
 done
 export BFREE_QT_GUEST_BUILD_DIR="${GUEST_QT:-/root/out/bfree-qt6-guest-static}"
 
+MUSL_OUT=""
 MUSL_INC=""
-for musl in "$ROOT/out/x86_64-elf-libm/prefix/include" \
-            /root/out/x86_64-elf-libm/prefix/include \
-            "$HOME/out/x86_64-elf-libm/prefix/include"; do
-  if [[ -f "$musl/stdio.h" ]]; then
-    MUSL_INC="$musl"
-    break
+for musl_root in "$HOME/out/x86_64-elf-libm" \
+                 /root/out/x86_64-elf-libm \
+                 "$ROOT/out/x86_64-elf-libm"; do
+  if [[ -z "$MUSL_OUT" && -f "$musl_root/libc.a" && -f "$musl_root/libm.a" ]]; then
+    MUSL_OUT="$musl_root"
   fi
+  for musl_inc in "$musl_root/prefix/include" "$musl_root/include"; do
+    if [[ -z "$MUSL_INC" && -f "$musl_inc/stdio.h" ]]; then
+      MUSL_INC="$musl_inc"
+    fi
+  done
+  [[ -n "$MUSL_OUT" && -n "$MUSL_INC" ]] && break
 done
+if [[ -n "$MUSL_OUT" ]]; then
+  export BFREE_ELF_LIBM_DIR="$MUSL_OUT"
+  export BFREE_ELF_LIBC_PATH="$MUSL_OUT/libc.a"
+  export BFREE_ELF_LIBM_PATH="$MUSL_OUT/libm.a"
+fi
 
 SRC_FALLBACK="${BFREE_DESKTOP_OBJ_FALLBACK:-$HOME/bfree_build/userland/desktop_qt}"
 PROGRAM_DESK="/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/desktop_qt"
@@ -266,7 +277,7 @@ link_d3_desktop() {
   local gdl_lf="/tmp/bfree-guest_desktop_link-$$.sh"
   tr -d '\r' < "$ROOT/tools/guest_desktop_link.sh" > "$gdl_lf"
 
-  echo "[d3-desktop] guest_desktop_link (${#objs[@]} objs, ${#D3_ARCHIVES[@]} archives, no libqbfree.a)"
+  echo "[d3-desktop] guest_desktop_link (${#objs[@]} objs, ${#D3_ARCHIVES[@]} archives, no libqbfree.a libc=${BFREE_ELF_LIBC_PATH:-auto})"
   rm -f desktop desktop.elf
   if ! bash "$gdl_lf" \
     -o "$DESK/desktop.elf" \
@@ -310,7 +321,7 @@ compile_guest_main_d3_o() {
   fi
 }
 
-echo "[d3-desktop] guest Qt=$BFREE_QT_GUEST_BUILD_DIR musl=$MUSL_INC"
+echo "[d3-desktop] guest Qt=$BFREE_QT_GUEST_BUILD_DIR musl_inc=$MUSL_INC musl_libc=${BFREE_ELF_LIBC_PATH:-missing}"
 restore_desk_tree
 restore_desk_objects
 

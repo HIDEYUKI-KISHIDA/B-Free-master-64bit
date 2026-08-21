@@ -75,6 +75,8 @@ find_one() {
     "${BFREE_ELF_GCC_PREFIX:-${SCRIPT_ROOT}/out/x86_64-elf-gcc-full}"
     "${BFREE_ELF_RUNTIME_DIR:-${SCRIPT_ROOT}/third_party/x86_64-elf-runtime}"
     "${BFREE_X86_64_ELF_TOOLS:-}"
+    "${HOME}/out/x86_64-elf-libm"
+    "/root/out/x86_64-elf-libm"
     "${HOME}/x86_64-elf-toolchain"
     "/root/x86_64-elf-toolchain"
     "/usr/local/x86_64-elf"
@@ -121,14 +123,21 @@ find_one() {
 
 [[ -n "$CC" ]] || { echo "resolve_elf_runtime_libs: x86_64-elf-gcc not in PATH" >&2; exit 1; }
 
-LIBC="$(find_one libc.a "$CC" || true)"
-if [[ -z "$LIBC" && -f "${BFREE_ELF_LIBC_PATH:-$DEFAULT_BFREE_LIBC}" ]]; then
-  LIBC="${BFREE_ELF_LIBC_PATH:-$DEFAULT_BFREE_LIBC}"
+# Prefer B-Free musl (lordmilko / bare gcc often ships a stub libc.a via -print-file-name).
+if [[ -n "${BFREE_ELF_LIBC_PATH:-}" && -f "${BFREE_ELF_LIBC_PATH}" ]]; then
+  LIBC="${BFREE_ELF_LIBC_PATH}"
+elif [[ -f "$DEFAULT_BFREE_LIBC" ]]; then
+  LIBC="$DEFAULT_BFREE_LIBC"
+else
+  LIBC="$(find_one libc.a "$CC" || true)"
 fi
 
-LIBM="$(find_one libm.a "$CC" || true)"
-if [[ -z "$LIBM" && -f "${BFREE_ELF_LIBM_PATH:-$DEFAULT_BFREE_LIBM}" ]]; then
-  LIBM="${BFREE_ELF_LIBM_PATH:-$DEFAULT_BFREE_LIBM}"
+if [[ -n "${BFREE_ELF_LIBM_PATH:-}" && -f "${BFREE_ELF_LIBM_PATH}" ]]; then
+  LIBM="${BFREE_ELF_LIBM_PATH}"
+elif [[ -f "$DEFAULT_BFREE_LIBM" ]]; then
+  LIBM="$DEFAULT_BFREE_LIBM"
+else
+  LIBM="$(find_one libm.a "$CC" || true)"
 fi
 
 if [[ -z "$LIBC" ]]; then
