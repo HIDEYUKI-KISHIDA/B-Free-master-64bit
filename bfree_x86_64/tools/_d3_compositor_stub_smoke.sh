@@ -142,6 +142,36 @@ else
     echo "WARN: [desktop_qt] platform=bfree (expected until D3 desktop relink)"
   fi
 fi
+
+D3_FULL="${BFREE_D3_FULL:-0}"
+if [[ "$D3_FULL" == "1" ]]; then
+  echo "[d3] FULL tier (BFREE_D3_FULL=1)"
+  grep -aqF '[desktop_qt] platform=wayland' "$LOG" || {
+    echo "MISS: [desktop_qt] platform=wayland (run build_desktop_d3_wayland.sh)"
+    fail=1
+  }
+  grep -aqF '[desktop_qt] D3 wayland desk session' "$LOG" || {
+    echo "MISS: [desktop_qt] D3 wayland desk session"
+    fail=1
+  }
+  grep -aqF '[desktop_qt] D2 fill desk' "$LOG" || {
+    echo "MISS: [desktop_qt] D2 fill desk"
+    fail=1
+  }
+  grep -aqF '[desktop_qt] exit_group' "$LOG" || {
+    echo "MISS: [desktop_qt] exit_group"
+    fail=1
+  }
+  grep -aq 'vfork parent' "$LOG" || {
+    echo "MISS: vfork parent (D3 full requires stub QPA + exit_group)"
+    fail=1
+  }
+  if grep -aqF '[desktop_qt] desk note created' "$LOG"; then
+    echo "OK: persist desk note"
+  else
+    echo "WARN: [desktop_qt] desk note created missing (persist.img not mounted?)"
+  fi
+fi
 if grep -aq 'exit_group' "$LOG"; then
   grep -aqF '[VFORK] eg fa=' "$LOG" || {
     echo "FAIL: exit_group without kernel [VFORK] eg (stale kernel?)"
@@ -163,5 +193,10 @@ if [[ "$fail" != 0 ]]; then
   bash "$ROOT/tools/check_desktop_holder_embedded.sh" "$DESK" 2>&1 || true
   exit 1
 fi
-echo "[d3] PASS (desktop vfork exec + kernel wayland env)"
+if [[ "${BFREE_D3_FULL:-0}" == "1" ]]; then
+  echo "[d3] PASS (D3 full: wayland desktop + vfork parent + D2 fill desk)"
+else
+  echo "[d3] PASS (desktop vfork exec + kernel wayland env)"
+  echo "  D3 full: bash tools/build_desktop_d3_wayland.sh && BFREE_D3=1 BFREE_D3_FULL=1 bash tools/_d3_compositor_stub_smoke.sh"
+fi
 echo "D3_LOG=$LOG"

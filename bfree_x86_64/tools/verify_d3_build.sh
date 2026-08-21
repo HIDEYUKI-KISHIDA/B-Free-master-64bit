@@ -71,6 +71,15 @@ else
   if [[ -f "$ROOT/tools/check_desktop_phdrs_embedded.py" ]]; then
     python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" "$DESK" || fail=1
   fi
+  if [[ "${BFREE_D3_FULL:-0}" == "1" ]]; then
+    strings "$DESK" | grep -qF '[desktop_qt] D3 wayland desk session' || {
+      echo "FAIL: $DESK lacks D3 wayland session (run build_desktop_d3_wayland.sh)" >&2
+      fail=1
+    }
+    if strings "$DESK" | grep -qF 'plugin bfree only'; then
+      echo "WARN: $DESK still has bfree-only plugin path — FULL smoke will fail" >&2
+    fi
+  fi
 fi
 
 if [[ -s "$COMP" ]]; then
