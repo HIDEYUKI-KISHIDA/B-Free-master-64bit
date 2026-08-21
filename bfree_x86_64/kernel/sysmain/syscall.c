@@ -1530,8 +1530,10 @@ static long bfree_guest_exit_from_fork(long status)
 
     uart_puts("[VFORK] exit_from_fork enter\n");
     as_copy = g_guest_fork_was_as_copy;
+    (void)bfree_process_heal_vfork_exit_session();
     if (!as_copy) {
         bfree_guest_vfork_parent_immute_restore();
+        uart_puts("[VFORK] immute ok\n");
     }
     /* Capture before exit_restore_as clears parent_pt / has_private_as. */
     page_table_t *resume_pt = bfree_process_parent_pt();
@@ -1540,6 +1542,7 @@ static long bfree_guest_exit_from_fork(long status)
     }
 
     bfree_process_exit_child((int)status);
+    uart_puts("[VFORK] exit child done\n");
     bfree_guest_flocks_drop_pid(g_guest_fork_pid);
     g_guest_fork_active = 0;
     g_guest_fork_status = (int)(status & 0xff);

@@ -703,7 +703,12 @@ void bfree_process_exit_restore_as(void)
     }
 
     if (ch->child_pt) {
-        vmm_destroy_user_mappings_keep(ch->child_pt, ch->parent_pt);
+        /* vfork+exec uses g_child_page_table — no COW user pages shared with parent. */
+        if (ch->fork_pt_idx < 0) {
+            vmm_destroy_user_mappings(ch->child_pt);
+        } else {
+            vmm_destroy_user_mappings_keep(ch->child_pt, ch->parent_pt);
+        }
     }
     pt_idx = ch->fork_pt_idx;
     if (pt_idx >= 0) {

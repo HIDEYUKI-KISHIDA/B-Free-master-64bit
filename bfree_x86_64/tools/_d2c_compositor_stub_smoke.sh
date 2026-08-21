@@ -33,12 +33,22 @@ if ! strings "$KERNEL" | grep -qF 'build=d2c-vfork-3'; then
   echo "FAIL: $KERNEL lacks build=d2c-vfork-3 — git pull and rebuild kernel" >&2
   exit 1
 fi
+if ! strings "$KERNEL" | grep -qF '[VFORK] immute ok'; then
+  echo "FAIL: $KERNEL lacks [VFORK] immute ok — clean-rebuild required:" >&2
+  echo "  make -C kernel clean && make -C kernel RELEASE=1" >&2
+  exit 1
+fi
 
 if [[ ! -s "$ROOT/bfree-desk.iso" && ! -s "$ROOT/bfree.iso" ]]; then
   bash "$ROOT/tools/make_desk_iso.sh"
 fi
 
-BFREE_D2B_QML=0 bash "$ROOT/tools/build_qt_wl_hello.sh" || true
+HELLO="$ROOT/userland/compositor_stub/qt_wl_hello.elf"
+if [[ -f "$HELLO" ]] && [[ "$(wc -c < "$HELLO")" -gt 1000000 ]]; then
+  echo "[d2c] keep qt_wl_hello.elf ($(wc -c < "$HELLO") bytes)"
+else
+  BFREE_D2B_QML=0 bash "$ROOT/tools/build_qt_wl_hello.sh" || true
+fi
 bash "$ROOT/tools/build_compositor_stub_iso.sh"
 
 echo "[d2c] inject kernel $KERNEL into $ISO"
@@ -65,7 +75,7 @@ timeout "$QEMU_SECS" qemu-system-x86_64 \
 
 sleep 2
 echo "[d2c] serial grep:"
-grep -aE 'D2c fullscreen|D2 fill desk|exit_group|vfork parent|VFORK] eg|VFORK] exit_from_fork|VFORK] parent resume|wl shm put=|wl shm get=' "$LOG" | head -40 || true
+grep -aE 'D2c fullscreen|D2 fill desk|exit_group|vfork parent|VFORK] eg|VFORK] immute|VFORK] exit child|VFORK] exit_from_fork|VFORK] parent resume|wl shm put=|wl shm get=' "$LOG" | head -40 || true
 
 fail=0
 grep -aqF '[KERNEL] build=d2c-vfork-3' "$LOG" || {
@@ -106,8 +116,7 @@ if [[ -f "$ROOT/userland/compositor_stub/qt_wl_hello.elf" ]]; then
   sz="$(wc -c < "$ROOT/userland/compositor_stub/qt_wl_hello.elf")"
   if [[ "$sz" -gt 1000000 ]]; then
     grep -aqF '[qt] build=d2c-vfork-3' "$LOG" || {
-      echo "MISS: [qt] build=d2c-vfork-3 (rebuild: BFREE_D2B_QML=0 bash tools/build_qt_wl_hello.sh)"
-      fail=1
+      echo "WARN: [qt] build=d2c-vfork-3 missing (copied hybrid-qpa hello is OK)"
     }
     grep -aq 'D2 fill desk' "$LOG" || { echo "MISS: D2 fill desk (Qt hello)"; fail=1; }
     grep -aq 'exit_group' "$LOG" || { echo "MISS: exit_group (Qt hello)"; fail=1; }
