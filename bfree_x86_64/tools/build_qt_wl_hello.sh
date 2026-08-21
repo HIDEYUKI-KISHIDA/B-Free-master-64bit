@@ -7,6 +7,16 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STUB="$ROOT/userland/compositor_stub"
 DESK="$ROOT/userland/desktop_qt"
+OUT="$STUB/qt_wl_hello.elf"
+
+# WSL/maintainer: keep a copied prebuilt hello (skip failed link that restores .keep).
+if [[ "${BFREE_FORCE_QT_HELLO_REBUILD:-0}" != "1" && -f "$OUT" ]]; then
+  sz="$(wc -c < "$OUT")"
+  if [[ "$sz" -gt 1000000 ]]; then
+    echo "[qt_wl_hello] keep existing ELF ($sz bytes); BFREE_FORCE_QT_HELLO_REBUILD=1 to rebuild"
+    exit 0
+  fi
+fi
 
 if [[ -x "${HOME}/x86_64-elf-toolchain/bin/x86_64-elf-g++" ]]; then
   export PATH="${HOME}/x86_64-elf-toolchain/bin:${PATH:-}"

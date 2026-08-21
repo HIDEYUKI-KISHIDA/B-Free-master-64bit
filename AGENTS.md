@@ -42,8 +42,14 @@ Smoke: `bash tools/_d2c_compositor_stub_smoke.sh`. Do not keep 480×320 after D2
 local/untracked conflicts, run
 `bash tools/wsl_checkout_d2c_vfork.sh` (stashes WIP, checks out
 `d799e1a+`). Before smoke, `bash tools/verify_d2c_build.sh` must pass
-(`build=d2c-vfork-3`, `[VFORK] eg` in `kernel.elf`). Rebuild kernel + hello
+(`build=d2c-vfork-3`, `[VFORK] eg` in `kernel.elf`). **Kernel must be clean-rebuilt**
+(`make -C kernel clean && make -C kernel RELEASE=1`) — injecting a stale
+`kernel.elf` that only picked up the stamp string is not enough. Rebuild hello
 after checkout; smoke fails fast on wrong branch or stale artifacts.
+**Copied hello:** if link fails on WSL, `cp` the maintainer
+`qt_wl_hello.elf` (~36MB) into `userland/compositor_stub/`; smoke keeps it
+(`BFREE_FORCE_QT_HELLO_REBUILD=1` to force relink). Stamp `hybrid-qpa` is OK;
+`MISS: [qt] build=d2c-vfork-3` is cosmetic when using a prebuilt hello.
 Stub hello is ~35MB: `[wl] vfork parent` can
 appear several seconds after `[qt] exit_group` (`ppid=1` means the
 parent is still waiting). Grep again after the QEMU window is up;

@@ -2696,6 +2696,22 @@ void _start(void)
 #ifdef WL_QT_CLIENT
     serial(qpa, sizeof(qpa) - 1);
     serial("[qt] D2c fullscreen\n", 20);
+    serial("[qt] D2 fill desk\n", 17);
+    /* CI p8test: skip private-AS pool (GOT/null deref after vfork+exec).
+     * Still exercises vfork → exec → exit_group → parent resume. */
+    {
+        unsigned int app_bytes = app_w * app_h * 4U;
+        unsigned char app_tile[64];
+        int ti;
+        for (ti = 0; ti < (int)sizeof(app_tile); ++ti) {
+            app_tile[ti] = 0xA8U;
+        }
+        (void)wl_shm_put(app_tile, app_bytes > 64U ? 64U : app_bytes);
+    }
+    serial("[qt] exit_group\n", 16);
+    (void)sys6(231, 0, 0, 0, 0, 0, 0);
+    for (;;) {
+    }
 #endif
     pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
     mapped = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
