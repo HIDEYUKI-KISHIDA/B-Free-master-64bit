@@ -21,7 +21,9 @@ else
     fail=1
   }
   strings "$KERNEL" | grep -qF '[D3] desktop wayland exec' || {
-    echo "FAIL: $KERNEL lacks [D3] marker — rebuild kernel on d3 branch" >&2
+    echo "FAIL: $KERNEL lacks [D3] desktop wayland exec" >&2
+    echo "  git pull 後に kernel を再ビルド:" >&2
+    echo "  make -C kernel clean && make -C kernel RELEASE=1" >&2
     fail=1
   }
 fi
