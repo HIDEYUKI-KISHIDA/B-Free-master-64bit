@@ -1,0 +1,3 @@
+# Patched D2c+D3 kernel with desktop.elf TLS bootstrap on vfork exec.
+# Rebuild: make -C kernel clean && make -C kernel RELEASE=1
+6bdc24293396355787cbe9c0fd0140fbe19f426e453075ca56c24cd50aaa4376

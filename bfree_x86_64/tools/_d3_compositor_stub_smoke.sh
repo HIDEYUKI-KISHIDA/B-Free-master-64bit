@@ -56,13 +56,31 @@ xorriso -indev "$ISO" -outdev "$ISO" \
   -commit >/dev/null
 
 ISO_KERNEL="$(mktemp)"
-trap 'rm -f "$ISO_KERNEL"' EXIT
+ISO_DESK="$(mktemp)"
+trap 'rm -f "$ISO_KERNEL" "$ISO_DESK"' EXIT
 xorriso -osirrox on -indev "$ISO" -extract /boot/kernel.elf "$ISO_KERNEL" >/dev/null 2>&1
 if ! cmp -s "$KERNEL" "$ISO_KERNEL"; then
   echo "FAIL: ISO /boot/kernel.elf differs from $KERNEL" >&2
   exit 1
 fi
 echo "[d3] ISO kernel OK ($(wc -c < "$KERNEL" | tr -d ' ') bytes)"
+
+ISO_DESK="$(mktemp)"
+xorriso -osirrox on -indev "$ISO" -extract /boot/desktop.elf "$ISO_DESK" >/dev/null 2>&1
+if [[ ! -s "$ISO_DESK" ]]; then
+  echo "FAIL: ISO missing /boot/desktop.elf" >&2
+  exit 1
+fi
+if ! cmp -s "$DESK" "$ISO_DESK"; then
+  iso_sha="$(sha256sum "$ISO_DESK" | awk '{print $1}')"
+  disk_sha="$(sha256sum "$DESK" | awk '{print $1}')"
+  echo "FAIL: ISO /boot/desktop.elf differs from $DESK" >&2
+  echo "  ISO   sha256=$iso_sha ($(wc -c < "$ISO_DESK") bytes)" >&2
+  echo "  disk  sha256=$disk_sha ($(wc -c < "$DESK") bytes)" >&2
+  echo "  rm -f $ISO && BFREE_D3=1 bash tools/build_compositor_stub_iso.sh" >&2
+  exit 1
+fi
+echo "[d3] ISO desktop.elf OK (matches disk sha256)"
 
 rm -f "$LOG"
 echo "[d3] qemu $ISO serial=$LOG (${QEMU_SECS}s)"
@@ -81,9 +99,15 @@ grep -aq 'exec transfer desktop.elf' "$LOG" || { echo "MISS: exec transfer deskt
 grep -aqF '[desktop_qt] main entry' "$LOG" || {
   echo "MISS: [desktop_qt] main entry"
   if grep -aq '\[PANIC\]' "$LOG"; then
-    echo "FAIL: guest PANIC (desktop.elf broken — holder VA mismatch after partial relink):"
-    echo "  bash tools/restore_desktop_good_for_d3.sh"
-    echo "  bash tools/build_desktop_d3_wayland.sh   # Wayland relink with holder converge"
+    if bash "$ROOT/tools/check_desktop_holder_embedded.sh" "$DESK" >/dev/null 2>&1; then
+      echo "FAIL: guest PANIC but desktop.elf fingerprint OK — rebuild kernel (TLS bootstrap):"
+      echo "  make -C kernel clean && make -C kernel RELEASE=1"
+      echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+    else
+      echo "FAIL: guest PANIC (desktop.elf broken — restore or relink):"
+      echo "  bash tools/restore_desktop_good_for_d3.sh"
+      echo "  bash tools/build_desktop_d3_wayland.sh"
+    fi
   fi
   fail=1
 }

@@ -26,6 +26,20 @@ else
     echo "  make -C kernel clean && make -C kernel RELEASE=1" >&2
     fail=1
   }
+  GOOD_KSHA="$ROOT/tools/kernel.d3.good.sha256"
+  if [[ -f "$GOOD_KSHA" ]]; then
+    expect_k="$(grep -E '^[0-9a-f]{64}$' "$GOOD_KSHA" | head -1)"
+    if [[ -n "$expect_k" ]]; then
+      actual_k="$(sha256sum "$KERNEL" | awk '{print $1}')"
+      if [[ "$actual_k" != "$expect_k" ]]; then
+        echo "FAIL: kernel sha256 mismatch (stale build — TLS bootstrap may be missing)" >&2
+        echo "  actual  $actual_k" >&2
+        echo "  expect  $expect_k" >&2
+        echo "  make -C kernel clean && make -C kernel RELEASE=1" >&2
+        fail=1
+      fi
+    fi
+  fi
 fi
 
 if [[ ! -s "$DESK" ]]; then

@@ -11800,7 +11800,10 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
 
     (void)path;
     bfree_enable_user_fpu();
-    bfree_user_exec_install_fsbase(user_rsp, bfree_guest_basename_eq(exec_img, "busybox.elf") ? 1 : 0);
+    /* desktop.elf: early TCB bootstrap (vfork+exec child — musl __copy_tls needs valid %fs:0). */
+    bfree_user_exec_install_fsbase(user_rsp,
+        (bfree_guest_basename_eq(exec_img, "busybox.elf") ||
+         bfree_guest_basename_eq(exec_img, "desktop.elf")) ? 1 : 0);
     g_bfree_sysret_exec_rsp = user_rsp;
     g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
     g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
