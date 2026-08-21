@@ -67,7 +67,7 @@ echo "[d3] ISO kernel OK ($(wc -c < "$KERNEL" | tr -d ' ') bytes)"
 rm -f "$LOG"
 echo "[d3] qemu $ISO serial=$LOG (${QEMU_SECS}s)"
 timeout "$QEMU_SECS" qemu-system-x86_64 \
-  -cdrom "$ISO" -m 1024 -vga std -serial "file:$LOG" -display none \
+  -cdrom "$ISO" -m 1024 -vga std -serial "file:$LOG" -display none -no-reboot \
   2>/dev/null || true
 
 sleep 2
@@ -78,7 +78,15 @@ fail=0
 grep -aqF '[D3] execve desktop.elf' "$LOG" || { echo "MISS: [D3] execve desktop.elf"; fail=1; }
 grep -aqF '[D3] desktop wayland exec' "$LOG" || { echo "MISS: [D3] desktop wayland exec"; fail=1; }
 grep -aq 'exec transfer desktop.elf' "$LOG" || { echo "MISS: exec transfer desktop.elf"; fail=1; }
-grep -aqF '[desktop_qt] main entry' "$LOG" || { echo "MISS: [desktop_qt] main entry"; fail=1; }
+grep -aqF '[desktop_qt] main entry' "$LOG" || {
+  echo "MISS: [desktop_qt] main entry"
+  if grep -aq '\[PANIC\]' "$LOG"; then
+    echo "FAIL: guest PANIC (desktop.elf broken — holder VA mismatch after partial relink):"
+    echo "  bash tools/restore_desktop_good_for_d3.sh"
+    echo "  bash tools/build_desktop_d3_wayland.sh   # Wayland relink with holder converge"
+  fi
+  fail=1
+}
 if grep -aq 'vfork parent' "$LOG"; then
   echo "OK: vfork parent resume (D3 full)"
 else

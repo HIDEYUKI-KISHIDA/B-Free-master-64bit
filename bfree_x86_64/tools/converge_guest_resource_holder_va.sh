@@ -13,6 +13,29 @@ else
 fi
 DESK="$ROOT/userland/desktop_qt"
 MIN_QT_ELF=10000000
+export PATH="${HOME}/x86_64-elf-toolchain/bin:/root/x86_64-elf-toolchain/bin:${PATH:-}"
+
+MUSL_INC=""
+for musl in "$ROOT/out/x86_64-elf-libm/prefix/include" \
+            /root/out/x86_64-elf-libm/prefix/include \
+            "$HOME/out/x86_64-elf-libm/prefix/include"; do
+  if [[ -f "$musl/stdio.h" ]]; then
+    MUSL_INC="$musl"
+    break
+  fi
+done
+
+compile_guest_link_compat() {
+  if [[ -z "$MUSL_INC" ]]; then
+    echo "[converge] musl headers not found" >&2
+    return 1
+  fi
+  x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack-check \
+    -fno-stack-clash-protection -fno-pic \
+    -Wall -Wextra -mno-sse -mno-mmx -mno-3dnow -fno-exceptions -fno-rtti -Wa,--noexecstack \
+    -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
+    -x c++ -c -o "$DESK/guest_link_compat.o" "$ROOT/tools/guest_link_compat.cpp"
+}
 
 holder_nm() {
   nm "$1" 2>/dev/null | awk '/resourceGlobalData/ && /instanceEvE6holder$/ && !/_ZGV/ { print "0x" $1; exit }'
@@ -58,8 +81,7 @@ while [ "$i" -lt 6 ]; do
   if [ -f "$DESK/Makefile.bfree" ]; then
     make -C "$DESK" -f Makefile.bfree guest_link_compat.o
   else
-    echo "[converge] Makefile.bfree missing; rebuild guest_link_compat.o yourself" >&2
-    exit 1
+    compile_guest_link_compat
   fi
   make -C "$DESK" -f Makefile.guest-elf guest_main.o
   make -C "$DESK" -f Makefile.guest-elf desktop

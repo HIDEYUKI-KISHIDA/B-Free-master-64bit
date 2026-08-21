@@ -94,6 +94,28 @@ make -f Makefile.guest-elf "${MAKE_O[@]}" desktop
 [[ -f desktop ]] && mv -f desktop desktop.elf
 need desktop.elf
 
+echo "[d3-desktop] sync guest_resource_holder_va.h"
+bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
+rm -f guest_link_compat.o guest_main.o
+x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack-check \
+  -fno-stack-clash-protection -fno-pic \
+  -Wall -Wextra -mno-sse -mno-mmx -mno-3dnow -fno-exceptions -fno-rtti -Wa,--noexecstack \
+  -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
+  -x c++ -c -o guest_link_compat.o "$ROOT/tools/guest_link_compat.cpp"
+make -f Makefile.guest-elf guest_main.o
+rm -f desktop desktop.elf
+make -f Makefile.guest-elf "${MAKE_O[@]}" desktop
+[[ -f desktop ]] && mv -f desktop desktop.elf
+need desktop.elf
+bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
+holder_nm="$(nm desktop.elf 2>/dev/null | awk '/resourceGlobalData/ && /instanceEvE6holder$/ && !/_ZGV/ { print "0x" $1; exit }')"
+holder_hdr="$(sed -n 's/.*HOLDER_VA \([0-9a-fxA-FX]*\)u.*/\1/p' guest_resource_holder_va.h 2>/dev/null || true)"
+echo "[d3-desktop] holder nm=$holder_nm hdr=$holder_hdr"
+if [[ -n "$holder_nm" && -n "$holder_hdr" && "$holder_nm" != "$holder_hdr" ]]; then
+  echo "FAIL: holder VA mismatch after relink (desktop will GP on vfork exec)" >&2
+  exit 1
+fi
+
 strings desktop.elf | grep -F 'build=mmap96' | head -1 || true
 echo "D3_DESKTOP_ELF=$DESK/desktop.elf"
 echo "D3_DESKTOP_BYTES=$(wc -c < desktop.elf)"

@@ -56,3 +56,5 @@ echo "  BFREE_D2B_QML=0 bash tools/build_qt_wl_hello.sh   # optional; copy qt_wl
 echo "  bash tools/_d2c_compositor_stub_smoke.sh"
 echo "  bash tools/build_desktop_d3_wayland.sh            # maintainer Qt prefix; D3 desktop relink"
 echo "  BFREE_D3=1 bash tools/_d3_compositor_stub_smoke.sh"
+echo "  # GP / no main entry after bad relink:"
+echo "  bash tools/restore_desktop_good_for_d3.sh && BFREE_D3=1 bash tools/_d3_compositor_stub_smoke.sh"
