@@ -37,12 +37,13 @@ elif [[ "$(wc -c < "$DESK")" -lt 10000000 ]]; then
 else
   HDR="$ROOT/userland/desktop_qt/guest_resource_holder_va.h"
   holder_nm="$(nm "$DESK" 2>/dev/null | awk '/resourceGlobalData/ && /instanceEvE6holder$/ && !/_ZGV/ { print "0x" $1; exit }')"
-  if [[ -f "$HDR" ]]; then
+  if [[ -x "$ROOT/tools/check_desktop_holder_embedded.sh" ]]; then
+    bash "$ROOT/tools/check_desktop_holder_embedded.sh" "$DESK" || fail=1
+  elif [[ -f "$HDR" ]]; then
     holder_hdr="$(sed -n 's/.*HOLDER_VA \([0-9a-fxA-FX]*\)u.*/\1/p' "$HDR")"
     if [[ -n "$holder_nm" && -n "$holder_hdr" && "$holder_nm" != "$holder_hdr" ]]; then
       echo "FAIL: holder VA mismatch nm=$holder_nm hdr=$holder_hdr (GP on vfork exec)" >&2
       echo "  bash tools/restore_desktop_good_for_d3.sh" >&2
-      echo "  bash tools/build_desktop_d3_wayland.sh" >&2
       fail=1
     fi
   elif [[ -n "$holder_nm" ]]; then

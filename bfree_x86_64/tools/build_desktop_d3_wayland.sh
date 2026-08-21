@@ -111,10 +111,7 @@ bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_r
 holder_nm="$(nm desktop.elf 2>/dev/null | awk '/resourceGlobalData/ && /instanceEvE6holder$/ && !/_ZGV/ { print "0x" $1; exit }')"
 holder_hdr="$(sed -n 's/.*HOLDER_VA \([0-9a-fxA-FX]*\)u.*/\1/p' guest_resource_holder_va.h 2>/dev/null || true)"
 echo "[d3-desktop] holder nm=$holder_nm hdr=$holder_hdr"
-if [[ -n "$holder_nm" && -n "$holder_hdr" && "$holder_nm" != "$holder_hdr" ]]; then
-  echo "FAIL: holder VA mismatch after relink (desktop will GP on vfork exec)" >&2
-  exit 1
-fi
+bash "$ROOT/tools/check_desktop_holder_embedded.sh" desktop.elf
 
 strings desktop.elf | grep -F 'build=mmap96' | head -1 || true
 echo "D3_DESKTOP_ELF=$DESK/desktop.elf"
