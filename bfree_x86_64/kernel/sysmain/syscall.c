@@ -2783,13 +2783,13 @@ static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_
 }
 
 /*
- * desktop.elf musl TLS list head + libc globals live in high PT_LOAD BSS
- * (main_tls @ 0x62c9540, __libc @ 0x62c9940). vfork+exec private AS load clears
- * pages in the loader, but PMM reuse on some hosts (WSL) can leave non-zero
- * main_tls.next → __copy_tls walks garbage and #GP before guest crt0 runs.
+ * desktop.elf tail PT_LOAD BSS: Qt QGlobalStatic holders (staticPluginList @
+ * 0x62c8960), musl main_tls @ 0x62c9540, __libc, __malloc_context.
+ * vfork+exec + PMM reuse on WSL can leave garbage → __copy_tls #GP or
+ * qRegisterStaticPluginFunction #GP in init_array ctor[3].
  */
-#define BFREE_DESKTOP_MUSL_BSS_VA   0x62c9540ULL
-#define BFREE_DESKTOP_MUSL_BSS_BYTES 0x840ULL /* main_tls .. __malloc_context */
+#define BFREE_DESKTOP_TAIL_BSS_VA    0x62c8000ULL
+#define BFREE_DESKTOP_TAIL_BSS_BYTES   0x2000ULL /* two pages through __malloc_context */
 
 static void bfree_desktop_exec_scrub_musl_bss(void)
 {
@@ -2798,18 +2798,18 @@ static void bfree_desktop_exec_scrub_musl_bss(void)
     int ok = 1;
 
     memset(zbuf, 0, sizeof(zbuf));
-    while (off < BFREE_DESKTOP_MUSL_BSS_BYTES) {
-        uint64_t chunk = BFREE_DESKTOP_MUSL_BSS_BYTES - off;
+    while (off < BFREE_DESKTOP_TAIL_BSS_BYTES) {
+        uint64_t chunk = BFREE_DESKTOP_TAIL_BSS_BYTES - off;
         if (chunk > sizeof(zbuf)) {
             chunk = sizeof(zbuf);
         }
-        if (bfree_user_stack_poke_bytes(BFREE_DESKTOP_MUSL_BSS_VA + off, zbuf, chunk) != 0) {
+        if (bfree_user_stack_poke_bytes(BFREE_DESKTOP_TAIL_BSS_VA + off, zbuf, chunk) != 0) {
             ok = 0;
             break;
         }
         off += chunk;
     }
-    uart_puts(ok ? "[TLS] scrub musl bss ok\n" : "[TLS] scrub musl bss miss\n");
+    uart_puts(ok ? "[TLS] scrub tail bss ok\n" : "[TLS] scrub tail bss miss\n");
 }
 
 static void bfree_user_exec_install_fsbase(uint64_t user_rsp, int bootstrap_tls)

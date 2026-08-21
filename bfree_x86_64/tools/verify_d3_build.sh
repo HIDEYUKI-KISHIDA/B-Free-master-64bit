@@ -26,8 +26,8 @@ else
     echo "  make -C kernel clean && make -C kernel RELEASE=1" >&2
     fail=1
   }
-  strings "$KERNEL" | grep -qF '[TLS] scrub musl bss ok' || {
-    echo "FAIL: $KERNEL lacks [TLS] scrub musl bss (WSL vfork __copy_tls fix)" >&2
+  strings "$KERNEL" | grep -qF '[TLS] scrub tail bss ok' || {
+    echo "FAIL: $KERNEL lacks [TLS] scrub tail bss (WSL vfork Qt/musl BSS fix)" >&2
     echo "  make -C kernel clean && make -C kernel RELEASE=1" >&2
     fail=1
   }

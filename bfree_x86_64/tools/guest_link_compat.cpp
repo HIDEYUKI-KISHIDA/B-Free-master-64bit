@@ -1615,6 +1615,19 @@ static void (*g_deferred_ctors[BFREE_GUEST_DEFERRED_CTORS_MAX])(void);
 static unsigned g_deferred_ctor_idx[BFREE_GUEST_DEFERRED_CTORS_MAX];
 static unsigned g_deferred_ctor_count;
 
+static int bfree_guest_defer_plugin_import_ctor(uintptr_t addr)
+{
+    const unsigned char *fn = (const unsigned char *)addr;
+
+    if (!bfree_guest_addr_in_desktop_image(addr))
+        return 0;
+    /* desktop_plugin_import.cpp: defer to guest_main guest_ctor_plugins_only(). */
+    if (fn[0] == 0x55 && fn[1] == 0x48 && fn[2] == 0x89 && fn[3] == 0xe5 && fn[4] == 0x48 && fn[5] == 0x83
+        && fn[6] == 0xec && fn[7] == 0x60 && fn[8] == 0x48 && fn[9] == 0x8d && fn[10] == 0x7d && fn[11] == 0xe0)
+        return 1;
+    return 0;
+}
+
 static int bfree_guest_defer_late_ctor(uintptr_t addr, unsigned array_index)
 {
     const unsigned char *fn = (const unsigned char *)addr;
@@ -4214,6 +4227,11 @@ extern "C" void bfree_guest_run_init_array(void)
                 }
                 if (bfree_guest_defer_qrc_ctor((uintptr_t)*p)) {
                     bfree_guest_serial("[desktop_qt] ctor deferred (qrc -> main)\n");
+                    ++executed;
+                    continue;
+                }
+                if (bfree_guest_defer_plugin_import_ctor((uintptr_t)*p)) {
+                    bfree_guest_serial("[desktop_qt] ctor deferred (plugins -> main)\n");
                     ++executed;
                     continue;
                 }
