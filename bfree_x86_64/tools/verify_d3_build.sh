@@ -63,6 +63,9 @@ else
   elif [[ -n "$holder_nm" ]]; then
     echo "WARN: $HDR missing (run restore or build_desktop_d3_wayland after relink)"
   fi
+  if [[ -f "$ROOT/tools/check_desktop_phdrs_embedded.py" ]]; then
+    python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" "$DESK" || fail=1
+  fi
 fi
 
 if [[ -s "$COMP" ]]; then

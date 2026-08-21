@@ -3950,8 +3950,8 @@ extern "C" int *___errno_location(void) __attribute__((alias("__errno_location")
  */
 /* Regenerate after desktop.elf link: python3 tools/print_desktop_phdrs.py */
 static const Elf64_Phdr bfree_guest_phdrs[] = {
-    { PT_LOAD, PF_R | PF_W | PF_X, 0x1000, 0x2800000, 0x2800000, 0x1db3a40, 0x1db3a40, 0x1000 },
-    { PT_TLS, PF_R, 0x1198c30, 0x3997c30, 0x3997c30, 0x28, 0xa8, 0x10 },
+    { PT_LOAD, PF_R | PF_W | PF_X, 0x1000, 0x2800000, 0x2800000, 0x3acc4c0, 0x3acc4c0, 0x1000 },
+    { PT_TLS, PF_R, 0x192c7d0, 0x412b7d0, 0x412b7d0, 0x28, 0xa8, 0x10 },
     { PT_GNU_EH_FRAME, PF_R, 0x0, 0x0, 0x0, 0x0, 0x0, 0x10 },
 };
 
@@ -3970,7 +3970,7 @@ static void bfree_guest_fill_auxv_tables(void)
     bfree_guest_auxv_sparse[AT_PHENT] = sizeof(Elf64_Phdr);
     bfree_guest_auxv_sparse[AT_PHNUM] = phnum;
     bfree_guest_auxv_sparse[AT_PHDR] = (size_t)(uintptr_t)bfree_guest_phdrs;
-    bfree_guest_auxv_sparse[AT_ENTRY] = 0x2800000;
+    bfree_guest_auxv_sparse[AT_ENTRY] = 0x2800083;
     bfree_guest_auxv_sparse[AT_RANDOM] = (size_t)(uintptr_t)bfree_guest_at_random;
 
     bfree_guest_auxv_pairs[0] = AT_PAGESZ;
@@ -3982,7 +3982,7 @@ static void bfree_guest_fill_auxv_tables(void)
     bfree_guest_auxv_pairs[6] = AT_PHDR;
     bfree_guest_auxv_pairs[7] = (size_t)(uintptr_t)bfree_guest_phdrs;
     bfree_guest_auxv_pairs[8] = AT_ENTRY;
-    bfree_guest_auxv_pairs[9] = 0x2800000;
+    bfree_guest_auxv_pairs[9] = 0x2800083;
     bfree_guest_auxv_pairs[10] = AT_RANDOM;
     bfree_guest_auxv_pairs[11] = (size_t)(uintptr_t)bfree_guest_at_random;
     bfree_guest_auxv_pairs[12] = 0;
