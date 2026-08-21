@@ -38,6 +38,12 @@ EX/VW/TE tiles (not W8 gold). **D2c:** 1024×768 client SHM at
 (0,0) covers stub chrome (`D2c fullscreen`). Tiles are 48KiB×64
 (`/tmp/wl00`–`wl63`). Release g1-desk at 16KiB vfile → `wl shm put trunc=-28`.
 Smoke: `bash tools/_d2c_compositor_stub_smoke.sh`. Do not keep 480×320 after D2c.
+**WSL branch switch:** if `git checkout cursor/d2c-vfile-slots-9760` fails with
+local/untracked conflicts, run
+`bash tools/wsl_checkout_d2c_vfork.sh` (stashes WIP, checks out
+`d799e1a+`). Before smoke, `bash tools/verify_d2c_build.sh` must pass
+(`build=d2c-vfork-3`, `[VFORK] eg` in `kernel.elf`). Rebuild kernel + hello
+after checkout; smoke fails fast on wrong branch or stale artifacts.
 Stub hello is ~35MB: `[wl] vfork parent` can
 appear several seconds after `[qt] exit_group` (`ppid=1` means the
 parent is still waiting). Grep again after the QEMU window is up;
