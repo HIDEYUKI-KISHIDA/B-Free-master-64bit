@@ -283,9 +283,9 @@ static QQuickSwitch *g_controls_switch_probe = nullptr;
 static QObject *g_qml_controls_button_root = nullptr;
 static QQuickButton *g_qml_controls_button_standin = nullptr;
 static QQuickRowLayout *g_layouts_row_probe = nullptr;
-static QQuickItem *g_ds_qml_root = nullptr; /* qrc:/DesktopShell.qml Item root */
 static QQuickRowLayout *g_ds_subset_row = nullptr;
 #endif
+static QQuickItem *g_ds_qml_root = nullptr; /* qrc:/DesktopShell.qml Item root (attach shell) */
 static QQuickItem *g_cpp_item_parent_probe = nullptr;
 static int g_sg_chrome_need_pulse = 0;
 static int g_sg_start_leaf_ok = 0;
