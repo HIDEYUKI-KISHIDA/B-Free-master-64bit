@@ -77,7 +77,9 @@ else
       fail=1
     }
     if strings "$DESK" | grep -qF 'plugin bfree only'; then
-      echo "WARN: $DESK still has bfree-only plugin path — FULL smoke will fail" >&2
+      if ! strings "$DESK" | grep -qF 'plugin wayland only'; then
+        echo "WARN: $DESK still has bfree-only plugin path — FULL smoke will fail" >&2
+      fi
     fi
   fi
 fi

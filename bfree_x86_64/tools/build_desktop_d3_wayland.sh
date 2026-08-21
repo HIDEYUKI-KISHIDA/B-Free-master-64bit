@@ -87,6 +87,21 @@ if [[ -n "$_inc" ]]; then
   done
 fi
 
+compile_guest_main_d3_o() {
+  local mk_defines
+  mk_defines="$(grep -m1 '^DEFINES' Makefile.guest-elf | sed 's/^DEFINES[[:space:]]*=[[:space:]]*//')"
+  if [[ -z "$mk_defines" ]]; then
+    echo "FAIL: Makefile.guest-elf lacks DEFINES line" >&2
+    return 1
+  fi
+  rm -f guest_main.o
+  make -f Makefile.guest-elf guest_main.o DEFINES="$mk_defines -DBFREE_D3_WAYLAND_QPA"
+  if ! strings guest_main.o | grep -qF '[desktop_qt] D3 wayland desk session'; then
+    echo "FAIL: guest_main.o lacks D3 wayland session string (-DBFREE_D3_WAYLAND_QPA not applied?)" >&2
+    return 1
+  fi
+}
+
 echo "[d3-desktop] guest Qt=$BFREE_QT_GUEST_BUILD_DIR musl=$MUSL_INC"
 
 if [[ -d "$SRC_FALLBACK" ]]; then
@@ -114,16 +129,7 @@ if ! "$CXX" "${WL_CXXFLAGS[@]}" -c -o "$STUB/qbfree_wayland.o" "$STUB/qbfree_way
 fi
 
 echo "[d3-desktop] recompile guest_main.o (-DBFREE_D3_WAYLAND_QPA, /tmp/bfree-d3-wl fast path)"
-rm -f guest_main.o
-# Makefile.guest-elf paths may point at maintainer tree; extract flags when possible.
-mk_cxxflags="$(grep -m1 '^CXXFLAGS' Makefile.guest-elf | sed 's/^CXXFLAGS[[:space:]]*=[[:space:]]*//')"
-mk_incpath="$(grep -m1 '^INCPATH' Makefile.guest-elf | sed 's/^INCPATH[[:space:]]*=[[:space:]]*//')"
-if [[ -n "$mk_cxxflags" && -n "$mk_incpath" ]]; then
-  # shellcheck disable=SC2086
-  $CXX -c $mk_cxxflags -DBFREE_D3_WAYLAND_QPA $mk_incpath -o guest_main.o guest_main.cpp
-else
-  make -f Makefile.guest-elf guest_main.o
-fi
+compile_guest_main_d3_o
 
 echo "[d3-desktop] link desktop.elf (wayland QPA, no libqbfree.a)"
 rm -f desktop desktop.elf
@@ -149,16 +155,18 @@ if ! strings desktop.elf | grep -qF '[desktop_qt] D3 wayland desk session'; then
   exit 1
 fi
 if strings desktop.elf | grep -qF 'plugin bfree only'; then
-  echo "WARN: desktop.elf still has bfree-only plugin path — check -DBFREE_D3_WAYLAND_QPA" >&2
+  if strings desktop.elf | grep -qF 'plugin wayland only'; then
+    echo "[d3-desktop] OK: D3 wayland plugin path present (bfree path also in binary for mmap fallback)"
+  else
+    echo "WARN: desktop.elf lacks plugin wayland only — check -DBFREE_D3_WAYLAND_QPA" >&2
+  fi
 fi
 
 echo "[d3-desktop] sync guest_resource_holder_va.h"
 bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
 rm -f guest_link_compat.o guest_main.o
 bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
-# shellcheck disable=SC2086
-$CXX -c $mk_cxxflags -DBFREE_D3_WAYLAND_QPA $mk_incpath -o guest_main.o guest_main.cpp 2>/dev/null || \
-  make -f Makefile.guest-elf guest_main.o
+compile_guest_main_d3_o
 rm -f desktop desktop.elf
 make -f Makefile.guest-elf "${MAKE_O[@]}" desktop
 [[ -f desktop ]] && mv -f desktop desktop.elf
