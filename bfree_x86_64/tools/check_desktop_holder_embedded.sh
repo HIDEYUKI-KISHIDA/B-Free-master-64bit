@@ -56,16 +56,18 @@ echo "[holder-check] OK"
 # Optional: compare against maintainer fingerprint when present.
 GOOD_SHA="$ROOT/tools/desktop.elf.good.sha256"
 if [[ -f "$GOOD_SHA" ]]; then
-  expect="$(grep -E '^[0-9a-f]{64}$' "$GOOD_SHA" | head -1)"
-  if [[ -n "$expect" ]]; then
+  expect_list="$(grep -E '^[0-9a-f]{64}$' "$GOOD_SHA" || true)"
+  if [[ -n "$expect_list" ]]; then
     actual="$(sha256sum "$ELF" | awk '{print $1}')"
-    if [[ "$actual" != "$expect" ]]; then
+    if echo "$expect_list" | grep -qx "$actual"; then
+      echo "[holder-check] sha256 OK ($actual)"
+    else
+      expect="$(echo "$expect_list" | head -1)"
       echo "FAIL: sha256 mismatch (wrong desktop.elf — not maintainer good copy)" >&2
       echo "  actual  $actual" >&2
-      echo "  expect  $expect" >&2
-      echo "  bash tools/restore_desktop_good_for_d3.sh" >&2
+      echo "  expect  $expect (see $GOOD_SHA for phdr-patched hash)" >&2
+      echo "  bash tools/restore_desktop_good_for_d3.sh && bash tools/relink_desktop_phdrs_only.sh" >&2
       exit 1
     fi
-    echo "[holder-check] sha256 OK ($expect)"
   fi
 fi

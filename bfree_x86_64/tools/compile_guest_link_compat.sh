@@ -36,6 +36,29 @@ fi
   exit 1
 }
 
+restore_desk_file() {
+  local name="$1"
+  [[ -f "$DESK/$name" ]] && return 0
+  for fb in "/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/desktop_qt/$name" \
+            "$HOME/bfree_build/userland/desktop_qt/$name"; do
+    if [[ -f "$fb" ]]; then
+      cp -f "$fb" "$DESK/$name"
+      echo "[compat-compile] restored $name <= $fb"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if ! restore_desk_file "guest_mvp_shell_qml.inc"; then
+  if [[ -f "$DESK/GuestMvpShell_smoke.qml" ]]; then
+    python3 "$ROOT/tools/gen_guest_mvp_shell_bytes.py"
+  else
+    echo "FAIL: missing $DESK/guest_mvp_shell_qml.inc (copy from Program/ or add GuestMvpShell_smoke.qml)" >&2
+    exit 1
+  fi
+fi
+
 if [[ ! -f "$DESK/guest_resource_holder_va.h" && -s "$DESK/desktop.elf" ]]; then
   bash "$ROOT/tools/update_guest_resource_holder_va.sh" "$DESK/desktop.elf" "$DESK/guest_resource_holder_va.h"
 fi
