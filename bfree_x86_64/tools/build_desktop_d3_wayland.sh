@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Relink desktop.elf for D3 Wayland vfork client (stub compositor path).
-# Links qbfree_wayland.o + wl_stub_flush.o (no libqbfree.a), -DBFREE_D3_WAYLAND_QPA.
+# Links qbfree_wayland.o + wl_stub_flush.o + libqbfree.a (symbol refs only;
+# no --whole-archive — runtime selects stub wayland QPA), -DBFREE_D3_WAYLAND_QPA.
 # Requires maintainer guest Qt prefix + desktop_qt .o tree (from Program/ or bfree_build).
 # Does not overwrite daily bfree.iso.
 set -eu
@@ -121,6 +122,11 @@ if [[ -z "$MUSL_INC" ]]; then
   echo "FAIL: musl headers not found (need out/x86_64-elf-libm/prefix/include)" >&2
   exit 1
 fi
+if [[ -z "${BFREE_ELF_LIBC_PATH:-}" || ! -f "${BFREE_ELF_LIBC_PATH}" ]]; then
+  echo "FAIL: musl libc.a not found (need ~/out/x86_64-elf-libm/libc.a)" >&2
+  echo "  bash tools/build_x86_64_elf_libm.sh  or set BFREE_ELF_LIBM_DIR" >&2
+  exit 1
+fi
 
 CXX=x86_64-elf-g++
 QT_INC="$BFREE_QT_GUEST_BUILD_DIR/include"
@@ -222,8 +228,28 @@ restore_desk_objects() {
   fi
 }
 
+resolve_libqbfree_a() {
+  local d
+  for d in \
+    "$ROOT/gui_server/integration_gui/bfree_qpa/build/plugins/platforms/libqbfree.a" \
+    "$PROGRAM_ROOT/gui_server/integration_gui/bfree_qpa/build/plugins/platforms/libqbfree.a" \
+    "$HOME/bfree_build/gui_server/integration_gui/bfree_qpa/build/plugins/platforms/libqbfree.a"; do
+    if [[ -f "$d" ]]; then
+      echo "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
 collect_d3_archives() {
   D3_ARCHIVES=()
+  local qpa
+  qpa="$(resolve_libqbfree_a)" || {
+    echo "FAIL: libqbfree.a not found (build Program/bfree_qpa or set BFREE_QPA_BUILD)" >&2
+    return 1
+  }
+  D3_ARCHIVES+=("$qpa")
   local a
   for a in \
     "$BFREE_QT_GUEST_BUILD_DIR/lib/objects-Release/Gui_resources_1/.qt/rcc/qrc_qpdf_init.cpp.o" \
@@ -277,7 +303,7 @@ link_d3_desktop() {
   local gdl_lf="/tmp/bfree-guest_desktop_link-$$.sh"
   tr -d '\r' < "$ROOT/tools/guest_desktop_link.sh" > "$gdl_lf"
 
-  echo "[d3-desktop] guest_desktop_link (${#objs[@]} objs, ${#D3_ARCHIVES[@]} archives, no libqbfree.a libc=${BFREE_ELF_LIBC_PATH:-auto})"
+  echo "[d3-desktop] guest_desktop_link (${#objs[@]} objs, ${#D3_ARCHIVES[@]} archives, libqbfree+wayland libc=${BFREE_ELF_LIBC_PATH:-auto})"
   rm -f desktop desktop.elf
   if ! bash "$gdl_lf" \
     -o "$DESK/desktop.elf" \
@@ -289,6 +315,27 @@ link_d3_desktop() {
   fi
   rm -f "$gdl_lf"
   need "$DESK/desktop.elf"
+}
+
+compile_guest_bfree_shell_process_o() {
+  [[ -f "$DESK/guest_bfree_shell_process.cpp" ]] || return 0
+  local mk_defines mk_cxx mk_cxxflags expanded_flags
+  mk_defines="$(makefile_guest_var DEFINES)"
+  mk_cxx="$(makefile_guest_var CXX)"
+  mk_cxxflags="$(makefile_guest_var CXXFLAGS)"
+  [[ -n "$mk_cxx" && -n "$mk_cxxflags" ]] || return 0
+  expanded_flags="${mk_cxxflags//\$(DEFINES)/$mk_defines}"
+  if [[ -n "$MUSL_INC" ]]; then
+    expanded_flags+=" -idirafter $MUSL_INC"
+  fi
+  echo "[d3-desktop] compile guest_bfree_shell_process.o (pty shell syms)"
+  rm -f guest_bfree_shell_process.o
+  # shellcheck disable=SC2086
+  $mk_cxx -c $expanded_flags -I. -o guest_bfree_shell_process.o guest_bfree_shell_process.cpp
+  if ! nm guest_bfree_shell_process.o 2>/dev/null | grep -q ' guest_pty_shell_start'; then
+    echo "FAIL: guest_bfree_shell_process.o lacks guest_pty_shell_start" >&2
+    return 1
+  fi
 }
 
 compile_guest_main_d3_o() {
@@ -338,9 +385,10 @@ if ! "$CXX" "${WL_CXXFLAGS[@]}" -c -o "$STUB/qbfree_wayland.o" "$STUB/qbfree_way
 fi
 
 echo "[d3-desktop] recompile guest_main.o (-DBFREE_D3_WAYLAND_QPA, /tmp/bfree-d3-wl fast path)"
+compile_guest_bfree_shell_process_o
 compile_guest_main_d3_o
 
-echo "[d3-desktop] link desktop.elf (wayland QPA, no libqbfree.a)"
+echo "[d3-desktop] link desktop.elf (wayland QPA + libqbfree symbol refs)"
 link_d3_desktop
 
 if ! strings desktop.elf | grep -qF '[desktop_qt] D3 wayland desk session'; then
@@ -359,6 +407,7 @@ echo "[d3-desktop] sync guest_resource_holder_va.h"
 bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
 rm -f guest_link_compat.o guest_main.o
 bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
+compile_guest_bfree_shell_process_o
 compile_guest_main_d3_o
 link_d3_desktop
 bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
