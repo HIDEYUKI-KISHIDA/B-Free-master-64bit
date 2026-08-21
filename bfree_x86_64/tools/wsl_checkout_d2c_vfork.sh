@@ -28,7 +28,7 @@ REPO="$(bfree_find_repo_root)" || {
 cd "$REPO"
 
 BRANCH="${BFREE_D2C_BRANCH:-cursor/d2c-vfile-slots-9760}"
-MIN_COMMIT="${BFREE_D2C_MIN:-d799e1a}"
+MIN_COMMIT="${BFREE_D2C_MIN:-dcdd828}"
 
 echo "[d2c-checkout] repo=$REPO"
 echo "[d2c-checkout] current=$(git branch --show-current 2>/dev/null || echo '?')"
