@@ -16,6 +16,10 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing: $1" >&2; exit 1; };
 need xorriso
 need qemu-system-x86_64
 
+if [[ -x "$ROOT/tools/verify_d2c_build.sh" ]]; then
+  bash "$ROOT/tools/verify_d2c_build.sh" || exit 1
+fi
+
 if [[ ! -s "$KERNEL" ]]; then
   echo "missing kernel: $KERNEL (make -C kernel)" >&2
   exit 1
