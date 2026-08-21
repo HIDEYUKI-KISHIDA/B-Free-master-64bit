@@ -87,15 +87,29 @@ if [[ -n "$_inc" ]]; then
   done
 fi
 
+# Makefile.guest-elf has a qmake self-regen rule (needs desktop_qt_guest.pro).
+# bfree-d2c clone often lacks the .pro — never trigger regen during D3 relink.
+MAKE_GUEST_ELF=(make -f Makefile.guest-elf --assume-old=Makefile.guest-elf)
+
+makefile_guest_var() {
+  grep -m1 "^$1" Makefile.guest-elf | sed "s/^$1[[:space:]]*=[[:space:]]*//"
+}
+
 compile_guest_main_d3_o() {
-  local mk_defines
-  mk_defines="$(grep -m1 '^DEFINES' Makefile.guest-elf | sed 's/^DEFINES[[:space:]]*=[[:space:]]*//')"
-  if [[ -z "$mk_defines" ]]; then
-    echo "FAIL: Makefile.guest-elf lacks DEFINES line" >&2
+  local mk_defines mk_cxx mk_cxxflags mk_incpath expanded_flags
+  mk_defines="$(makefile_guest_var DEFINES)"
+  mk_cxx="$(makefile_guest_var CXX)"
+  mk_cxxflags="$(makefile_guest_var CXXFLAGS)"
+  mk_incpath="$(makefile_guest_var INCPATH)"
+  if [[ -z "$mk_defines" || -z "$mk_cxx" || -z "$mk_cxxflags" ]]; then
+    echo "FAIL: Makefile.guest-elf lacks CXX/DEFINES/CXXFLAGS" >&2
     return 1
   fi
+  expanded_flags="${mk_cxxflags//\$(DEFINES)/$mk_defines -DBFREE_D3_WAYLAND_QPA}"
   rm -f guest_main.o
-  make -f Makefile.guest-elf guest_main.o DEFINES="$mk_defines -DBFREE_D3_WAYLAND_QPA"
+  echo "[d3-desktop] compile guest_main.o via $mk_cxx (-DBFREE_D3_WAYLAND_QPA)"
+  # shellcheck disable=SC2086
+  $mk_cxx -c $expanded_flags $mk_incpath -o guest_main.o guest_main.cpp
   if ! strings guest_main.o | grep -qF '[desktop_qt] D3 wayland desk session'; then
     echo "FAIL: guest_main.o lacks D3 wayland session string (-DBFREE_D3_WAYLAND_QPA not applied?)" >&2
     return 1
@@ -146,7 +160,7 @@ for o in guest_mvp_shell_qmlcache.o bfree_qqmlthread_sync.o guest_desktop_shell_
          guest_qcoreapp_arguments.o guest_context_factory.o; do
   [[ -f "$o" ]] && MAKE_O+=(-o "$o")
 done
-make -f Makefile.guest-elf "${MAKE_O[@]}" desktop
+"${MAKE_GUEST_ELF[@]}" "${MAKE_O[@]}" desktop
 [[ -f desktop ]] && mv -f desktop desktop.elf
 need desktop.elf
 
@@ -168,7 +182,7 @@ rm -f guest_link_compat.o guest_main.o
 bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
 compile_guest_main_d3_o
 rm -f desktop desktop.elf
-make -f Makefile.guest-elf "${MAKE_O[@]}" desktop
+"${MAKE_GUEST_ELF[@]}" "${MAKE_O[@]}" desktop
 [[ -f desktop ]] && mv -f desktop desktop.elf
 need desktop.elf
 bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"

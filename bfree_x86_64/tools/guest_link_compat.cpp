@@ -2733,7 +2733,8 @@ extern "C" void bfree_guest_enable_main_bump_arena(void)
 #ifdef BFREE_GUEST_APP_MMAP
 static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=wayland";
 #else
-static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=bfree";
+/* Buffer fits wayland overwrite on D3 vfork exec; default is bfree (N2 daily). */
+static char bfree_guest_env_qpa[28] = "QT_QPA_PLATFORM=bfree";
 #endif
 static char bfree_guest_env_quick[] = "QT_QUICK_BACKEND=software";
 static char bfree_guest_env_noft[] = "QT_NO_FT_LIB=1";
