@@ -102,9 +102,15 @@ grep -aqF '[desktop_qt] main entry' "$LOG" || {
     if bash "$ROOT/tools/check_desktop_holder_embedded.sh" "$DESK" >/dev/null 2>&1; then
       if python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" "$DESK" >/dev/null 2>&1; then
         if grep -aq '\[D\]' "$LOG" || grep -aq '\[P\]' "$LOG"; then
-          echo "FAIL: guest PANIC in Qt init_array after musl TLS ok (static plugin ctor?):"
-          echo "  make -C kernel clean && make -C kernel RELEASE=1   # needs [TLS] scrub tail bss"
-          echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+          if grep -aq 'qresource ensure list' "$LOG" && ! grep -aqF '[desktop_qt] main entry' "$LOG"; then
+            echo "FAIL: guest hang in Qt qresource init (resourceGlobalData BSS @ 0x62c6160):"
+            echo "  make -C kernel clean && make -C kernel RELEASE=1   # 16 KiB tail BSS scrub"
+            echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+          else
+            echo "FAIL: guest PANIC in Qt init_array after musl TLS ok (static plugin ctor?):"
+            echo "  make -C kernel clean && make -C kernel RELEASE=1   # needs [TLS] scrub tail bss"
+            echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+          fi
         elif grep -aqF '[TLS] exec early fsbase=' "$LOG"; then
           echo "FAIL: guest PANIC at musl __init_tls/__copy_tls (tail BSS reuse on vfork exec):"
           echo "  make -C kernel clean && make -C kernel RELEASE=1   # needs [TLS] scrub tail bss"

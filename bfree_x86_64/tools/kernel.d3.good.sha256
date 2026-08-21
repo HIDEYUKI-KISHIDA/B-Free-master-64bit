@@ -1,3 +1,3 @@
-# Patched D2c+D3 kernel: TLS bootstrap + tail BSS scrub (Qt staticPluginList + musl).
+# Patched D2c+D3 kernel: TLS bootstrap + tail BSS scrub (resourceGlobalData..musl).
 # Rebuild: make -C kernel clean && make -C kernel RELEASE=1
-b59550f0cbc3b448f1e647489209aff0c72cb2f625caf2427b22189ea575b6ab
+a1508f1e3cf0e4e26b19d6c582e8827e4ebc9aeaa397e87001eb4ae59c7108b9

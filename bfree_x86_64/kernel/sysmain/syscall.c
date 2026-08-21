@@ -2783,13 +2783,13 @@ static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_
 }
 
 /*
- * desktop.elf tail PT_LOAD BSS: Qt QGlobalStatic holders (staticPluginList @
- * 0x62c8960), musl main_tls @ 0x62c9540, __libc, __malloc_context.
- * vfork+exec + PMM reuse on WSL can leave garbage → __copy_tls #GP or
- * qRegisterStaticPluginFunction #GP in init_array ctor[3].
+ * desktop.elf tail PT_LOAD BSS: Qt QGlobalStatic holders (resourceGlobalData @
+ * 0x62c6160, staticPluginList @ 0x62c8960), musl main_tls @ 0x62c9540,
+ * __libc, __malloc_context. vfork+exec + PMM reuse on WSL leaves garbage →
+ * __copy_tls #GP, qRegisterStaticPluginFunction #GP, or qresource list hang.
  */
-#define BFREE_DESKTOP_TAIL_BSS_VA    0x62c8000ULL
-#define BFREE_DESKTOP_TAIL_BSS_BYTES   0x2000ULL /* two pages through __malloc_context */
+#define BFREE_DESKTOP_TAIL_BSS_VA    0x62c6000ULL
+#define BFREE_DESKTOP_TAIL_BSS_BYTES   0x4000ULL /* 16 KiB through __malloc_context */
 
 static void bfree_desktop_exec_scrub_musl_bss(void)
 {

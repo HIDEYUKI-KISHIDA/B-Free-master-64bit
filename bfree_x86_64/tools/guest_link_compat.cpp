@@ -4294,6 +4294,15 @@ static void bfree_guest_resource_list_sanitize(void)
     n = *(int64_t *)(h + 0x28);
     if (n <= 0)
         return;
+    if (n > 4096 || (uintptr_t)ptrs < 0x02800000ULL || (uintptr_t)ptrs >= 0x08000000ULL) {
+        *(void ***)(h + 0x20) = 0;
+        *(int64_t *)(h + 0x28) = 0;
+        if (g_qreg_sanitize_diag < 8u) {
+            ++g_qreg_sanitize_diag;
+            bfree_guest_serial_lit("[desktop_qt] qresource reset corrupt list\n");
+        }
+        return;
+    }
     if (!ptrs) {
         *(int64_t *)(h + 0x28) = 0;
         return;
