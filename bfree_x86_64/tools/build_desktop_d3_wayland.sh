@@ -34,6 +34,7 @@ done
 
 SRC_FALLBACK="${BFREE_DESKTOP_OBJ_FALLBACK:-$HOME/bfree_build/userland/desktop_qt}"
 PROGRAM_DESK="/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/desktop_qt"
+PROGRAM_ROOT="/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64"
 if [[ ! -d "$SRC_FALLBACK" && -d "$PROGRAM_DESK" ]]; then
   SRC_FALLBACK="$PROGRAM_DESK"
 fi
@@ -43,6 +44,20 @@ need() {
     echo "FAIL: missing $1" >&2
     exit 1
   fi
+}
+
+resolve_qpa_inc() {
+  local d
+  for d in \
+    "$ROOT/gui_server/integration_gui/bfree_qpa" \
+    "$PROGRAM_ROOT/gui_server/integration_gui/bfree_qpa" \
+    "$DESK/../../gui_server/integration_gui/bfree_qpa"; do
+    if [[ -f "$d/bfree/bfree_guest_abi.h" ]]; then
+      echo "$d"
+      return 0
+    fi
+  done
+  return 1
 }
 
 restore_desk_missing() {
@@ -135,8 +150,13 @@ makefile_guest_var() {
 }
 
 compile_guest_main_d3_o() {
-  local mk_defines mk_cxx mk_cxxflags mk_incpath expanded_flags
+  local mk_defines mk_cxx mk_cxxflags mk_incpath expanded_flags qpa_inc
   restore_desk_tree
+  qpa_inc="$(resolve_qpa_inc)" || {
+    echo "FAIL: bfree/bfree_guest_abi.h not found (need Program gui_server/integration_gui/bfree_qpa)" >&2
+    echo "  expected under $ROOT/gui_server/integration_gui/bfree_qpa/bfree/" >&2
+    return 1
+  }
   mk_defines="$(makefile_guest_var DEFINES)"
   mk_cxx="$(makefile_guest_var CXX)"
   mk_cxxflags="$(makefile_guest_var CXXFLAGS)"
@@ -150,9 +170,9 @@ compile_guest_main_d3_o() {
     expanded_flags+=" -idirafter $MUSL_INC"
   fi
   rm -f guest_main.o
-  echo "[d3-desktop] compile guest_main.o via $mk_cxx (-DBFREE_D3_WAYLAND_QPA)"
+  echo "[d3-desktop] compile guest_main.o via $mk_cxx (-DBFREE_D3_WAYLAND_QPA qpa=$qpa_inc)"
   # shellcheck disable=SC2086
-  $mk_cxx -c $expanded_flags $mk_incpath -I. -o guest_main.o guest_main.cpp
+  $mk_cxx -c $expanded_flags $mk_incpath -I. -I"$qpa_inc" -o guest_main.o guest_main.cpp
   if ! strings guest_main.o | grep -qF '[desktop_qt] D3 wayland desk session'; then
     echo "FAIL: guest_main.o lacks D3 wayland session string (-DBFREE_D3_WAYLAND_QPA not applied?)" >&2
     return 1
