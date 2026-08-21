@@ -47,6 +47,10 @@ need() {
 }
 
 resolve_qpa_inc() {
+  if [[ -n "${BFREE_QPA_INC:-}" && -f "${BFREE_QPA_INC}/bfree/bfree_guest_abi.h" ]]; then
+    echo "$BFREE_QPA_INC"
+    return 0
+  fi
   local d
   for d in \
     "$ROOT/gui_server/integration_gui/bfree_qpa" \
@@ -141,12 +145,139 @@ if [[ -n "$_inc" ]]; then
   done
 fi
 
-# Makefile.guest-elf has a qmake self-regen rule (needs desktop_qt_guest.pro).
-# bfree-d2c clone often lacks the .pro — never trigger regen during D3 relink.
-MAKE_GUEST_ELF=(make -f Makefile.guest-elf --assume-old=Makefile.guest-elf)
-
 makefile_guest_var() {
   grep -m1 "^$1" Makefile.guest-elf | sed "s/^$1[[:space:]]*=[[:space:]]*//"
+}
+
+makefile_guest_objects() {
+  awk '
+    /^OBJECTS[[:space:]]+=/ {
+      line=$0
+      sub(/^OBJECTS[[:space:]]+=[[:space:]]*/, "", line)
+      gsub(/\\$/, "", line)
+      gsub(/[[:space:]]+$/, "", line)
+      printf "%s ", line
+      inobj=1
+      next
+    }
+    inobj && /^[[:space:]]+/ {
+      line=$0
+      gsub(/^[[:space:]]+/, "", line)
+      gsub(/\\$/, "", line)
+      gsub(/[[:space:]]+$/, "", line)
+      printf "%s ", line
+      next
+    }
+    inobj { exit }
+  ' Makefile.guest-elf
+}
+
+restore_one_desk_file() {
+  local name="$1"
+  [[ -s "$DESK/$name" ]] && return 0
+  local src
+  for src in "$SRC_FALLBACK" "$PROGRAM_DESK" "$HOME/bfree_build/userland/desktop_qt"; do
+    [[ -f "$src/$name" ]] || continue
+    cp -f "$src/$name" "$DESK/$name"
+    echo "  restore $name <= $src"
+    return 0
+  done
+  return 1
+}
+
+restore_desk_objects() {
+  echo "[d3-desktop] restore Makefile.guest-elf OBJECTS from maintainer tree"
+  local objs o missing=()
+  objs="$(makefile_guest_objects)"
+  for o in $objs; do
+    o="${o//$'\r'/}"
+    [[ "$o" == "guest_main.o" || "$o" == "guest_link_compat.o" ]] && continue
+    if [[ -s "$DESK/$o" ]]; then
+      continue
+    fi
+    if restore_one_desk_file "$o"; then
+      continue
+    fi
+    missing+=("$o")
+  done
+  for o in crt0.o guest_serial.o desktop.ld; do
+    restore_one_desk_file "$o" || true
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "FAIL: missing desktop_qt objects (need maintainer bfree_build or Program tree):" >&2
+    printf '  %s\n' "${missing[@]}" >&2
+    echo "  set BFREE_DESKTOP_OBJ_FALLBACK=/path/to/userland/desktop_qt" >&2
+    return 1
+  fi
+}
+
+collect_d3_archives() {
+  D3_ARCHIVES=()
+  local a
+  for a in \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/objects-Release/Gui_resources_1/.qt/rcc/qrc_qpdf_init.cpp.o" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/objects-Release/Gui_resources_2/.qt/rcc/qrc_gui_shaders_init.cpp.o" \
+    "$BFREE_QT_GUEST_BUILD_DIR/plugins/imageformats/libqgif.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/plugins/imageformats/libqico.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/plugins/imageformats/libqjpeg.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6BundledLibjpeg.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6Quick.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6Gui.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6BundledHarfbuzz.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6BundledFreetype.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6BundledLibpng.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6QmlMeta.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6QmlModels.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6QmlWorkerScript.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6Qml.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6Core.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6BundledZLIB.a" \
+    "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6BundledPcre2.a"; do
+    [[ -f "$a" ]] && D3_ARCHIVES+=("$a")
+  done
+  [[ ${#D3_ARCHIVES[@]} -gt 0 ]] || {
+    echo "FAIL: no Qt guest archives under $BFREE_QT_GUEST_BUILD_DIR/lib" >&2
+    return 1
+  }
+}
+
+link_d3_desktop() {
+  local objs=() o
+  restore_desk_objects
+  for o in $(makefile_guest_objects); do
+    o="${o//$'\r'/}"
+    need "$DESK/$o"
+    objs+=("$DESK/$o")
+  done
+  objs+=("$STUB/qbfree_wayland.o" "$STUB/wl_stub_flush.o")
+  collect_d3_archives
+
+  export BFREE_GUEST_CRT0="$DESK/crt0.o"
+  export BFREE_GUEST_COMPAT="$DESK/guest_link_compat.o"
+  export BFREE_GUEST_SERIAL="$DESK/guest_serial.o"
+  export BFREE_ROOT="$ROOT"
+  export BFREE_D3_WAYLAND_LINK=1
+
+  need "$DESK/crt0.o"
+  need "$DESK/guest_serial.o"
+  need "$DESK/desktop.ld"
+  need "$ROOT/tools/guest_desktop_link.sh"
+
+  local gdl_lf="/tmp/bfree-guest_desktop_link-$$.sh"
+  tr -d '\r' < "$ROOT/tools/guest_desktop_link.sh" > "$gdl_lf"
+
+  echo "[d3-desktop] guest_desktop_link (${#objs[@]} objs, ${#D3_ARCHIVES[@]} archives, no libqbfree.a)"
+  rm -f desktop desktop.elf
+  if ! bash "$gdl_lf" \
+    -o "$DESK/desktop.elf" \
+    "-T$DESK/desktop.ld" \
+    "${objs[@]}" \
+    "${D3_ARCHIVES[@]}"; then
+    rm -f "$gdl_lf"
+    return 1
+  fi
+  rm -f "$gdl_lf"
+  need "$DESK/desktop.elf"
 }
 
 compile_guest_main_d3_o() {
@@ -181,18 +312,7 @@ compile_guest_main_d3_o() {
 
 echo "[d3-desktop] guest Qt=$BFREE_QT_GUEST_BUILD_DIR musl=$MUSL_INC"
 restore_desk_tree
-
-if [[ -d "$SRC_FALLBACK" ]]; then
-  echo "[d3-desktop] restore empty .o from $SRC_FALLBACK (except compat/main/qpa)"
-  for f in "$SRC_FALLBACK"/*.o; do
-    base="$(basename "$f")"
-    [[ "$base" == "guest_link_compat.o" || "$base" == "guest_main.o" ]] && continue
-    if [[ ! -s "$DESK/$base" ]]; then
-      echo "  restore $base"
-      cp -f "$f" "$DESK/$base"
-    fi
-  done
-fi
+restore_desk_objects
 
 echo "[d3-desktop] compile guest_link_compat.o (D3 /tmp/bfree-d3-wl marker)"
 rm -f guest_link_compat.o
@@ -210,23 +330,7 @@ echo "[d3-desktop] recompile guest_main.o (-DBFREE_D3_WAYLAND_QPA, /tmp/bfree-d3
 compile_guest_main_d3_o
 
 echo "[d3-desktop] link desktop.elf (wayland QPA, no libqbfree.a)"
-rm -f desktop desktop.elf
-MAKE_O=(-o guest_main.o -o guest_link_compat.o -o "$STUB/qbfree_wayland.o" -o "$STUB/wl_stub_flush.o")
-for o in guest_mvp_shell_qmlcache.o bfree_qqmlthread_sync.o guest_desktop_shell_qmlcache.o \
-         guest_desktopshell_full_qmlcache.o guest_gate1_window_qmlcache.o \
-         guest_controls_button_qmlcache.o guest_breeze_theme_qmlcache.o \
-         guest_clock_applet_qmlcache.o guest_wabi_indicator_qmlcache.o \
-         guest_tray_icon_button_qmlcache.o guest_wabi_dialog_qmlcache.o \
-         guest_wabi_error_overlay_qmlcache.o guest_wabi_notification_qmlcache.o \
-         guest_wabi_notification_center_qmlcache.o guest_wabi_screen_area_selector_qmlcache.o \
-         guest_splash_data.o guest_mvp_qmlcache_register.o qrc_guest_desktop.o \
-         guest_qquick_window.o guest_drawhelper_init.o guest_qquick_dirty_stub.o \
-         guest_qcoreapp_arguments.o guest_context_factory.o; do
-  [[ -f "$o" ]] && MAKE_O+=(-o "$o")
-done
-"${MAKE_GUEST_ELF[@]}" "${MAKE_O[@]}" desktop
-[[ -f desktop ]] && mv -f desktop desktop.elf
-need desktop.elf
+link_d3_desktop
 
 if ! strings desktop.elf | grep -qF '[desktop_qt] D3 wayland desk session'; then
   echo "FAIL: desktop.elf lacks D3 wayland desk session string (guest_main.o stale?)" >&2
@@ -245,10 +349,7 @@ bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_r
 rm -f guest_link_compat.o guest_main.o
 bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
 compile_guest_main_d3_o
-rm -f desktop desktop.elf
-"${MAKE_GUEST_ELF[@]}" "${MAKE_O[@]}" desktop
-[[ -f desktop ]] && mv -f desktop desktop.elf
-need desktop.elf
+link_d3_desktop
 bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
 holder_nm="$(nm desktop.elf 2>/dev/null | awk '/resourceGlobalData/ && /instanceEvE6holder$/ && !/_ZGV/ { print "0x" $1; exit }')"
 holder_hdr="$(sed -n 's/.*HOLDER_VA \([0-9a-fxA-FX]*\)u.*/\1/p' guest_resource_holder_va.h 2>/dev/null || true)"
