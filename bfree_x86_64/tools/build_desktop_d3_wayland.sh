@@ -33,8 +33,9 @@ for musl in "$ROOT/out/x86_64-elf-libm/prefix/include" \
 done
 
 SRC_FALLBACK="${BFREE_DESKTOP_OBJ_FALLBACK:-$HOME/bfree_build/userland/desktop_qt}"
-if [[ ! -d "$SRC_FALLBACK" && -d /mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/desktop_qt ]]; then
-  SRC_FALLBACK="/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/desktop_qt"
+PROGRAM_DESK="/mnt/c/Users/h_kis/Desktop/B-Free-master/Program/bfree_x86_64/userland/desktop_qt"
+if [[ ! -d "$SRC_FALLBACK" && -d "$PROGRAM_DESK" ]]; then
+  SRC_FALLBACK="$PROGRAM_DESK"
 fi
 
 need() {
@@ -42,6 +43,44 @@ need() {
     echo "FAIL: missing $1" >&2
     exit 1
   fi
+}
+
+restore_desk_missing() {
+  local name src
+  for name in "$@"; do
+    [[ -f "$DESK/$name" ]] && continue
+    for src in "$SRC_FALLBACK" "$PROGRAM_DESK" "$HOME/bfree_build/userland/desktop_qt"; do
+      [[ -f "$src/$name" ]] || continue
+      cp -f "$src/$name" "$DESK/$name"
+      echo "  restore $name <= $src"
+      break
+    done
+  done
+}
+
+restore_desk_tree() {
+  echo "[d3-desktop] restore missing desktop_qt headers/inc from maintainer tree"
+  local dir f base
+  for dir in "$SRC_FALLBACK" "$PROGRAM_DESK" "$HOME/bfree_build/userland/desktop_qt"; do
+    [[ -d "$dir" ]] || continue
+    for f in "$dir"/*.h "$dir"/*.inc; do
+      [[ -f "$f" ]] || continue
+      base="$(basename "$f")"
+      [[ -f "$DESK/$base" ]] && continue
+      cp -f "$f" "$DESK/$base"
+      echo "  restore $base <= $dir"
+    done
+  done
+  restore_desk_missing guest_serial.h guest_desktop_bridge.h guest_mvp_qmlcache_register.h \
+    guest_breeze_tokens.h guest_mvp_shell_qml.inc guest_resource_holder_va.h
+  local req
+  for req in guest_desktop_bridge.h guest_mvp_qmlcache_register.h guest_breeze_tokens.h guest_serial.h; do
+    if [[ ! -f "$DESK/$req" ]]; then
+      echo "FAIL: missing $DESK/$req" >&2
+      echo "  copy Program/bfree_x86_64/userland/desktop_qt/*.h into bfree-d2c, or set BFREE_DESKTOP_OBJ_FALLBACK" >&2
+      return 1
+    fi
+  done
 }
 
 need "$BFREE_QT_GUEST_BUILD_DIR/lib/libQt6Core.a"
@@ -97,6 +136,7 @@ makefile_guest_var() {
 
 compile_guest_main_d3_o() {
   local mk_defines mk_cxx mk_cxxflags mk_incpath expanded_flags
+  restore_desk_tree
   mk_defines="$(makefile_guest_var DEFINES)"
   mk_cxx="$(makefile_guest_var CXX)"
   mk_cxxflags="$(makefile_guest_var CXXFLAGS)"
@@ -106,10 +146,13 @@ compile_guest_main_d3_o() {
     return 1
   fi
   expanded_flags="${mk_cxxflags//\$(DEFINES)/$mk_defines -DBFREE_D3_WAYLAND_QPA}"
+  if [[ -n "$MUSL_INC" ]]; then
+    expanded_flags+=" -idirafter $MUSL_INC"
+  fi
   rm -f guest_main.o
   echo "[d3-desktop] compile guest_main.o via $mk_cxx (-DBFREE_D3_WAYLAND_QPA)"
   # shellcheck disable=SC2086
-  $mk_cxx -c $expanded_flags $mk_incpath -o guest_main.o guest_main.cpp
+  $mk_cxx -c $expanded_flags $mk_incpath -I. -o guest_main.o guest_main.cpp
   if ! strings guest_main.o | grep -qF '[desktop_qt] D3 wayland desk session'; then
     echo "FAIL: guest_main.o lacks D3 wayland session string (-DBFREE_D3_WAYLAND_QPA not applied?)" >&2
     return 1
@@ -117,6 +160,7 @@ compile_guest_main_d3_o() {
 }
 
 echo "[d3-desktop] guest Qt=$BFREE_QT_GUEST_BUILD_DIR musl=$MUSL_INC"
+restore_desk_tree
 
 if [[ -d "$SRC_FALLBACK" ]]; then
   echo "[d3-desktop] restore empty .o from $SRC_FALLBACK (except compat/main/qpa)"
