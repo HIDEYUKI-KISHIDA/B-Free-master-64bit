@@ -101,9 +101,15 @@ grep -aqF '[desktop_qt] main entry' "$LOG" || {
   if grep -aq '\[PANIC\]' "$LOG"; then
     if bash "$ROOT/tools/check_desktop_holder_embedded.sh" "$DESK" >/dev/null 2>&1; then
       if python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" "$DESK" >/dev/null 2>&1; then
-        echo "FAIL: guest PANIC but desktop fingerprint OK — rebuild kernel (TLS bootstrap):"
-        echo "  make -C kernel clean && make -C kernel RELEASE=1"
-        echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+        if grep -aqF '[TLS] exec early fsbase=' "$LOG"; then
+          echo "FAIL: guest PANIC at musl __init_tls/__copy_tls (main_tls BSS reuse on vfork exec):"
+          echo "  make -C kernel clean && make -C kernel RELEASE=1   # needs [TLS] scrub musl bss"
+          echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+        else
+          echo "FAIL: guest PANIC but desktop fingerprint OK — rebuild kernel (TLS bootstrap):"
+          echo "  make -C kernel clean && make -C kernel RELEASE=1"
+          echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+        fi
       else
         echo "FAIL: guest PANIC — stale bfree_guest_phdrs (musl __copy_tls on vfork exec):"
         echo "  bash tools/relink_desktop_phdrs_only.sh"

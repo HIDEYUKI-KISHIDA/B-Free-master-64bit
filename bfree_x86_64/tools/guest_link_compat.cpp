@@ -4068,19 +4068,30 @@ static void bfree_guest_sync_stack_canary(void)
     __init_ssp(0);
 }
 
+/* musl static TLS list head in desktop.elf BSS (nm: main_tls @ 0x62c9540, 48 bytes). */
+#define BFREE_DESKTOP_MAIN_TLS_VA   0x62c9540ULL
+#define BFREE_DESKTOP_MAIN_TLS_BYTES 48U
+
 static void bfree_guest_init_musl_tls(void)
 {
     long prctl_ret;
+    uintptr_t fs0;
 
     bfree_guest_serial_step('A');
+    memset((void *)(uintptr_t)BFREE_DESKTOP_MAIN_TLS_VA, 0, BFREE_DESKTOP_MAIN_TLS_BYTES);
     memset(&__libc, 0, sizeof(__libc));
     __libc.can_do_threads = 1;
     __libc.need_locks = 0;
     __libc.page_size = 4096;
-    memset(bfree_guest_early_tcb, 0, sizeof(bfree_guest_early_tcb));
-    *(uintptr_t *)bfree_guest_early_tcb = (uintptr_t)bfree_guest_early_tcb;
-    prctl_ret = bfree_guest_syscall2(BFREE_LINUX_SYS_ARCH_PRCTL, BFREE_ARCH_SET_FS,
-                                     (long)(uintptr_t)bfree_guest_early_tcb);
+    fs0 = bfree_guest_read_fs0();
+    if (fs0 == 0) {
+        memset(bfree_guest_early_tcb, 0, sizeof(bfree_guest_early_tcb));
+        *(uintptr_t *)bfree_guest_early_tcb = (uintptr_t)bfree_guest_early_tcb;
+        prctl_ret = bfree_guest_syscall2(BFREE_LINUX_SYS_ARCH_PRCTL, BFREE_ARCH_SET_FS,
+                                         (long)(uintptr_t)bfree_guest_early_tcb);
+    } else {
+        prctl_ret = 0;
+    }
     bfree_guest_serial_step('B');
     bfree_guest_serial_hex((uintptr_t)prctl_ret);
     bfree_guest_serial_hex(bfree_guest_read_fs0());

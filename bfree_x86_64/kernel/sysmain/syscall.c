@@ -2782,6 +2782,36 @@ static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_
     return 0;
 }
 
+/*
+ * desktop.elf musl TLS list head + libc globals live in high PT_LOAD BSS
+ * (main_tls @ 0x62c9540, __libc @ 0x62c9940). vfork+exec private AS load clears
+ * pages in the loader, but PMM reuse on some hosts (WSL) can leave non-zero
+ * main_tls.next → __copy_tls walks garbage and #GP before guest crt0 runs.
+ */
+#define BFREE_DESKTOP_MUSL_BSS_VA   0x62c9540ULL
+#define BFREE_DESKTOP_MUSL_BSS_BYTES 0x840ULL /* main_tls .. __malloc_context */
+
+static void bfree_desktop_exec_scrub_musl_bss(void)
+{
+    char zbuf[128];
+    uint64_t off = 0;
+    int ok = 1;
+
+    memset(zbuf, 0, sizeof(zbuf));
+    while (off < BFREE_DESKTOP_MUSL_BSS_BYTES) {
+        uint64_t chunk = BFREE_DESKTOP_MUSL_BSS_BYTES - off;
+        if (chunk > sizeof(zbuf)) {
+            chunk = sizeof(zbuf);
+        }
+        if (bfree_user_stack_poke_bytes(BFREE_DESKTOP_MUSL_BSS_VA + off, zbuf, chunk) != 0) {
+            ok = 0;
+            break;
+        }
+        off += chunk;
+    }
+    uart_puts(ok ? "[TLS] scrub musl bss ok\n" : "[TLS] scrub musl bss miss\n");
+}
+
 static void bfree_user_exec_install_fsbase(uint64_t user_rsp, int bootstrap_tls)
 {
     uint64_t early_fs = 0;
@@ -11800,6 +11830,9 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
 
     (void)path;
     bfree_enable_user_fpu();
+    if (bfree_guest_basename_eq(exec_img, "desktop.elf")) {
+        bfree_desktop_exec_scrub_musl_bss();
+    }
     /* desktop.elf: early TCB bootstrap (vfork+exec child — musl __copy_tls needs valid %fs:0). */
     bfree_user_exec_install_fsbase(user_rsp,
         (bfree_guest_basename_eq(exec_img, "busybox.elf") ||
