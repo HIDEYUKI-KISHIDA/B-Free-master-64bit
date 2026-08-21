@@ -26,15 +26,7 @@ for musl in "$ROOT/out/x86_64-elf-libm/prefix/include" \
 done
 
 compile_guest_link_compat() {
-  if [[ -z "$MUSL_INC" ]]; then
-    echo "[converge] musl headers not found" >&2
-    return 1
-  fi
-  x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack-check \
-    -fno-stack-clash-protection -fno-pic \
-    -Wall -Wextra -mno-sse -mno-mmx -mno-3dnow -fno-exceptions -fno-rtti -Wa,--noexecstack \
-    -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
-    -x c++ -c -o "$DESK/guest_link_compat.o" "$ROOT/tools/guest_link_compat.cpp"
+  bash "$ROOT/tools/compile_guest_link_compat.sh" "$DESK/guest_link_compat.o"
 }
 
 holder_nm() {

@@ -65,11 +65,8 @@ fi
 
 echo "[d3-desktop] compile guest_link_compat.o (D3 /tmp/bfree-d3-wl marker)"
 rm -f guest_link_compat.o
-x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack-check \
-  -fno-stack-clash-protection -fno-pic \
-  -Wall -Wextra -mno-sse -mno-mmx -mno-3dnow -fno-exceptions -fno-rtti -Wa,--noexecstack \
-  -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
-  -x c++ -c -o guest_link_compat.o "$ROOT/tools/guest_link_compat.cpp"
+bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h" 2>/dev/null || true
+bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
 
 echo "[d3-desktop] recompile guest_main.o (wayland argv when /tmp/bfree-d3-wl)"
 rm -f guest_main.o
@@ -97,11 +94,7 @@ need desktop.elf
 echo "[d3-desktop] sync guest_resource_holder_va.h"
 bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
 rm -f guest_link_compat.o guest_main.o
-x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack-check \
-  -fno-stack-clash-protection -fno-pic \
-  -Wall -Wextra -mno-sse -mno-mmx -mno-3dnow -fno-exceptions -fno-rtti -Wa,--noexecstack \
-  -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
-  -x c++ -c -o guest_link_compat.o "$ROOT/tools/guest_link_compat.cpp"
+bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
 make -f Makefile.guest-elf guest_main.o
 rm -f desktop desktop.elf
 make -f Makefile.guest-elf "${MAKE_O[@]}" desktop

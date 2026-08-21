@@ -30,11 +30,8 @@ python3 "$ROOT/tools/emit_guest_compat_phdrs.py" "$DESK/desktop.elf" "$ROOT/tool
 
 echo "[phdrs-relink] compile guest_link_compat.o"
 rm -f guest_link_compat.o
-x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack-check \
-  -fno-stack-clash-protection -fno-pic \
-  -Wall -Wextra -mno-sse -mno-mmx -mno-3dnow -fno-exceptions -fno-rtti -Wa,--noexecstack \
-  -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
-  -x c++ -c -o guest_link_compat.o "$ROOT/tools/guest_link_compat.cpp"
+bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
+bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
 
 echo "[phdrs-relink] link desktop.elf (compat only — keep existing .o set)"
 MAKE_O=(-o guest_link_compat.o -o guest_main.o)
