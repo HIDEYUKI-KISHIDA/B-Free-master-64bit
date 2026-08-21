@@ -319,10 +319,11 @@ link_d3_desktop() {
 
 compile_guest_bfree_shell_process_o() {
   [[ -f "$DESK/guest_bfree_shell_process.cpp" ]] || return 0
-  local mk_defines mk_cxx mk_cxxflags expanded_flags
+  local mk_defines mk_cxx mk_cxxflags mk_incpath expanded_flags
   mk_defines="$(makefile_guest_var DEFINES)"
   mk_cxx="$(makefile_guest_var CXX)"
   mk_cxxflags="$(makefile_guest_var CXXFLAGS)"
+  mk_incpath="$(makefile_guest_var INCPATH)"
   [[ -n "$mk_cxx" && -n "$mk_cxxflags" ]] || return 0
   expanded_flags="${mk_cxxflags//\$(DEFINES)/$mk_defines}"
   if [[ -n "$MUSL_INC" ]]; then
@@ -331,7 +332,7 @@ compile_guest_bfree_shell_process_o() {
   echo "[d3-desktop] compile guest_bfree_shell_process.o (pty shell syms)"
   rm -f guest_bfree_shell_process.o
   # shellcheck disable=SC2086
-  $mk_cxx -c $expanded_flags -I. -o guest_bfree_shell_process.o guest_bfree_shell_process.cpp
+  $mk_cxx -c $expanded_flags $mk_incpath -I. -o guest_bfree_shell_process.o guest_bfree_shell_process.cpp
   if ! nm guest_bfree_shell_process.o 2>/dev/null | grep -q ' guest_pty_shell_start'; then
     echo "FAIL: guest_bfree_shell_process.o lacks guest_pty_shell_start" >&2
     return 1
