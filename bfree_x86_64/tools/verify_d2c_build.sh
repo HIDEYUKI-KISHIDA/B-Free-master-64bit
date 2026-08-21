@@ -3,7 +3,7 @@
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-EXPECT="${BFREE_D2C_EXPECT:-d799e1a}"
+MIN_COMMIT="${BFREE_D2C_MIN:-d799e1a}"
 KERNEL="${BFREE_STUB_KERNEL:-$ROOT/kernel/kernel.elf}"
 HELLO="$ROOT/userland/compositor_stub/qt_wl_hello.elf"
 fail=0
@@ -11,13 +11,14 @@ fail=0
 cd "$ROOT/.."
 HEAD="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BR="$(git branch --show-current 2>/dev/null || echo unknown)"
-echo "git branch=$BR HEAD=$HEAD (want ${EXPECT}*)"
+echo "git branch=$BR HEAD=$HEAD (need branch cursor/d2c-vfile-slots-9760, ancestor of $MIN_COMMIT)"
 if [[ "$BR" != "cursor/d2c-vfile-slots-9760" ]]; then
-  echo "FAIL: wrong branch ($BR) — run: bash bfree_x86_64/tools/wsl_checkout_d2c_vfork.sh" >&2
+  echo "FAIL: wrong branch ($BR) — run checkout from Program/:" >&2
+  echo "  curl -fsSL 'https://raw.githubusercontent.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/cursor/d2c-vfile-slots-9760/bfree_x86_64/tools/wsl_checkout_d2c_vfork.sh' | bash" >&2
   fail=1
 fi
-if [[ "$HEAD" != "$EXPECT"* ]]; then
-  echo "FAIL: HEAD $HEAD is not commit $EXPECT*" >&2
+if ! git merge-base --is-ancestor "$MIN_COMMIT" HEAD 2>/dev/null; then
+  echo "FAIL: HEAD $HEAD is not descended from $MIN_COMMIT (git fetch して checkout し直してください)" >&2
   fail=1
 fi
 
