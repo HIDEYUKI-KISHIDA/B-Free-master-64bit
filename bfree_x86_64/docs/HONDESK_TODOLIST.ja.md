@@ -71,7 +71,11 @@ C デスクは **W8 の手順ではない**。Qt が灰色のとき、動く机�
   - [x] **D2c** クライアント SHM を 1024×768 にして compositor 出力を覆う。タイルは **48KiB × 64 枚**（`/tmp/wl00`–`wl63`。1024×768×4 = 64×49152）。g1-desk **vfile 上限 48KiB × 72 slots** が要る（64 slots + `/tmp/wlm` は EMFILE -24）。`/tmp/wlm` は使わない（親は `waitpid` 後に get）。Release `kernel.elf.g1-desk` を 16KiB のまま載せると `wl shm put trunc=-28`。`view[1]` は (0,0)。`QQmlEngine` / `beginCreate` はしない。シリアル `D2c fullscreen` → `D2 fill desk` → `exit_group` → `[wl] vfork parent`。画面はクライアントの壁紙/カード/EX/VW/TE/バーだけで、周りの stub 仮 chrome は見えない。ISO `P8TEST_D2C=fullscreen`。確認: `bash tools/_d2c_compositor_stub_smoke.sh`
   - [ ] **D2b** `QQmlEngine` を Wayland クライアントで作る。観測: `D2b qml-engine` → `D2b engine enter` → `D2b engine operator new ok` でコンストラクタが戻らない。退避済: `BFREE_D2B_QML=0`（第一段 `fill desk` → `exit_group` → `[wl] vfork parent`）。`beginCreate` / `loadUrl` はしない。engine ctor は合意するまで再試行しない
   - [ ] まだ: 製品 QML の qmlcache `populate`（IR Ready）。`beginCreate` は使わない
-- [x] **D3** 起動できるカーネルで `desktop.elf` を Wayland exec（旧 S2）。`BFREE_D3=1` で compositor が vfork 子で `/desktop.elf` + `QT_QPA_PLATFORM=wayland` を試行。パッチ済み kernel を xorriso で stub ISO に注入（from-source を daily g1-desk 本体へ上書きしない）。確認: `bash tools/_d3_compositor_stub_smoke.sh`。シリアル `[D3] execve desktop.elf` → `[D3] desktop wayland exec` → `[ELF] exec transfer desktop.elf` → `[desktop_qt] main entry`。`[wl] vfork parent` は desktop を D3 Wayland 向けに relink 後（`bash tools/build_desktop_d3_wayland.sh`）。日次 `bfree.iso` は触らない
+- [x] **D3** 起動できるカーネルで `desktop.elf` を Wayland exec（旧 S2）。`BFREE_D3=1` で compositor が vfork 子で `/desktop.elf` + `QT_QPA_PLATFORM=wayland` を試行。パッチ済み kernel を xorriso で stub ISO に注入（from-source を daily g1-desk 本体へ上書きしない）。確認: `bash tools/_d3_compositor_stub_smoke.sh`。シリアル `[D3] execve desktop.elf` → `[D3] desktop wayland exec` → `[ELF] exec transfer desktop.elf` → `[desktop_qt] main entry`。日次 `bfree.iso` は触らない
+  - [x] **D3 minimal**（Phase 0）: 上記 PASS。kernel tail BSS scrub + PHDR patch（WSL）。`[wl] vfork parent` / `platform=wayland` は WARN 許容（prebuilt desktop）
+  - [ ] **D3 full**（Phase 1）: `bash tools/build_desktop_d3_wayland.sh` で stub QPA relink → `BFREE_D3_FULL=1 bash tools/_d3_compositor_stub_smoke.sh`。必須: `platform=wayland` / `D3 wayland desk session` / `D2 fill desk` / `exit_group` / `[wl] vfork parent`
+  - [ ] **本デスク MVP**（Phase 2）: desktop から D2c 同等 1024×768 bits（engine なし）。Phase 1 と同一バイナリ
+  - [ ] **persist 固定**（Phase 3）: `desk note created` + sha256 指紋更新。詳細: `docs/D3_HONDESK_PHASES.ja.md`
 
 仮 chrome / 偽物 Explorer は製品にしない。GTK にしない。
 
