@@ -1530,6 +1530,9 @@ static long bfree_guest_exit_from_fork(long status)
 
     uart_puts("[VFORK] exit_from_fork enter\n");
     as_copy = g_guest_fork_was_as_copy;
+    if (!as_copy) {
+        bfree_guest_vfork_parent_immute_restore();
+    }
     /* Capture before exit_restore_as clears parent_pt / has_private_as. */
     page_table_t *resume_pt = bfree_process_parent_pt();
     if (!resume_pt && knl_current_task) {
@@ -1654,9 +1657,6 @@ static long bfree_guest_exit_from_fork(long status)
             }
             bfree_coop_arm_parent_resume();
         } else {
-            if (!as_copy) {
-                bfree_guest_vfork_parent_immute_restore();
-            }
             g_bfree_sysret_exec_rsp = g_bfree_fork_saved_rsp;
             g_bfree_sysret_exec_rcx = g_bfree_fork_saved_rcx;
             g_bfree_sysret_exec_r11 = g_bfree_fork_saved_r11;
