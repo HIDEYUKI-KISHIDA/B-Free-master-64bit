@@ -58,6 +58,7 @@
 #include <QString>
 #include <QUrl>
 #include <QWindow>
+#include <QPluginLoader>
 #include <QtPlugin>
 
 #include "guest_resource_holder_va.h"
@@ -69,6 +70,9 @@
 #include <sys/time.h>
 
 extern QStaticPlugin qt_static_plugin_QPlatformIntegrationPluginBFree(void);
+#if defined(BFREE_D3_WAYLAND_QPA)
+extern QStaticPlugin qt_static_plugin_QBfreeWlIntegrationPlugin(void);
+#endif
 extern QStaticPlugin qt_static_plugin_QGifPlugin(void);
 extern QStaticPlugin qt_static_plugin_QICOPlugin(void);
 extern void bfree_qpa_pump_guest_input(void);
@@ -6166,7 +6170,10 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     qInstallMessageHandler(guest_qt_message_handler);
     guest_serial_puts("[desktop_qt] qt log hook installed\n");
     guest_serial_puts("[desktop_qt] QGuiApplication OK\n");
-    guest_serial_puts("[desktop_qt] platform=bfree\n");
+    if (g_qt_argv && g_qt_argv[2] && strcmp(g_qt_argv[2], "wayland") == 0)
+        guest_serial_puts("[desktop_qt] platform=wayland\n");
+    else
+        guest_serial_puts("[desktop_qt] platform=bfree\n");
 
     guest_stage_banner(4, "deferred init_array ctors");
     bfree_guest_run_deferred_init_array_ctors();
@@ -6323,6 +6330,139 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     }
 }
 
+static int guest_d3_wl_marker_present(void)
+{
+    long fd = guest_sys3(2 /* open */, (long)"/tmp/bfree-d3-wl", 0 /* O_RDONLY */, 0);
+    if (fd < 0)
+        return 0;
+    (void)guest_sys3(3 /* close */, fd, 0, 0);
+    return 1;
+}
+
+static void guest_d3_fill_rect(unsigned *bits, int bpl, int w, int h, int x0, int y0, int rw,
+                              int rh, unsigned argb)
+{
+    int x;
+    int y;
+
+    if (x0 < 0) {
+        rw += x0;
+        x0 = 0;
+    }
+    if (y0 < 0) {
+        rh += y0;
+        y0 = 0;
+    }
+    if (rw <= 0 || rh <= 0 || x0 >= w || y0 >= h)
+        return;
+    for (y = y0; y < y0 + rh && y < h; ++y) {
+        unsigned *row = bits + y * bpl;
+        for (x = x0; x < x0 + rw && x < w; ++x)
+            row[x] = argb;
+    }
+}
+
+static void guest_d3_exit_group_noreturn(void)
+{
+    {
+        register long rax __asm__("rax") = 110;
+        register long rdi __asm__("rdi") = 0;
+        __asm__ volatile("syscall" : "+r"(rax) : "r"(rdi) : "rcx", "r11", "memory");
+        if (rax == 1)
+            guest_serial_puts("[desktop_qt] ppid=1\n");
+        else if (rax == 0)
+            guest_serial_puts("[desktop_qt] ppid=0\n");
+    }
+    guest_serial_puts("[desktop_qt] exit_group\n");
+    {
+        register long rax __asm__("rax") = 231;
+        register long rdi __asm__("rdi") = 0;
+        __asm__ volatile("syscall" : "+r"(rax) : "r"(rdi) : "rcx", "r11", "memory");
+    }
+    guest_serial_puts("[desktop_qt] exit_group hang\n");
+    for (;;)
+        __asm__ volatile("pause" ::: "memory");
+}
+
+#if defined(BFREE_D3_WAYLAND_QPA)
+static void guest_d3_register_wayland_qpa(void)
+{
+    qRegisterStaticPluginFunction(qt_static_plugin_QBfreeWlIntegrationPlugin());
+    guest_serial_puts("[desktop_qt] D3 wayland QPA registered\n");
+}
+
+static void guest_ctor_plugins_d3_wayland(void)
+{
+    guest_d3_register_wayland_qpa();
+    guest_serial_puts("[desktop_qt] plugin wayland only\n");
+}
+#endif
+
+/* D3 stub compositor: 1024×768 GuestMvpShell bits via stub wayland QPA, then exit_group. */
+__attribute__((noreturn)) static void guest_d3_wayland_desk_session(void)
+{
+    const int desk_w = 1024;
+    const int desk_h = 768;
+
+    guest_serial_puts("[desktop_qt] D3 wayland desk session\n");
+    guest_stage_banner(1, "static plugins (wayland QPA)");
+    guest_serial_puts("[desktop_qt] ctor enter\n");
+    bfree_guest_refresh_libc_auxv();
+#if defined(BFREE_D3_WAYLAND_QPA)
+    bfree_guest_run_on_ctor_stack_plugins(guest_ctor_plugins_d3_wayland);
+#else
+    bfree_guest_run_on_ctor_stack_plugins(guest_ctor_plugins_only);
+#endif
+    guest_serial_puts("[desktop_qt] ctor leave\n");
+    guest_stage_ok(1);
+
+    guest_stage_banner(2, "musl brk + mmap arenas");
+    bfree_guest_preflight_musl_heap();
+    bfree_guest_preflight_ctor_mmap();
+    guest_stage_ok(2);
+
+    guest_stage_banner(3, "QGuiApplication (D3 wayland)");
+    guest_ctor_qgui_application();
+    guest_serial_puts("[desktop_qt] platform=wayland\n");
+
+    QWindow win;
+    win.setGeometry(0, 0, desk_w, desk_h);
+    win.setSurfaceType(QSurface::RasterSurface);
+    QBackingStore store(&win);
+    win.create();
+    store.resize(QSize(desk_w, desk_h));
+    win.show();
+
+    const QRect rect(0, 0, desk_w, desk_h);
+    store.beginPaint(rect);
+    if (QImage *img = static_cast<QImage *>(store.paintDevice())) {
+        unsigned *bits = reinterpret_cast<unsigned *>(img->bits());
+        const int bpl = img->bytesPerLine() / 4;
+        const int w = img->width();
+        const int h = img->height();
+        if (bits && w > 0 && h > 0) {
+            guest_d3_fill_rect(bits, bpl, w, h, 0, 0, w, h, 0xff7a8fa8u);
+            guest_d3_fill_rect(bits, bpl, w, h, w * 40 / 480, h * 28 / 320, w * 400 / 480,
+                               h * 200 / 320, 0xfff8fafcu);
+            guest_d3_fill_rect(bits, bpl, w, h, w * 56 / 480, h * 48 / 320, w * 48 / 480,
+                               w * 48 / 480, 0xff1d4ed8u);
+            guest_d3_fill_rect(bits, bpl, w, h, w * 120 / 480, h * 48 / 320, w * 48 / 480,
+                               w * 48 / 480, 0xff0f766eu);
+            guest_d3_fill_rect(bits, bpl, w, h, w * 184 / 480, h * 48 / 320, w * 48 / 480,
+                               w * 48 / 480, 0xffc2410cu);
+            guest_d3_fill_rect(bits, bpl, w, h, 0, h - (h * 36 / 320), w, h * 36 / 320,
+                               0xff334155u);
+            guest_serial_puts("[desktop_qt] D2c fullscreen\n");
+            guest_serial_puts("[desktop_qt] D2 fill desk\n");
+        }
+    }
+    store.endPaint();
+    store.flush(rect);
+    guest_serial_puts("[desktop_qt] D3 wayland flush ok\n");
+    guest_persist_create_desk_note();
+    guest_d3_exit_group_noreturn();
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
@@ -6357,6 +6497,12 @@ int main(int argc, char **argv)
     bfree_guest_serial_step_c('L');
     g_qt_msg_diag = 0;
     bfree_guest_install_static_env();
+
+#if defined(BFREE_D3_WAYLAND_QPA)
+    if (use_wayland) {
+        guest_d3_wayland_desk_session();
+    }
+#endif
 
     guest_stage_banner(1, "static plugins (bss+bump)");
     guest_serial_puts("[desktop_qt] ctor enter\n");
