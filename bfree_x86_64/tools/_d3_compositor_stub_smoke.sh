@@ -33,7 +33,8 @@ if ! strings "$KERNEL" | grep -qF '[VFORK] immute ok'; then
   exit 1
 fi
 if ! strings "$KERNEL" | grep -qF '[D3] desktop wayland exec'; then
-  echo "FAIL: $KERNEL lacks [D3] desktop wayland exec marker — rebuild kernel" >&2
+  echo "FAIL: $KERNEL lacks [D3] desktop wayland exec — git pull 後に再ビルド:" >&2
+  echo "  make -C kernel clean && make -C kernel RELEASE=1" >&2
   exit 1
 fi
 if [[ ! -s "$DESK" ]] || [[ "$(wc -c < "$DESK")" -lt 10000000 ]]; then
