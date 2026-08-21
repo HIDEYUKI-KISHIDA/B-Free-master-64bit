@@ -11847,6 +11847,16 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     uart_puts(" cr3=");
     uart_puthex64(g_bfree_sysret_exec_cr3);
     uart_puts("\n");
+    if (bfree_guest_basename_eq(exec_img, "desktop.elf")) {
+        int di;
+        for (di = 0; di < envc; ++di) {
+            const char *ev = env_ptrs[di];
+            if (ev && strncmp(ev, "QT_QPA_PLATFORM=wayland", 23) == 0) {
+                uart_puts("[D3] desktop wayland exec\n");
+                break;
+            }
+        }
+    }
     /* vfork+exec child: exec_reset / heal paths may clear fork_active; restore
      * so exit_group always resumes the compositor parent (D2c). */
     if (is_child && g_vfork_parent_immute_valid) {

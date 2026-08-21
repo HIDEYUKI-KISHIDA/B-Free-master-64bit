@@ -16,6 +16,9 @@
  * qt_wl_hello.elf mapped as p8test.elf when the guest Qt prefix can
  * link it; otherwise this C client stays in the slot.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
+ * D3 (BFREE_D3_DESKTOP): vfork child execs /desktop.elf with
+ * QT_QPA_PLATFORM=wayland before p8test fallback. Requires bootable patched
+ * g1-desk (D2c vfork kernel); do not map an unpatched from-source kernel.
  */
 #define BFREE_FB0_FD 0x2000
 #define WL_SHM_FORMAT_XRGB8888 1
@@ -2878,12 +2881,50 @@ void _start(void)
         long cpid = sys6(SYS_GETPID, 0, 0, 0, 0, 0, 0);
         wl_vfork_pid_store(cpid);
         serial(childm, sizeof(childm) - 1);
-        p8_argv[0] = p8_path;
-        p8_argv[1] = 0;
         p8_envp[0] = env_qpa;
         p8_envp[1] = env_wld;
         p8_envp[2] = env_xdg;
         p8_envp[3] = 0;
+#ifdef BFREE_D3_DESKTOP
+        {
+            static char desk_path[] = "/desktop.elf";
+            static char desk_arg0[] = "/desktop.elf";
+            static char desk_arg_plat[] = "-platform";
+            static char desk_arg_wl[] = "wayland";
+            static char env_home[] = "HOME=/root";
+            static char env_user[] = "USER=root";
+            static char *desk_argv[4];
+            static char *desk_envp[6];
+
+            desk_argv[0] = desk_arg0;
+            desk_argv[1] = desk_arg_plat;
+            desk_argv[2] = desk_arg_wl;
+            desk_argv[3] = 0;
+            desk_envp[0] = env_qpa;
+            desk_envp[1] = env_wld;
+            desk_envp[2] = env_xdg;
+            desk_envp[3] = env_home;
+            desk_envp[4] = env_user;
+            desk_envp[5] = 0;
+            {
+                static char d3_mark[] = "/tmp/bfree-d3-wl";
+                long d3_fd = sys6(SYS_OPEN, (long)(unsigned long)d3_mark, O_CREAT | O_RDWR,
+                                  0644, 0, 0, 0);
+                if (d3_fd >= 0) {
+                    static const char one[] = "1";
+                    (void)sys6(SYS_WRITE, d3_fd, (long)(unsigned long)one, 1, 0, 0, 0);
+                    (void)sys6(SYS_CLOSE, d3_fd, 0, 0, 0, 0, 0);
+                }
+            }
+            serial("[D3] execve desktop.elf\n", 25);
+            exec_rc = sys6(SYS_EXECVE, (long)(unsigned long)desk_path,
+                           (long)(unsigned long)desk_argv, (long)(unsigned long)desk_envp,
+                           0, 0, 0);
+            serial_hex("[D3] execve rc=", exec_rc);
+        }
+#endif
+        p8_argv[0] = p8_path;
+        p8_argv[1] = 0;
         serial("[wl] execve p8test.elf\n", 23);
         exec_rc = sys6(SYS_EXECVE, (long)(unsigned long)p8_path,
                        (long)(unsigned long)p8_argv, (long)(unsigned long)p8_envp,

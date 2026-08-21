@@ -6331,10 +6331,20 @@ int main(int argc, char **argv)
     static char prog[] = "/desktop";
     static char arg_platform[] = "-platform";
     static char arg_bfree[] = "bfree";
-    static char *qt_argv[] = { prog, arg_platform, arg_bfree, nullptr };
+    static char arg_wayland[] = "wayland";
+    static char *qt_argv_bfree[] = { prog, arg_platform, arg_bfree, nullptr };
+    static char *qt_argv_wayland[] = { prog, arg_platform, arg_wayland, nullptr };
     int qt_argc = 3;
+    int use_wayland = 0;
+    {
+        int fd = guest_sys3(2 /* open */, (long) "/tmp/bfree-d3-wl", 0 /* O_RDONLY */, 0);
+        if (fd >= 0) {
+            (void)guest_sys3(3 /* close */, (long) fd, 0, 0);
+            use_wayland = 1;
+        }
+    }
     g_qt_argc = qt_argc;
-    g_qt_argv = qt_argv;
+    g_qt_argv = use_wayland ? qt_argv_wayland : qt_argv_bfree;
 
     bfree_guest_serial_step_c('H');
     bfree_guest_serial_step_c('I');

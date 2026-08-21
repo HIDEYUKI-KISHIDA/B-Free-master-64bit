@@ -13,8 +13,14 @@ LD_INIT = -nostdlib -static -Wl,-Ttext-segment=0x400000 -Wl,-z,norelro -e _start
 
 all: compositor.elf init_tramp.elf wl_client.elf qt_wl_client.elf wl_stub_flush.o
 
+# BFREE_D3=1: compositor vfork-execs desktop.elf (Wayland env) before p8test.
+BFREE_D3 ?= 0
+ifeq ($(BFREE_D3),1)
+D3_CFLAGS := -DBFREE_D3_DESKTOP
+endif
+
 compositor.elf: compositor_stub.c
-	$(CC) $(CFLAGS) $(LD_COMP) -o $@ $<
+	$(CC) $(CFLAGS) $(D3_CFLAGS) $(LD_COMP) -o $@ $<
 	file $@ || true
 
 # Same source, client _start. Load VA 0x400000 — child's private AS, not compositor.

@@ -2749,6 +2749,19 @@ static char bfree_guest_env_qv4gc[] = "QV4_GC_MAX_STACK_SIZE=1048576";
 static char bfree_guest_env_qv4interp[] = "QV4_FORCE_INTERPRETER=1";
 static char bfree_guest_env_fixedlocale[] = "BFREE_GUEST_FIXED_LOCALE=1";
 
+#ifndef BFREE_GUEST_APP_MMAP
+/* D3: compositor writes /tmp/bfree-d3-wl before vfork exec desktop.elf. */
+static int bfree_guest_d3_wl_marker_present(void)
+{
+    int fd = open("/tmp/bfree-d3-wl", O_RDONLY);
+    if (fd < 0) {
+        return 0;
+    }
+    (void)close(fd);
+    return 1;
+}
+#endif
+
 extern "C" {
 char *bfree_guest_environ_storage[25];
 char **environ = bfree_guest_environ_storage;
@@ -2757,6 +2770,12 @@ char **__environ = bfree_guest_environ_storage;
 
 extern "C" void bfree_guest_install_static_env(void)
 {
+#ifndef BFREE_GUEST_APP_MMAP
+    if (bfree_guest_d3_wl_marker_present()) {
+        memcpy(bfree_guest_env_qpa, "QT_QPA_PLATFORM=wayland",
+               sizeof("QT_QPA_PLATFORM=wayland"));
+    }
+#endif
     bfree_guest_environ_storage[0] = bfree_guest_env_qpa;
     bfree_guest_environ_storage[1] = bfree_guest_env_quick;
     bfree_guest_environ_storage[2] = bfree_guest_env_noft;
