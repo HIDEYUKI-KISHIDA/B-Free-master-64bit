@@ -52,3 +52,20 @@ if ! strings "$ELF" 2>/dev/null | grep -qF '[desktop_qt] main entry'; then
 fi
 
 echo "[holder-check] OK"
+
+# Optional: compare against maintainer fingerprint when present.
+GOOD_SHA="$ROOT/tools/desktop.elf.good.sha256"
+if [[ -f "$GOOD_SHA" ]]; then
+  expect="$(grep -E '^[0-9a-f]{64}$' "$GOOD_SHA" | head -1)"
+  if [[ -n "$expect" ]]; then
+    actual="$(sha256sum "$ELF" | awk '{print $1}')"
+    if [[ "$actual" != "$expect" ]]; then
+      echo "FAIL: sha256 mismatch (wrong desktop.elf — not maintainer good copy)" >&2
+      echo "  actual  $actual" >&2
+      echo "  expect  $expect" >&2
+      echo "  bash tools/restore_desktop_good_for_d3.sh" >&2
+      exit 1
+    fi
+    echo "[holder-check] sha256 OK ($expect)"
+  fi
+fi

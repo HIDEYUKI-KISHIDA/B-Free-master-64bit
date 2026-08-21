@@ -113,6 +113,8 @@ fi
 if [[ "$fail" != 0 ]]; then
   echo "[d3] FAIL — tail serial:"
   tail -40 "$LOG"
+  echo "[d3] desktop fingerprint:"
+  bash "$ROOT/tools/check_desktop_holder_embedded.sh" "$DESK" 2>&1 || true
   exit 1
 fi
 echo "[d3] PASS (desktop vfork exec + kernel wayland env)"

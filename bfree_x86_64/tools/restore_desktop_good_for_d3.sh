@@ -23,11 +23,12 @@ restore_one() {
   if bash "$CHECK" "$DESK/desktop.elf" >/dev/null 2>&1; then
     bash "$ROOT/tools/update_guest_resource_holder_va.sh" "$DESK/desktop.elf" "$DESK/guest_resource_holder_va.h"
     holder="$(sed -n 's/.*HOLDER_VA \([0-9a-fxA-FX]*\)u.*/\1/p' "$DESK/guest_resource_holder_va.h")"
-    echo "[restore] OK <= $src holder=$holder"
+    sha="$(sha256sum "$DESK/desktop.elf" | awk '{print $1}')"
+    echo "[restore] OK <= $src holder=$holder sha256=$sha"
     bash "$CHECK" "$DESK/desktop.elf"
     return 0
   fi
-  echo "[restore] skip $src (embedded holder mismatch)" >&2
+  echo "[restore] skip $src (holder/sha256 check failed)" >&2
   return 1
 }
 
