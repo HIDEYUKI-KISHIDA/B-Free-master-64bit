@@ -3989,7 +3989,7 @@ static unsigned char bfree_guest_at_random[16];
 static size_t bfree_guest_auxv_sparse[40];
 static size_t bfree_guest_auxv_pairs[16];
 
-static void bfree_guest_fill_auxv_tables(void)
+static void bfree_guest_fill_auxv_core(void)
 {
     const size_t phnum = sizeof(bfree_guest_phdrs) / sizeof(bfree_guest_phdrs[0]);
 
@@ -4018,6 +4018,11 @@ static void bfree_guest_fill_auxv_tables(void)
 
     __libc.page_size = 4096;
     __libc.auxv = bfree_guest_auxv_pairs;
+}
+
+static void bfree_guest_fill_auxv_tables(void)
+{
+    bfree_guest_fill_auxv_core();
     bfree_guest_install_static_env();
 }
 
@@ -4103,7 +4108,7 @@ static const char bfree_guest_compat_build_id[] =
 static void bfree_guest_init_musl_tls(void)
 {
     long prctl_ret;
-    uintptr_t fs0;
+    uintptr_t fs0 __attribute__((unused));
 
     bfree_guest_serial_step('A');
     if (BFREE_DESKTOP_MAIN_TLS_VA != 0u) {
@@ -4114,21 +4119,19 @@ static void bfree_guest_init_musl_tls(void)
     __libc.need_locks = 0;
     __libc.page_size = 4096;
     fs0 = bfree_guest_read_fs0();
-    if (fs0 == 0) {
-        memset(bfree_guest_early_tcb, 0, sizeof(bfree_guest_early_tcb));
-        *(uintptr_t *)bfree_guest_early_tcb = (uintptr_t)bfree_guest_early_tcb;
-        prctl_ret = bfree_guest_syscall2(BFREE_LINUX_SYS_ARCH_PRCTL, BFREE_ARCH_SET_FS,
-                                         (long)(uintptr_t)bfree_guest_early_tcb);
-    } else {
-        prctl_ret = 0;
-    }
+    (void)fs0;
+    memset(bfree_guest_early_tcb, 0, sizeof(bfree_guest_early_tcb));
+    *(uintptr_t *)bfree_guest_early_tcb = (uintptr_t)bfree_guest_early_tcb;
+    prctl_ret = bfree_guest_syscall2(BFREE_LINUX_SYS_ARCH_PRCTL, BFREE_ARCH_SET_FS,
+                                     (long)(uintptr_t)bfree_guest_early_tcb);
     bfree_guest_serial_step('B');
     bfree_guest_serial_hex((uintptr_t)prctl_ret);
     bfree_guest_serial_hex(bfree_guest_read_fs0());
 
     bfree_guest_seed_at_random();
-    bfree_guest_fill_auxv_tables();
     memset(__malloc_context, 0, BFREE_MUSL_MALLOC_CONTEXT_BYTES);
+    /* No open()/install_static_env before __init_tls — musl malloc metadata is stale on vfork exec. */
+    bfree_guest_fill_auxv_core();
 
     bfree_guest_serial_step('C');
     bfree_guest_serial_hex((uintptr_t)bfree_guest_phdrs);
@@ -4137,6 +4140,7 @@ static void bfree_guest_init_musl_tls(void)
     __init_tls(bfree_guest_auxv_sparse);
     bfree_guest_sync_stack_canary();
     bfree_guest_force_single_thread_libc();
+    bfree_guest_install_static_env();
     bfree_guest_fill_auxv_tables();
 
     bfree_guest_serial_step('D');
