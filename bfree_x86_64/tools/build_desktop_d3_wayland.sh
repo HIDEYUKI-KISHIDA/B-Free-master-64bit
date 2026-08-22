@@ -479,6 +479,12 @@ echo "[d3-desktop] holder nm=$holder_nm hdr=$holder_hdr"
 
 echo "[d3-desktop] patch embedded bfree_guest_phdrs[] (vfork __copy_tls GP)"
 python3 "$ROOT/tools/emit_guest_compat_phdrs.py" desktop.elf "$ROOT/tools/guest_link_compat.cpp"
+# emit_guest_compat_phdrs.py updates guest_link_compat.cpp — recompile compat + relink so
+# bfree_guest_ptr_in_text() reads the emitted PT_LOAD p_filesz (not a stale .o rodata copy).
+echo "[d3-desktop] recompile guest_link_compat.o after emit-phdrs + relink"
+rm -f guest_link_compat.o
+bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
+link_d3_desktop
 python3 "$ROOT/tools/patch_desktop_phdrs_embedded.py" desktop.elf
 python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" desktop.elf
 
@@ -493,6 +499,11 @@ desk_sha="$(sha256sum desktop.elf | awk '{print $1}')"
 echo "[d3-desktop] desktop.elf sha256=$desk_sha"
 if [[ "$desk_sha" == "8da145f187b7d47fa08de86fc12b3c970ba45db9e72a5f970bda7f5081d0e0ff" ]]; then
   echo "FAIL: stale desktop.elf sha256 (guest_link_compat still old — git pull && rebuild)" >&2
+  exit 1
+fi
+if [[ "$desk_sha" == "461102ad0effac05078bd9ffe3b247d41112268eab852d6712c88da1e5fd8172" ]]; then
+  echo "FAIL: defer-env-v1-only desktop (cc59730) — sync to phdr-text-v1 and rebuild:" >&2
+  echo "  bash tools/wsl_sync_d3_branch.sh" >&2
   exit 1
 fi
 

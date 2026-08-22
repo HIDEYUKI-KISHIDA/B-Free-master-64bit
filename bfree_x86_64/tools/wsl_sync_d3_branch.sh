@@ -40,5 +40,12 @@ if ! grep -qF 'bfree_guest_fill_auxv_core' tools/guest_link_compat.cpp; then
   exit 1
 fi
 
-echo "[wsl-sync] OK HEAD=$(git rev-parse --short HEAD)"
+head="$(git rev-parse --short HEAD)"
+echo "[wsl-sync] OK HEAD=$head"
+if ! grep -qF 'phdr-text-v1' tools/guest_link_compat.cpp; then
+  echo "FAIL: after sync, guest_link_compat.cpp still lacks phdr-text-v1" >&2
+  exit 1
+fi
+echo "[wsl-sync] guest_link_compat.cpp has phdr-text-v1 (fixes pthread_once @0x3a7a7d0 on cc59730)"
 echo "Next: rm -f userland/desktop_qt/guest_link_compat.o && bash tools/build_desktop_d3_wayland.sh"
+echo "      strings userland/desktop_qt/desktop.elf | grep -F 'compat build='"
