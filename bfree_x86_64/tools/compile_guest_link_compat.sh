@@ -62,10 +62,7 @@ fi
 if [[ ! -f "$DESK/guest_resource_holder_va.h" && -s "$DESK/desktop.elf" ]]; then
   bash "$ROOT/tools/update_guest_resource_holder_va.sh" "$DESK/desktop.elf" "$DESK/guest_resource_holder_va.h"
 fi
-[[ -f "$DESK/guest_resource_holder_va.h" ]] || {
-  echo "FAIL: missing $DESK/guest_resource_holder_va.h (link desktop.elf or run update_guest_resource_holder_va.sh)" >&2
-  exit 1
-}
+bash "$ROOT/tools/ensure_guest_resource_holder_va.sh" "$DESK/guest_resource_holder_va.h" "$DESK/desktop.elf"
 
 EXTRA=("$@")
 if ! grep -q 'compat build=main_tls-va-v2' "$ROOT/tools/guest_link_compat.cpp"; then

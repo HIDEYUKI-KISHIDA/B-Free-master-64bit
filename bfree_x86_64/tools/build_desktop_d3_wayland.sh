@@ -428,6 +428,7 @@ compile_guest_main_d3_o() {
 
 echo "[d3-desktop] guest Qt=$BFREE_QT_GUEST_BUILD_DIR musl_inc=$MUSL_INC musl_libc=${BFREE_ELF_LIBC_PATH:-missing}"
 restore_desk_tree
+restore_desk_objects
 bash "$ROOT/tools/ensure_guest_resource_holder_va.sh" "$DESK/guest_resource_holder_va.h" "$DESK/desktop.elf"
 
 echo "[d3-desktop] compile guest_link_compat.o (D3 /tmp/bfree-d3-wl marker)"
