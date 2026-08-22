@@ -4098,6 +4098,8 @@ static void bfree_guest_sync_stack_canary(void)
 
 /* musl static TLS list head in desktop.elf BSS — address follows link layout (not a fixed VA). */
 extern "C" char main_tls[];
+static const char bfree_guest_compat_build_id[] =
+    "[desktop_qt] compat build=main_tls-sym-v1";
 
 static void bfree_guest_init_musl_tls(void)
 {

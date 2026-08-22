@@ -68,9 +68,27 @@ fi
 }
 
 EXTRA=("$@")
+if ! grep -q 'extern "C" char main_tls\[\]' "$ROOT/tools/guest_link_compat.cpp"; then
+  echo "FAIL: $ROOT/tools/guest_link_compat.cpp lacks main_tls symbol fix (git pull ed379cf+)" >&2
+  exit 1
+fi
 x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack-check \
   -fno-stack-clash-protection -fno-pic \
   -Wall -Wextra -mno-sse -mno-mmx -mno-3dnow -fno-exceptions -fno-rtti -Wa,--noexecstack \
   -isystem "$MUSL_INC" -D_GNU_SOURCE -D__linux__ \
   "${EXTRA[@]}" \
   -x c++ -c -o "$OUT" "$ROOT/tools/guest_link_compat.cpp"
+
+if ! strings "$OUT" 2>/dev/null | grep -qF 'compat build=main_tls-sym-v1'; then
+  echo "FAIL: $OUT lacks compat build id (stale guest_link_compat.cpp?)" >&2
+  exit 1
+fi
+if objdump -d "$OUT" 2>/dev/null | grep -q '\$0x62c9540'; then
+  echo "FAIL: $OUT still uses hardcoded maintainer VA \$0x62c9540" >&2
+  exit 1
+fi
+if ! objdump -d "$OUT" 2>/dev/null | grep -q 'main_tls'; then
+  echo "FAIL: $OUT disassembly lacks main_tls symbol reference" >&2
+  exit 1
+fi
+echo "[compat-compile] OK main_tls-sym $(stat -c%s "$OUT") bytes"

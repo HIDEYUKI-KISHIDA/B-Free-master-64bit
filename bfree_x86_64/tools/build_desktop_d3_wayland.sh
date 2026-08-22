@@ -10,6 +10,8 @@ DESK="$ROOT/userland/desktop_qt"
 STUB="$ROOT/userland/compositor_stub"
 cd "$DESK"
 
+echo "[d3-desktop] git=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+
 export PATH="${HOME}/x86_64-elf-toolchain/bin:/root/x86_64-elf-toolchain/bin:${PATH:-}"
 export BFREE_ROOT="$ROOT"
 export HOME="${HOME:-/home/h_kis}"
@@ -463,6 +465,17 @@ python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" desktop.elf
 
 bash "$ROOT/tools/check_d3_desktop_main_tls.sh" desktop.elf
 bash "$ROOT/tools/check_desktop_holder_embedded.sh" desktop.elf
+
+if ! strings desktop.elf | grep -qF 'compat build=main_tls-sym-v1'; then
+  echo "FAIL: desktop.elf lacks compat build id — guest_link_compat.o not linked?" >&2
+  exit 1
+fi
+desk_sha="$(sha256sum desktop.elf | awk '{print $1}')"
+echo "[d3-desktop] desktop.elf sha256=$desk_sha"
+if [[ "$desk_sha" == "8da145f187b7d47fa08de86fc12b3c970ba45db9e72a5f970bda7f5081d0e0ff" ]]; then
+  echo "FAIL: stale desktop.elf sha256 (guest_link_compat still old — git pull && rebuild)" >&2
+  exit 1
+fi
 
 strings desktop.elf | grep -F 'build=mmap96' | head -1 || true
 echo "D3_DESKTOP_ELF=$DESK/desktop.elf"
