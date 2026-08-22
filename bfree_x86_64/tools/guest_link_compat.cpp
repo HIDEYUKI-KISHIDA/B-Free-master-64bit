@@ -25,6 +25,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <unwind.h>
+#include <elf.h>
 
 #include "../userland/desktop_qt/guest_serial.h"
 #include "../userland/desktop_qt/guest_resource_holder_va.h"
