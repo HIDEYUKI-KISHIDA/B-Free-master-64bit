@@ -58,7 +58,7 @@ if [[ -n "$tls_nm" ]]; then
       exit 1
     fi
   fi
-  if strings "$ELF" 2>/dev/null | grep -qF 'compat build=main_tls-va-v2 defer-env-v1'; then
+  if strings "$ELF" 2>/dev/null | grep -qF 'phdr-text-v1'; then
     if ! echo "$disasm" | grep -Eiq "0x${tls_hex}|\\$0x${tls_hex}"; then
       echo "FAIL: desktop.elf disasm lacks main_tls VA immediate $tls_n" >&2
       exit 1

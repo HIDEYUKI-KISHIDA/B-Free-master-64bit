@@ -73,8 +73,8 @@ else
   fi
   if [[ -x "$ROOT/tools/check_d3_desktop_main_tls.sh" ]]; then
     bash "$ROOT/tools/check_d3_desktop_main_tls.sh" "$DESK" || fail=1
-  elif ! strings "$DESK" 2>/dev/null | grep -qF 'compat build=main_tls-va-v2 defer-env-v1'; then
-    echo "FAIL: $DESK lacks defer-env-v1 compat (git pull blocked — run wsl_sync_d3_branch.sh)" >&2
+  elif ! strings "$DESK" 2>/dev/null | grep -qF 'phdr-text-v1'; then
+    echo "FAIL: $DESK lacks phdr-text-v1 compat (git pull blocked — run wsl_sync_d3_branch.sh)" >&2
     fail=1
   fi
   if [[ "${BFREE_D3_FULL:-0}" == "1" ]]; then
