@@ -111,7 +111,7 @@ restore_desk_tree() {
     done
   done
   restore_desk_missing guest_serial.h guest_desktop_bridge.h guest_mvp_qmlcache_register.h \
-    guest_breeze_tokens.h guest_mvp_shell_qml.inc guest_resource_holder_va.h
+    guest_breeze_tokens.h guest_mvp_shell_qml.inc
   local req
   for req in guest_desktop_bridge.h guest_mvp_qmlcache_register.h guest_breeze_tokens.h guest_serial.h; do
     if [[ ! -f "$DESK/$req" ]]; then

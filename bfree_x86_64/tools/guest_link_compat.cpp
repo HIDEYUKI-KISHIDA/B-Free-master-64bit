@@ -4096,10 +4096,7 @@ static void bfree_guest_sync_stack_canary(void)
     __init_ssp(0);
 }
 
-/* musl static TLS list head in desktop.elf BSS (nm: main_tls @ 0x62c9540, 48 bytes). */
-#define BFREE_DESKTOP_MAIN_TLS_VA   0x62c9540ULL
-#define BFREE_DESKTOP_MAIN_TLS_BYTES 48U
-
+/* musl static TLS list head in desktop.elf BSS — see guest_resource_holder_va.h (nm: main_tls). */
 static void bfree_guest_init_musl_tls(void)
 {
     long prctl_ret;

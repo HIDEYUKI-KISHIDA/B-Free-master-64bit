@@ -2791,7 +2791,7 @@ static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_
 #define BFREE_DESKTOP_TAIL_BSS_VA    0x62c6000ULL
 #define BFREE_DESKTOP_TAIL_BSS_BYTES   0x4000ULL /* 16 KiB through __malloc_context */
 
-static void bfree_desktop_exec_scrub_musl_bss(void)
+static int bfree_desktop_scrub_tail_range(uint64_t base)
 {
     char zbuf[128];
     uint64_t off = 0;
@@ -2803,12 +2803,23 @@ static void bfree_desktop_exec_scrub_musl_bss(void)
         if (chunk > sizeof(zbuf)) {
             chunk = sizeof(zbuf);
         }
-        if (bfree_user_stack_poke_bytes(BFREE_DESKTOP_TAIL_BSS_VA + off, zbuf, chunk) != 0) {
+        if (bfree_user_stack_poke_bytes(base + off, zbuf, chunk) != 0) {
             ok = 0;
             break;
         }
         off += chunk;
     }
+    return ok;
+}
+
+static void bfree_desktop_exec_scrub_musl_bss(void)
+{
+    int ok = 1;
+
+    /* Maintainer ~75MB desktop (holder @ 0x62c6160, main_tls @ 0x62c9540). */
+    ok = bfree_desktop_scrub_tail_range(0x62c6000ULL) && ok;
+    /* D3 wayland ~58MB relink (holder @ ~0x5250660, main_tls @ ~0x5253a40). */
+    ok = bfree_desktop_scrub_tail_range(0x5250500ULL) && ok;
     uart_puts(ok ? "[TLS] scrub tail bss ok\n" : "[TLS] scrub tail bss miss\n");
 }
 

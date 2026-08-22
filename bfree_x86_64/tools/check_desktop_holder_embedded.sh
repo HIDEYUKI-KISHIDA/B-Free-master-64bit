@@ -47,6 +47,24 @@ if [[ "$nm_n" != "$em_n" ]]; then
   exit 1
 fi
 
+tls_nm="$(nm "$ELF" 2>/dev/null | awk '$NF == "main_tls" { print $1; exit }')"
+if [[ -n "$tls_nm" ]]; then
+  tls_embed="$(objdump -d "$ELF" 2>/dev/null | awk '
+    /bfree_guest_init_musl_tls/ { fn=1; next }
+    fn && /memset@/ { exit }
+    fn && /mov.*\$0x[0-9a-f]+/ {
+      if (match($0, /\$0x[0-9a-f]+/)) { print substr($0, RSTART+1, RLENGTH-1); exit }
+    }
+  ')"
+  tls_n="$(norm "0x$tls_nm")"
+  te_n="$(norm "${tls_embed:-0x0}")"
+  echo "[holder-check] main_tls nm=$tls_n embed=$te_n"
+  if [[ "$tls_n" != "$te_n" ]]; then
+    echo "FAIL: embedded main_tls VA != nm (GP in bfree_guest_init_musl_tls — re-run build_desktop_d3_wayland.sh)" >&2
+    exit 1
+  fi
+fi
+
 if ! strings "$ELF" 2>/dev/null | grep -qF '[desktop_qt] main entry'; then
   echo "WARN: $ELF lacks [desktop_qt] main entry string" >&2
 fi
