@@ -29,8 +29,8 @@ fi
 tls_n="$(norm "0x$tls_nm")"
 tls_hex="${tls_n#0x}"
 
-if ! strings "$ELF" 2>/dev/null | grep -qF 'compat build=main_tls-va-v2 defer-env-v1'; then
-  echo "FAIL: $ELF lacks compat build=main_tls-va-v2 defer-env-v1 (guest_link_compat.o stale?)" >&2
+if ! strings "$ELF" 2>/dev/null | grep -qF 'phdr-text-v1'; then
+  echo "FAIL: $ELF lacks phdr-text-v1 compat (guest_link_compat.o stale?)" >&2
   echo "  bash tools/wsl_sync_d3_branch.sh" >&2
   echo "  rm -f userland/desktop_qt/guest_link_compat.o && bash tools/build_desktop_d3_wayland.sh" >&2
   exit 1

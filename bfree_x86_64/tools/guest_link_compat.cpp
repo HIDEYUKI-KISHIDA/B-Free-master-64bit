@@ -881,13 +881,26 @@ struct bfree_guest_ctor_stack_ctx {
 };
 static struct bfree_guest_ctor_stack_ctx g_ctor_stack_ctx;
 
-/* desktop.elf: .text @0x2800000 .. .rodata @0x35f2000 (see readelf -S). */
-#define BFREE_GUEST_TEXT_LO 0x02800000ULL
-#define BFREE_GUEST_TEXT_HI 0x035F2000ULL
+/*
+ * Embedded PT_LOAD/PT_TLS — regenerate: python3 tools/emit_guest_compat_phdrs.py
+ * Kernel does not map the file PHDR table; musl __init_tls reads this copy.
+ */
+static const Elf64_Phdr bfree_guest_phdrs[] = {
+    { PT_LOAD, PF_R | PF_W | PF_X, 0x1000, 0x2800000, 0x2800000, 0x3acc4c0, 0x3acc4c0, 0x1000 },
+    { PT_TLS, PF_R, 0x192c7d0, 0x412b7d0, 0x412b7d0, 0x28, 0xa8, 0x10 },
+    { PT_GNU_EH_FRAME, PF_R, 0x0, 0x0, 0x0, 0x0, 0x0, 0x10 },
+};
 
+/* File-backed PT_LOAD (code+rodata, not BSS tail) — D3 wayland spans ~0x28..0x3b. */
 static int bfree_guest_ptr_in_text(uintptr_t a)
 {
-    return a >= BFREE_GUEST_TEXT_LO && a < BFREE_GUEST_TEXT_HI;
+    const Elf64_Phdr *load = &bfree_guest_phdrs[0];
+    uintptr_t lo = (uintptr_t)load->p_vaddr;
+    uintptr_t hi = lo + (uintptr_t)load->p_filesz;
+
+    if (load->p_type != PT_LOAD || load->p_filesz == 0)
+        return a >= 0x02800000ULL && a < 0x035F2000ULL;
+    return a >= lo && a < hi;
 }
 
 static int bfree_guest_code_entry_looks_valid(uintptr_t a)
@@ -3976,13 +3989,6 @@ extern "C" int *___errno_location(void) __attribute__((alias("__errno_location")
  * table at file offset 0x40 is not mapped — embed program headers in .rodata.
  * Regenerate after desktop.elf link: python3 tools/print_desktop_phdrs.py
  */
-/* Regenerate after desktop.elf link: python3 tools/print_desktop_phdrs.py */
-static const Elf64_Phdr bfree_guest_phdrs[] = {
-    { PT_LOAD, PF_R | PF_W | PF_X, 0x1000, 0x2800000, 0x2800000, 0x3acc4c0, 0x3acc4c0, 0x1000 },
-    { PT_TLS, PF_R, 0x192c7d0, 0x412b7d0, 0x412b7d0, 0x28, 0xa8, 0x10 },
-    { PT_GNU_EH_FRAME, PF_R, 0x0, 0x0, 0x0, 0x0, 0x0, 0x10 },
-};
-
 static unsigned char bfree_guest_at_random[16];
 
 /* __init_tls: sparse auxv[AT_*].  malloc/getauxval: (type,value)* pairs via __libc.auxv. */
@@ -4103,7 +4109,7 @@ static void bfree_guest_sync_stack_canary(void)
 
 /* musl static TLS list head — VA from guest_resource_holder_va.h (nm after link). */
 static const char bfree_guest_compat_build_id[] =
-    "[desktop_qt] compat build=main_tls-va-v2 defer-env-v1";
+    "[desktop_qt] compat build=main_tls-va-v2 defer-env-v1 phdr-text-v1";
 
 static void bfree_guest_init_musl_tls(void)
 {
@@ -4186,6 +4192,8 @@ extern "C" void bfree_guest_post_tls_banners(void)
 
 /* Called from crt0.S before main — logs each ctor for serial bring-up.
  * Set BFREE_SKIP_GUEST_INIT_ARRAY=1 at compile time to reach main without static ctors. */
+static void bfree_guest_resource_pin_global_guard(void);
+
 extern "C" void bfree_guest_run_init_array(void)
 {
     bfree_guest_init_musl_tls();
@@ -4205,6 +4213,7 @@ extern "C" void bfree_guest_run_init_array(void)
     unsigned n = 0;
     unsigned executed = 0;
 
+    bfree_guest_resource_pin_global_guard();
     bfree_guest_serial("[desktop_qt] init_array: C runner begin\n");
     bfree_guest_serial("[desktop_qt] init_array ptr0=");
     bfree_guest_serial_hex((uintptr_t)*__init_array_start);
