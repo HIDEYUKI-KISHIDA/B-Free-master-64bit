@@ -278,9 +278,27 @@ collect_d3_archives() {
   }
 }
 
+restore_maintainer_shell_objects() {
+  echo "[d3-desktop] restore guest_bfree_shell_process.o + moc (matched maintainer pair)"
+  local name src
+  for name in guest_bfree_shell_process.o moc_guest_bfree_shell_process.o; do
+    for src in "$SRC_FALLBACK" "$PROGRAM_DESK" "$HOME/bfree_build/userland/desktop_qt"; do
+      [[ -f "$src/$name" ]] || continue
+      cp -f "$src/$name" "$DESK/$name"
+      echo "  restore $name <= $src"
+      break
+    done
+    if [[ ! -s "$DESK/$name" ]]; then
+      echo "FAIL: missing $DESK/$name (need bfree_build desktop_qt pair)" >&2
+      return 1
+    fi
+  done
+}
+
 link_d3_desktop() {
   local objs=() o
   restore_desk_objects
+  restore_maintainer_shell_objects
   for o in $(makefile_guest_objects); do
     o="${o//$'\r'/}"
     need "$DESK/$o"
@@ -315,28 +333,6 @@ link_d3_desktop() {
   fi
   rm -f "$gdl_lf"
   need "$DESK/desktop.elf"
-}
-
-compile_guest_bfree_shell_process_o() {
-  [[ -f "$DESK/guest_bfree_shell_process.cpp" ]] || return 0
-  local mk_defines mk_cxx mk_cxxflags mk_incpath expanded_flags
-  mk_defines="$(makefile_guest_var DEFINES)"
-  mk_cxx="$(makefile_guest_var CXX)"
-  mk_cxxflags="$(makefile_guest_var CXXFLAGS)"
-  mk_incpath="$(makefile_guest_var INCPATH)"
-  [[ -n "$mk_cxx" && -n "$mk_cxxflags" ]] || return 0
-  expanded_flags="${mk_cxxflags//\$(DEFINES)/$mk_defines}"
-  if [[ -n "$MUSL_INC" ]]; then
-    expanded_flags+=" -idirafter $MUSL_INC"
-  fi
-  echo "[d3-desktop] compile guest_bfree_shell_process.o (pty shell syms)"
-  rm -f guest_bfree_shell_process.o
-  # shellcheck disable=SC2086
-  $mk_cxx -c $expanded_flags $mk_incpath -I. -o guest_bfree_shell_process.o guest_bfree_shell_process.cpp
-  if ! nm guest_bfree_shell_process.o 2>/dev/null | grep -q ' guest_pty_shell_start'; then
-    echo "FAIL: guest_bfree_shell_process.o lacks guest_pty_shell_start" >&2
-    return 1
-  fi
 }
 
 compile_guest_main_d3_o() {
@@ -386,7 +382,6 @@ if ! "$CXX" "${WL_CXXFLAGS[@]}" -c -o "$STUB/qbfree_wayland.o" "$STUB/qbfree_way
 fi
 
 echo "[d3-desktop] recompile guest_main.o (-DBFREE_D3_WAYLAND_QPA, /tmp/bfree-d3-wl fast path)"
-compile_guest_bfree_shell_process_o
 compile_guest_main_d3_o
 
 echo "[d3-desktop] link desktop.elf (wayland QPA + libqbfree symbol refs)"
@@ -408,7 +403,6 @@ echo "[d3-desktop] sync guest_resource_holder_va.h"
 bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"
 rm -f guest_link_compat.o guest_main.o
 bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
-compile_guest_bfree_shell_process_o
 compile_guest_main_d3_o
 link_d3_desktop
 bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h"

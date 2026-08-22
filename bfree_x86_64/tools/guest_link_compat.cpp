@@ -2225,6 +2225,20 @@ extern "C" void bfree_guest_set_force_fallback_alloc(int on)
         bfree_guest_qrc_alloc_scope_leave();
 }
 
+/* guest_main / guest_qquick_window.o name; same as set_force_fallback_alloc. */
+extern "C" void bfree_guest_set_prefer_fallback_alloc(int on)
+{
+    bfree_guest_set_force_fallback_alloc(on);
+}
+
+/* Satisfy guest_qquick_window.o; D3 wayland desk uses QWindow, not this path. */
+extern "C" void bfree_guest_call_on_stack(void (*fn)(void), unsigned long long stack_top)
+{
+    (void)stack_top;
+    if (fn)
+        fn();
+}
+
 static unsigned g_malloc_fail_diag;
 
 static void bfree_guest_fill_auxv_tables(void);
