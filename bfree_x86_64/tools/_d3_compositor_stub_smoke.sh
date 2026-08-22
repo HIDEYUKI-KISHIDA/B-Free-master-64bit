@@ -9,6 +9,7 @@ cd "$ROOT"
 
 export PATH="${HOME}/x86_64-elf-toolchain/bin:${PATH:-}"
 export BFREE_D3=1
+export BFREE_D3_FULL="${BFREE_D3_FULL:-1}"
 LOG="${BFREE_D3_LOG:-/tmp/bfree_d3_stub.log}"
 ISO="${BFREE_STUB_ISO:-$ROOT/bfree-compositor-stub.iso}"
 QEMU_SECS="${BFREE_D3_QEMU_SECS:-120}"

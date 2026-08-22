@@ -461,6 +461,7 @@ python3 "$ROOT/tools/emit_guest_compat_phdrs.py" desktop.elf "$ROOT/tools/guest_
 python3 "$ROOT/tools/patch_desktop_phdrs_embedded.py" desktop.elf
 python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" desktop.elf
 
+bash "$ROOT/tools/check_d3_desktop_main_tls.sh" desktop.elf
 bash "$ROOT/tools/check_desktop_holder_embedded.sh" desktop.elf
 
 strings desktop.elf | grep -F 'build=mmap96' | head -1 || true
