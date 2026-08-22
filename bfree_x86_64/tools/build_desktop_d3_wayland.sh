@@ -12,11 +12,16 @@ cd "$DESK"
 
 echo "[d3-desktop] git=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
-D3_NEED_MARK='compat build=main_tls-va-v2'
+D3_NEED_MARK='compat build=main_tls-va-v2 defer-env-v1'
 if ! grep -qF "$D3_NEED_MARK" "$ROOT/tools/guest_link_compat.cpp"; then
   echo "FAIL: tools/guest_link_compat.cpp lacks $D3_NEED_MARK (git pull blocked?)" >&2
   echo "  cd $ROOT && bash tools/wsl_sync_d3_branch.sh" >&2
   echo "  rm -f userland/desktop_qt/guest_link_compat.o && bash tools/build_desktop_d3_wayland.sh" >&2
+  exit 1
+fi
+if ! grep -qF 'bfree_guest_fill_auxv_core' "$ROOT/tools/guest_link_compat.cpp"; then
+  echo "FAIL: guest_link_compat.cpp missing bfree_guest_fill_auxv_core (stale local edit)" >&2
+  echo "  cd $ROOT && bash tools/wsl_sync_d3_branch.sh" >&2
   exit 1
 fi
 if [[ ! -x "$ROOT/tools/check_d3_desktop_main_tls.sh" ]]; then
@@ -480,7 +485,7 @@ python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" desktop.elf
 bash "$ROOT/tools/check_d3_desktop_main_tls.sh" desktop.elf
 bash "$ROOT/tools/check_desktop_holder_embedded.sh" desktop.elf
 
-if ! strings desktop.elf | grep -qF 'compat build=main_tls-va-v2'; then
+if ! strings desktop.elf | grep -qF 'compat build=main_tls-va-v2 defer-env-v1'; then
   echo "FAIL: desktop.elf lacks compat build id — guest_link_compat.o not linked?" >&2
   exit 1
 fi

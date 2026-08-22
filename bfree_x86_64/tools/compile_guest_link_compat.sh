@@ -65,8 +65,14 @@ fi
 bash "$ROOT/tools/ensure_guest_resource_holder_va.sh" "$DESK/guest_resource_holder_va.h" "$DESK/desktop.elf"
 
 EXTRA=("$@")
-if ! grep -q 'compat build=main_tls-va-v2' "$ROOT/tools/guest_link_compat.cpp"; then
-  echo "FAIL: $ROOT/tools/guest_link_compat.cpp lacks main_tls-va-v2 fix (git pull)" >&2
+if ! grep -q 'compat build=main_tls-va-v2 defer-env-v1' "$ROOT/tools/guest_link_compat.cpp"; then
+  echo "FAIL: $ROOT/tools/guest_link_compat.cpp lacks defer-env-v1 TLS fix (git pull blocked?)" >&2
+  echo "  bash tools/wsl_sync_d3_branch.sh" >&2
+  exit 1
+fi
+if ! grep -q 'bfree_guest_fill_auxv_core' "$ROOT/tools/guest_link_compat.cpp"; then
+  echo "FAIL: $ROOT/tools/guest_link_compat.cpp missing bfree_guest_fill_auxv_core" >&2
+  echo "  bash tools/wsl_sync_d3_branch.sh" >&2
   exit 1
 fi
 if ! grep -q 'BFREE_DESKTOP_MAIN_TLS_VA' "$DESK/guest_resource_holder_va.h"; then
@@ -80,8 +86,8 @@ x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack
   "${EXTRA[@]}" \
   -x c++ -c -o "$OUT" "$ROOT/tools/guest_link_compat.cpp"
 
-if ! strings "$OUT" 2>/dev/null | grep -qF 'compat build=main_tls-va-v2'; then
-  echo "FAIL: $OUT lacks compat build id (stale guest_link_compat.cpp?)" >&2
+if ! strings "$OUT" 2>/dev/null | grep -qF 'compat build=main_tls-va-v2 defer-env-v1'; then
+  echo "FAIL: $OUT lacks compat build id defer-env-v1 (stale guest_link_compat.cpp?)" >&2
   exit 1
 fi
 hdr_tls="$(sed -n 's/.*BFREE_DESKTOP_MAIN_TLS_VA \([0-9a-fxA-FX]*\)u.*/\1/p' "$DESK/guest_resource_holder_va.h" | head -1)"
@@ -95,4 +101,4 @@ if [[ -n "$hdr_tls" && "$hdr_tls" != "0" && "$hdr_tls" != "0x0" ]]; then
     echo "WARN: $OUT disasm missing header main_tls VA $hdr_tls (first link pass?)" >&2
   fi
 fi
-echo "[compat-compile] OK main_tls-va-v2 $(stat -c%s "$OUT") bytes hdr_tls=${hdr_tls:-0}"
+echo "[compat-compile] OK defer-env-v1 $(stat -c%s "$OUT") bytes hdr_tls=${hdr_tls:-0}"

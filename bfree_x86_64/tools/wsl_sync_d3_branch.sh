@@ -28,11 +28,15 @@ fi
 
 git pull --ff-only origin "$BR"
 
-need_mark='compat build=main_tls-va-v2'
+need_mark='compat build=main_tls-va-v2 defer-env-v1'
 if ! grep -qF "$need_mark" tools/guest_link_compat.cpp; then
   echo "FAIL: tools/guest_link_compat.cpp still lacks $need_mark after pull" >&2
   echo "  git log -1 --oneline" >&2
   git log -1 --oneline >&2
+  exit 1
+fi
+if ! grep -qF 'bfree_guest_fill_auxv_core' tools/guest_link_compat.cpp; then
+  echo "FAIL: tools/guest_link_compat.cpp missing bfree_guest_fill_auxv_core" >&2
   exit 1
 fi
 
