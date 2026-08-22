@@ -2497,6 +2497,8 @@ extern "C" void *__wrap_malloc(size_t n)
         p = bfree_guest_mmap_fallback_alloc(n);
         if (!p)
             p = bfree_guest_bump_alloc(n);
+        if (p && n && !bfree_guest_ptr_is_mmap_fallback(p))
+            memset(p, 0, n);
         bfree_guest_trace_alloc((unsigned long)n, p);
         return p;
     }
@@ -4145,7 +4147,7 @@ static void bfree_guest_sync_stack_canary(void)
 
 /* musl static TLS list head — VA from guest_resource_holder_va.h (nm after link). */
 static const char bfree_guest_compat_build_id[] =
-    "[desktop_qt] compat build=main_tls-va-v2 defer-env-v1 phdr-text-v1 hybrid-qgui-v1";
+    "[desktop_qt] compat build=main_tls-va-v2 defer-env-v1 phdr-text-v1 hybrid-fallback-v1";
 
 static void bfree_guest_init_musl_tls(void)
 {

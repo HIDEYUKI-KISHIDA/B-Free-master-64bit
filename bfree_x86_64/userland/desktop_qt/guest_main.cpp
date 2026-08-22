@@ -110,6 +110,7 @@ void bfree_guest_run_on_ctor_stack_hybrid_keep_bump(void (*fn)(void));
 void bfree_guest_enter_preflighted_mmap_noreturn(void (*fn)(void));
 void bfree_guest_preflight_ctor_mmap(void);
 void bfree_guest_begin_hybrid_alloc(void);
+void bfree_guest_leave_ctor_bump_alloc(void);
 void bfree_guest_run_on_ctor_stack_musl(void (*fn)(void));
 void bfree_guest_run_on_ctor_stack_musl_noreturn(void (*fn)(void));
 void bfree_guest_qv4_preflight_arena(void);
@@ -6407,8 +6408,13 @@ __attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
     guest_d3_register_wayland_qpa();
     guest_serial_puts("[desktop_qt] plugin wayland only\n");
     guest_serial_puts("[desktop_qt] platform=wayland\n");
-    /* qt_wl_hello: keep hybrid bump through QGuiApplication ctor (no leave_ctor_bump,
-     * no qresource registry wipe — that runs in guest_ctor_qml_phase after QGui OK). */
+    /* Plugin QList on hybrid bump; QGui on 128 MiB fallback (qgui_mmap_stack_alloc_mode).
+     * Do not guest_reset_qt_resource_registry here (hybrid-zero #PF CR2=0x28).
+     * Do not keep hybrid through QGui on full desktop (hybrid-qgui #GP QImage alpha). */
+    bfree_guest_leave_ctor_bump_alloc();
+    bfree_guest_refresh_libc_auxv();
+    guest_serial_puts("[desktop_qt] QGui fallback heap\n");
+    QGuiApplication::setDesktopSettingsAware(false);
     guest_serial_puts("[desktop_qt] QGuiApplication ctor start\n");
     guest_serial_puts("[desktop_qt] before operator new\n");
     qapp_mem = ::operator new(sizeof(QGuiApplication));
