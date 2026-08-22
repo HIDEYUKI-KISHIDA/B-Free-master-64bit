@@ -1,3 +1,3 @@
-# Patched D2c+D3 kernel: TLS bootstrap + dual tail BSS scrub (maintainer 0x62c6000 + D3 wayland 0x5250500).
+# Patched D2c+D3 kernel: TLS bootstrap + dual tail BSS scrub (maintainer 0x62c6000 16KiB + D3 wayland 0x5250500 28KiB).
 # Rebuild: make -C kernel clean && make -C kernel RELEASE=1
-54ccb91f079ee8127e82a69684fac09f10ab514859cd1e50a0880b257562ad47
+0a69dbb022f4185c2d0992ac4639d33d8c15d6ead696d326f1f6d674ad8c6607

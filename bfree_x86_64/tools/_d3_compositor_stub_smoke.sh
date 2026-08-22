@@ -113,9 +113,15 @@ grep -aqF '[desktop_qt] main entry' "$LOG" || {
             echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
           fi
         elif grep -aqF '[TLS] exec early fsbase=' "$LOG"; then
-          echo "FAIL: guest PANIC at musl __init_tls/__copy_tls (tail BSS reuse on vfork exec):"
-          echo "  make -C kernel clean && make -C kernel RELEASE=1   # needs [TLS] scrub tail bss"
-          echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+          if grep -aq '\[B\]' "$LOG" && ! grep -aq '\[C\]' "$LOG"; then
+            echo "FAIL: guest #PF in musl TLS init before step [C] (open() before __init_tls on vfork exec):"
+            echo "  bash tools/build_desktop_d3_wayland.sh   # guest_link_compat: defer install_static_env"
+            echo "  make -C kernel clean && make -C kernel RELEASE=1"
+          else
+            echo "FAIL: guest PANIC at musl __init_tls/__copy_tls (tail BSS reuse on vfork exec):"
+            echo "  make -C kernel clean && make -C kernel RELEASE=1   # needs [TLS] scrub tail bss"
+            echo "  sha256sum kernel/kernel.elf   # expect tools/kernel.d3.good.sha256"
+          fi
         else
           echo "FAIL: guest PANIC but desktop fingerprint OK — rebuild kernel (TLS bootstrap):"
           echo "  make -C kernel clean && make -C kernel RELEASE=1"

@@ -74,7 +74,7 @@ BFREE_D3=1 BFREE_D3_FULL=1 bash tools/_d3_compositor_stub_smoke.sh
 | 項目 | 状態 |
 |------|------|
 | `/persist/desk.txt` = `from-desk` | `guest_persist_create_desk_note()`（D3 session 終了前） |
-| `tools/kernel.d3.good.sha256` | kernel TLS + dual tail BSS scrub 固定 (0x62c6000 + 0x5250500) |
+| `tools/kernel.d3.good.sha256` | kernel TLS + dual tail BSS scrub (0x62c6000 16KiB + 0x5250500 28KiB) |
 | `tools/desktop.elf.good.sha256` | PHDR-patched desktop 指紋 |
 | `docs/HONDESK_TODOLIST.ja.md` | D3 minimal / full を分離記載 |
 | PR #61 | draft — WSL で FULL smoke 後に ready |

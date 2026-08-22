@@ -2789,16 +2789,17 @@ static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_
  * __copy_tls #GP, qRegisterStaticPluginFunction #GP, or qresource list hang.
  */
 #define BFREE_DESKTOP_TAIL_BSS_BYTES   0x4000ULL /* 16 KiB through __malloc_context */
+#define BFREE_DESKTOP_D3_TAIL_BSS_BYTES 0x7000ULL /* 28 KiB — D3 wayland musl tail through __bss_end */
 
-static int bfree_desktop_scrub_tail_range(uint64_t base)
+static int bfree_desktop_scrub_tail_range_n(uint64_t base, uint64_t nbytes)
 {
     char zbuf[128];
     uint64_t off = 0;
     int ok = 1;
 
     memset(zbuf, 0, sizeof(zbuf));
-    while (off < BFREE_DESKTOP_TAIL_BSS_BYTES) {
-        uint64_t chunk = BFREE_DESKTOP_TAIL_BSS_BYTES - off;
+    while (off < nbytes) {
+        uint64_t chunk = nbytes - off;
         if (chunk > sizeof(zbuf)) {
             chunk = sizeof(zbuf);
         }
@@ -2811,6 +2812,11 @@ static int bfree_desktop_scrub_tail_range(uint64_t base)
     return ok;
 }
 
+static int bfree_desktop_scrub_tail_range(uint64_t base)
+{
+    return bfree_desktop_scrub_tail_range_n(base, BFREE_DESKTOP_TAIL_BSS_BYTES);
+}
+
 static void bfree_desktop_exec_scrub_musl_bss(void)
 {
     int ok = 1;
@@ -2818,7 +2824,7 @@ static void bfree_desktop_exec_scrub_musl_bss(void)
     /* Maintainer ~75MB desktop (holder @ 0x62c6160, main_tls @ 0x62c9540). */
     ok = bfree_desktop_scrub_tail_range(0x62c6000ULL) && ok;
     /* D3 wayland ~58MB relink (holder @ ~0x5250660, main_tls @ ~0x5253a40). */
-    ok = bfree_desktop_scrub_tail_range(0x5250500ULL) && ok;
+    ok = bfree_desktop_scrub_tail_range_n(0x5250500ULL, BFREE_DESKTOP_D3_TAIL_BSS_BYTES) && ok;
     uart_puts(ok ? "[TLS] scrub tail bss ok\n" : "[TLS] scrub tail bss miss\n");
 }
 
