@@ -2788,7 +2788,6 @@ static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_
  * __libc, __malloc_context. vfork+exec + PMM reuse on WSL leaves garbage →
  * __copy_tls #GP, qRegisterStaticPluginFunction #GP, or qresource list hang.
  */
-#define BFREE_DESKTOP_TAIL_BSS_VA    0x62c6000ULL
 #define BFREE_DESKTOP_TAIL_BSS_BYTES   0x4000ULL /* 16 KiB through __malloc_context */
 
 static int bfree_desktop_scrub_tail_range(uint64_t base)

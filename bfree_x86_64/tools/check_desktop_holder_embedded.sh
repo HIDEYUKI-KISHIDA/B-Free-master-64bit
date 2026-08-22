@@ -51,8 +51,8 @@ tls_nm="$(nm "$ELF" 2>/dev/null | awk '/[[:space:]]main_tls$/ { print $1; exit }
 if [[ -n "$tls_nm" ]]; then
   tls_n="$(norm "0x$tls_nm")"
   tls_region="$(objdump -d "$ELF" 2>/dev/null | awk '
-    /bfree_guest_init_musl_tls>/ { fn=1; next }
-    fn && /bfree_guest_serial_step\>/ { exit }
+    /<bfree_guest_init_musl_tls>:/ { fn=1; next }
+    fn && /^[0-9a-f]+ <[^>]+>:/ { exit }
     fn { print }
   ')"
   if echo "$tls_region" | grep -q '0x62c9540'; then

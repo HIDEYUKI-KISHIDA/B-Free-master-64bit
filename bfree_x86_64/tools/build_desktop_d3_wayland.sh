@@ -417,7 +417,7 @@ restore_desk_objects
 
 echo "[d3-desktop] compile guest_link_compat.o (D3 /tmp/bfree-d3-wl marker)"
 rm -f guest_link_compat.o
-bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_resource_holder_va.h" 2>/dev/null || true
+# Force compat rebuild (main_tls must use linker symbol, not stale 0x62c9540 VA).
 bash "$ROOT/tools/compile_guest_link_compat.sh" guest_link_compat.o
 
 echo "[d3-desktop] compile qbfree_wayland.o + wl_stub_flush.o"
