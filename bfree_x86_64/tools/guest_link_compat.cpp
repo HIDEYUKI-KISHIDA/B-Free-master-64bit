@@ -2072,6 +2072,8 @@ static size_t bfree_guest_bump_user_size(void *p)
     return *(size_t *)(u - sizeof(size_t));
 }
 
+static void *bfree_guest_mmap_fallback_alloc(size_t n);
+
 static void *bfree_guest_bump_alloc(size_t n)
 {
     void *p;
@@ -3432,6 +3434,8 @@ static void bfree_guest_run_on_ctor_stack_inner(void (*fn)(void), int bump_polic
                 bfree_guest_ctor_bump_base = 0;
                 bfree_guest_ctor_bump_cap = 0;
             }
+        } else if (bump_policy == 1) {
+            bfree_guest_ctor_bump_off = 0;
         }
         if (bfree_guest_mmap_ctor_bump_arena() != 0) {
             if (bump_policy == 2) {
