@@ -6391,39 +6391,21 @@ static void guest_d3_register_wayland_qpa(void)
     guest_serial_puts("[desktop_qt] D3 wayland QPA registered\n");
 }
 
-static void guest_ctor_plugins_d3_wayland(void)
-{
-    guest_d3_register_wayland_qpa();
-    guest_serial_puts("[desktop_qt] plugin wayland only\n");
-}
-#endif
-
-/* D3 stub compositor: 1024×768 GuestMvpShell bits via stub wayland QPA, then exit_group. */
-__attribute__((noreturn)) static void guest_d3_wayland_desk_session(void)
+/* qt_wl_hello と同系: qRegisterStaticPlugin は bss bump では PF。hybrid mmap 上で登録。 */
+__attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
 {
     const int desk_w = 1024;
     const int desk_h = 768;
 
-    guest_serial_puts("[desktop_qt] D3 wayland desk session\n");
-    guest_stage_banner(1, "static plugins (wayland QPA)");
-    guest_serial_puts("[desktop_qt] ctor enter\n");
+    __asm__ volatile("andq $-16, %%rsp" ::: "rsp");
     bfree_guest_refresh_libc_auxv();
-#if defined(BFREE_D3_WAYLAND_QPA)
-    bfree_guest_run_on_ctor_stack_plugins(guest_ctor_plugins_d3_wayland);
-#else
-    bfree_guest_run_on_ctor_stack_plugins(guest_ctor_plugins_only);
-#endif
-    guest_serial_puts("[desktop_qt] ctor leave\n");
-    guest_stage_ok(1);
-
-    guest_stage_banner(2, "musl brk + mmap arenas");
-    bfree_guest_preflight_musl_heap();
-    bfree_guest_preflight_ctor_mmap();
-    guest_stage_ok(2);
-
-    guest_stage_banner(3, "QGuiApplication (D3 wayland)");
-    guest_ctor_qgui_application();
+    (void)bfree_guest_ensure_fallback_heap();
+    bfree_guest_begin_hybrid_alloc();
+    guest_serial_puts("[desktop_qt] hybrid alloc armed\n");
+    guest_d3_register_wayland_qpa();
+    guest_serial_puts("[desktop_qt] plugin wayland only\n");
     guest_serial_puts("[desktop_qt] platform=wayland\n");
+    guest_ctor_qgui_application();
 
     QWindow win;
     win.setGeometry(0, 0, desk_w, desk_h);
@@ -6460,6 +6442,23 @@ __attribute__((noreturn)) static void guest_d3_wayland_desk_session(void)
     store.flush(rect);
     guest_serial_puts("[desktop_qt] D3 wayland flush ok\n");
     guest_persist_create_desk_note();
+    guest_d3_exit_group_noreturn();
+}
+#endif
+
+/* D3 stub compositor: 1024×768 GuestMvpShell bits via stub wayland QPA, then exit_group. */
+__attribute__((noreturn)) static void guest_d3_wayland_desk_session(void)
+{
+    guest_serial_puts("[desktop_qt] D3 wayland desk session\n");
+    bfree_guest_refresh_libc_auxv();
+    bfree_guest_preflight_musl_heap();
+    bfree_guest_preflight_ctor_mmap();
+    guest_serial_puts("[desktop_qt] enter hybrid D3 session\n");
+#if defined(BFREE_D3_WAYLAND_QPA)
+    bfree_guest_run_on_ctor_stack_hybrid(guest_d3_hybrid_gui_session);
+#else
+    guest_serial_puts("[desktop_qt] D3 wayland QPA not linked\n");
+#endif
     guest_d3_exit_group_noreturn();
 }
 
