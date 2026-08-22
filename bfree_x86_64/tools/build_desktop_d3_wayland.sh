@@ -23,6 +23,14 @@ for d in "$HOME/out/bfree-qt6-guest-static" /root/out/bfree-qt6-guest-static; do
 done
 export BFREE_QT_GUEST_BUILD_DIR="${GUEST_QT:-/root/out/bfree-qt6-guest-static}"
 
+HOST_QT="${BFREE_QT_BUILD_DIR:-}"
+for d in "$HOME/out/bfree-qt6-static" /root/out/bfree-qt6-static; do
+  if [[ -z "$HOST_QT" && ( -x "$d/libexec/moc" || -x "$d/bin/moc" ) ]]; then
+    HOST_QT="$d"
+  fi
+done
+export BFREE_QT_BUILD_DIR="${HOST_QT:-$HOME/out/bfree-qt6-static}"
+
 MUSL_OUT=""
 MUSL_INC=""
 for musl_root in "$HOME/out/x86_64-elf-libm" \
@@ -278,27 +286,65 @@ collect_d3_archives() {
   }
 }
 
-restore_maintainer_shell_objects() {
-  echo "[d3-desktop] restore guest_bfree_shell_process.o + moc (matched maintainer pair)"
-  local name src
-  for name in guest_bfree_shell_process.o moc_guest_bfree_shell_process.o; do
-    for src in "$SRC_FALLBACK" "$PROGRAM_DESK" "$HOME/bfree_build/userland/desktop_qt"; do
-      [[ -f "$src/$name" ]] || continue
-      cp -f "$src/$name" "$DESK/$name"
-      echo "  restore $name <= $src"
-      break
+resolve_host_moc() {
+  local d m
+  for d in "${BFREE_QT_BUILD_DIR:-}" "$HOME/out/bfree-qt6-static" /root/out/bfree-qt6-static; do
+    [[ -n "$d" ]] || continue
+    for m in "$d/libexec/moc" "$d/bin/moc"; do
+      if [[ -x "$m" ]]; then
+        echo "$m"
+        return 0
+      fi
     done
-    if [[ ! -s "$DESK/$name" ]]; then
-      echo "FAIL: missing $DESK/$name (need bfree_build desktop_qt pair)" >&2
-      return 1
-    fi
   done
+  if command -v moc >/dev/null 2>&1; then
+    command -v moc
+    return 0
+  fi
+  return 1
+}
+
+compile_guest_shell_process_objects() {
+  [[ -f "$DESK/guest_bfree_shell_process.cpp" ]] || return 0
+  restore_desk_missing moc_predefs.h
+  if [[ ! -f "$DESK/moc_predefs.h" ]]; then
+    echo "FAIL: missing $DESK/moc_predefs.h (copy from bfree_build desktop_qt)" >&2
+    return 1
+  fi
+  local mk_defines mk_cxx mk_cxxflags mk_incpath expanded_flags moc_bin
+  mk_defines="$(makefile_guest_var DEFINES)"
+  mk_cxx="$(makefile_guest_var CXX)"
+  mk_cxxflags="$(makefile_guest_var CXXFLAGS)"
+  mk_incpath="$(makefile_guest_var INCPATH)"
+  [[ -n "$mk_cxx" && -n "$mk_cxxflags" ]] || return 0
+  expanded_flags="${mk_cxxflags//\$(DEFINES)/$mk_defines}"
+  if [[ -n "$MUSL_INC" ]]; then
+    expanded_flags+=" -idirafter $MUSL_INC"
+  fi
+  echo "[d3-desktop] compile guest_bfree_shell_process.o + moc (pty shell syms)"
+  rm -f guest_bfree_shell_process.o moc_guest_bfree_shell_process.o moc_guest_bfree_shell_process.cpp
+  # shellcheck disable=SC2086
+  $mk_cxx -c $expanded_flags $mk_incpath -I. -o guest_bfree_shell_process.o guest_bfree_shell_process.cpp
+  if ! nm guest_bfree_shell_process.o 2>/dev/null | grep -q ' guest_pty_shell_start'; then
+    echo "FAIL: guest_bfree_shell_process.o lacks guest_pty_shell_start" >&2
+    return 1
+  fi
+  moc_bin="$(resolve_host_moc)" || {
+    echo "FAIL: host moc not found (need ~/out/bfree-qt6-static/libexec/moc)" >&2
+    return 1
+  }
+  echo "[d3-desktop] moc guest_bfree_shell_process.h via $moc_bin"
+  # shellcheck disable=SC2086
+  "$moc_bin" $mk_defines --include "$DESK/moc_predefs.h" $mk_incpath -I. \
+    "$DESK/guest_bfree_shell_process.h" -o "$DESK/moc_guest_bfree_shell_process.cpp"
+  # shellcheck disable=SC2086
+  $mk_cxx -c $expanded_flags $mk_incpath -I. -o moc_guest_bfree_shell_process.o moc_guest_bfree_shell_process.cpp
 }
 
 link_d3_desktop() {
   local objs=() o
   restore_desk_objects
-  restore_maintainer_shell_objects
+  compile_guest_shell_process_objects
   for o in $(makefile_guest_objects); do
     o="${o//$'\r'/}"
     need "$DESK/$o"
