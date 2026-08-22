@@ -455,6 +455,12 @@ bash "$ROOT/tools/update_guest_resource_holder_va.sh" desktop.elf "$DESK/guest_r
 holder_nm="$(nm desktop.elf 2>/dev/null | awk '/resourceGlobalData/ && /instanceEvE6holder$/ && !/_ZGV/ { print "0x" $1; exit }')"
 holder_hdr="$(sed -n 's/.*HOLDER_VA \([0-9a-fxA-FX]*\)u.*/\1/p' guest_resource_holder_va.h 2>/dev/null || true)"
 echo "[d3-desktop] holder nm=$holder_nm hdr=$holder_hdr"
+
+echo "[d3-desktop] patch embedded bfree_guest_phdrs[] (vfork __copy_tls GP)"
+python3 "$ROOT/tools/emit_guest_compat_phdrs.py" desktop.elf "$ROOT/tools/guest_link_compat.cpp"
+python3 "$ROOT/tools/patch_desktop_phdrs_embedded.py" desktop.elf
+python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" desktop.elf
+
 bash "$ROOT/tools/check_desktop_holder_embedded.sh" desktop.elf
 
 strings desktop.elf | grep -F 'build=mmap96' | head -1 || true
