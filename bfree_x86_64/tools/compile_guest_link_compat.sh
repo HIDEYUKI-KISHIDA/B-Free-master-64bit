@@ -87,8 +87,10 @@ if objdump -d "$OUT" 2>/dev/null | grep -q '\$0x62c9540'; then
   echo "FAIL: $OUT still uses hardcoded maintainer VA \$0x62c9540" >&2
   exit 1
 fi
-if ! objdump -d "$OUT" 2>/dev/null | grep -q 'main_tls'; then
-  echo "FAIL: $OUT disassembly lacks main_tls symbol reference" >&2
-  exit 1
+if ! nm "$OUT" 2>/dev/null | grep -q '[[:space:]]main_tls$'; then
+  if ! objdump -r "$OUT" 2>/dev/null | grep -q 'main_tls'; then
+    echo "FAIL: $OUT lacks unresolved main_tls reference (expected U main_tls)" >&2
+    exit 1
+  fi
 fi
 echo "[compat-compile] OK main_tls-sym $(stat -c%s "$OUT") bytes"
