@@ -12,7 +12,7 @@ cd "$DESK"
 
 echo "[d3-desktop] git=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
-D3_NEED_MARK='compat build=main_tls-sym-v1'
+D3_NEED_MARK='compat build=main_tls-va-v2'
 if ! grep -qF "$D3_NEED_MARK" "$ROOT/tools/guest_link_compat.cpp"; then
   echo "FAIL: tools/guest_link_compat.cpp lacks $D3_NEED_MARK (git pull blocked?)" >&2
   echo "  cd $ROOT && bash tools/wsl_sync_d3_branch.sh" >&2
@@ -478,7 +478,7 @@ python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" desktop.elf
 bash "$ROOT/tools/check_d3_desktop_main_tls.sh" desktop.elf
 bash "$ROOT/tools/check_desktop_holder_embedded.sh" desktop.elf
 
-if ! strings desktop.elf | grep -qF 'compat build=main_tls-sym-v1'; then
+if ! strings desktop.elf | grep -qF 'compat build=main_tls-va-v2'; then
   echo "FAIL: desktop.elf lacks compat build id — guest_link_compat.o not linked?" >&2
   exit 1
 fi

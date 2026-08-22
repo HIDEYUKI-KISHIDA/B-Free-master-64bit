@@ -68,8 +68,12 @@ fi
 }
 
 EXTRA=("$@")
-if ! grep -q 'extern "C" char main_tls\[\]' "$ROOT/tools/guest_link_compat.cpp"; then
-  echo "FAIL: $ROOT/tools/guest_link_compat.cpp lacks main_tls symbol fix (git pull ed379cf+)" >&2
+if ! grep -q 'compat build=main_tls-va-v2' "$ROOT/tools/guest_link_compat.cpp"; then
+  echo "FAIL: $ROOT/tools/guest_link_compat.cpp lacks main_tls-va-v2 fix (git pull)" >&2
+  exit 1
+fi
+if ! grep -q 'BFREE_DESKTOP_MAIN_TLS_VA' "$DESK/guest_resource_holder_va.h"; then
+  echo "FAIL: $DESK/guest_resource_holder_va.h lacks BFREE_DESKTOP_MAIN_TLS_VA" >&2
   exit 1
 fi
 x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack-check \
@@ -79,18 +83,19 @@ x86_64-elf-g++ -m64 -mcmodel=large -mno-red-zone -fno-stack-protector -fno-stack
   "${EXTRA[@]}" \
   -x c++ -c -o "$OUT" "$ROOT/tools/guest_link_compat.cpp"
 
-if ! strings "$OUT" 2>/dev/null | grep -qF 'compat build=main_tls-sym-v1'; then
+if ! strings "$OUT" 2>/dev/null | grep -qF 'compat build=main_tls-va-v2'; then
   echo "FAIL: $OUT lacks compat build id (stale guest_link_compat.cpp?)" >&2
   exit 1
 fi
-if objdump -d "$OUT" 2>/dev/null | grep -q '\$0x62c9540'; then
-  echo "FAIL: $OUT still uses hardcoded maintainer VA \$0x62c9540" >&2
-  exit 1
-fi
-if ! nm "$OUT" 2>/dev/null | grep -q '[[:space:]]main_tls$'; then
-  if ! objdump -r "$OUT" 2>/dev/null | grep -q 'main_tls'; then
-    echo "FAIL: $OUT lacks unresolved main_tls reference (expected U main_tls)" >&2
+hdr_tls="$(sed -n 's/.*BFREE_DESKTOP_MAIN_TLS_VA \([0-9a-fxA-FX]*\)u.*/\1/p' "$DESK/guest_resource_holder_va.h" | head -1)"
+if [[ -n "$hdr_tls" && "$hdr_tls" != "0" && "$hdr_tls" != "0x0" ]]; then
+  tls_hex="$(printf '%x' "$hdr_tls")"
+  if objdump -d "$OUT" 2>/dev/null | grep -q '\$0x62c9540'; then
+    echo "FAIL: $OUT still uses hardcoded maintainer VA \$0x62c9540 (header=$hdr_tls)" >&2
     exit 1
   fi
+  if ! objdump -d "$OUT" 2>/dev/null | grep -Eiq "0x${tls_hex}|\$0x${tls_hex}"; then
+    echo "WARN: $OUT disasm missing header main_tls VA $hdr_tls (first link pass?)" >&2
+  fi
 fi
-echo "[compat-compile] OK main_tls-sym $(stat -c%s "$OUT") bytes"
+echo "[compat-compile] OK main_tls-va-v2 $(stat -c%s "$OUT") bytes hdr_tls=${hdr_tls:-0}"

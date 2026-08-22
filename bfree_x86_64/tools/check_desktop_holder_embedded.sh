@@ -50,22 +50,21 @@ fi
 tls_nm="$(nm "$ELF" 2>/dev/null | awk '/[[:space:]]main_tls$/ { print $1; exit }')"
 if [[ -n "$tls_nm" ]]; then
   tls_n="$(norm "0x$tls_nm")"
-  tls_region="$(objdump -d "$ELF" 2>/dev/null | awk '
-    /<bfree_guest_init_musl_tls>:/ { fn=1; next }
-    fn && /^[0-9a-f]+ <[^>]+>:/ { exit }
-    fn { print }
-  ')"
-  if echo "$tls_region" | grep -q '0x62c9540'; then
-    echo "FAIL: bfree_guest_init_musl_tls still uses stale maintainer VA 0x62c9540 (nm=$tls_n)" >&2
-    echo "  rm userland/desktop_qt/guest_link_compat.o && bash tools/build_desktop_d3_wayland.sh" >&2
-    exit 1
+  tls_hex="${tls_n#0x}"
+  disasm="$(objdump -d "$ELF" 2>/dev/null || true)"
+  if echo "$disasm" | grep -q '\$0x62c9540'; then
+    if [[ "$tls_n" != "0x62c9540" ]]; then
+      echo "FAIL: desktop.elf embeds stale maintainer main_tls VA 0x62c9540 (nm=$tls_n)" >&2
+      exit 1
+    fi
   fi
-  if ! echo "$tls_region" | grep -q 'main_tls'; then
-    echo "FAIL: bfree_guest_init_musl_tls does not reference linker symbol main_tls" >&2
-    echo "  bash tools/build_desktop_d3_wayland.sh" >&2
-    exit 1
+  if strings "$ELF" 2>/dev/null | grep -qF 'compat build=main_tls-va-v2'; then
+    if ! echo "$disasm" | grep -Eiq "0x${tls_hex}|\\$0x${tls_hex}"; then
+      echo "FAIL: desktop.elf disasm lacks main_tls VA immediate $tls_n" >&2
+      exit 1
+    fi
+    echo "[holder-check] main_tls nm=$tls_n embed=ok"
   fi
-  echo "[holder-check] main_tls nm=$tls_n (linker symbol ok)"
 elif strings "$ELF" 2>/dev/null | grep -qF '[desktop_qt] D3 wayland desk session'; then
   echo "FAIL: main_tls symbol missing from D3 wayland desktop.elf" >&2
   exit 1

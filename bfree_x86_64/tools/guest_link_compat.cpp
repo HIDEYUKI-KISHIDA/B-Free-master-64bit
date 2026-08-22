@@ -4096,10 +4096,9 @@ static void bfree_guest_sync_stack_canary(void)
     __init_ssp(0);
 }
 
-/* musl static TLS list head in desktop.elf BSS — address follows link layout (not a fixed VA). */
-extern "C" char main_tls[];
+/* musl static TLS list head — VA from guest_resource_holder_va.h (nm after link). */
 static const char bfree_guest_compat_build_id[] =
-    "[desktop_qt] compat build=main_tls-sym-v1";
+    "[desktop_qt] compat build=main_tls-va-v2";
 
 static void bfree_guest_init_musl_tls(void)
 {
@@ -4107,7 +4106,9 @@ static void bfree_guest_init_musl_tls(void)
     uintptr_t fs0;
 
     bfree_guest_serial_step('A');
-    memset(main_tls, 0, BFREE_DESKTOP_MAIN_TLS_BYTES);
+    if (BFREE_DESKTOP_MAIN_TLS_VA != 0u) {
+        memset((void *)(uintptr_t)BFREE_DESKTOP_MAIN_TLS_VA, 0, BFREE_DESKTOP_MAIN_TLS_BYTES);
+    }
     memset(&__libc, 0, sizeof(__libc));
     __libc.can_do_threads = 1;
     __libc.need_locks = 0;
