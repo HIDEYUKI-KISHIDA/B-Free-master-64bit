@@ -110,6 +110,7 @@ void bfree_guest_run_on_ctor_stack_hybrid_keep_bump(void (*fn)(void));
 void bfree_guest_enter_preflighted_mmap_noreturn(void (*fn)(void));
 void bfree_guest_preflight_ctor_mmap(void);
 void bfree_guest_begin_hybrid_alloc(void);
+void bfree_guest_leave_ctor_bump_alloc(void);
 void bfree_guest_run_on_ctor_stack_musl(void (*fn)(void));
 void bfree_guest_run_on_ctor_stack_musl_noreturn(void (*fn)(void));
 void bfree_guest_qv4_preflight_arena(void);
@@ -6407,6 +6408,11 @@ __attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
     guest_d3_register_wayland_qpa();
     guest_serial_puts("[desktop_qt] plugin wayland only\n");
     guest_serial_puts("[desktop_qt] platform=wayland\n");
+    /* Plugin registration uses hybrid bump; QGui ctor uses STAGE-3 fallback @0x19000000. */
+    bfree_guest_leave_ctor_bump_alloc();
+    guest_reset_qt_resource_registry();
+    bfree_guest_refresh_libc_auxv();
+    guest_serial_puts("[desktop_qt] QGui fallback heap\n");
     guest_serial_puts("[desktop_qt] before operator new\n");
     qapp_mem = ::operator new(sizeof(QGuiApplication));
     if (!qapp_mem) {
