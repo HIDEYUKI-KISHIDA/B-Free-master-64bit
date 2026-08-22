@@ -6399,6 +6399,7 @@ __attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
     void *qapp_mem;
 
     __asm__ volatile("andq $-16, %%rsp" ::: "rsp");
+    QCoreApplication::setSetuidAllowed(true);
     bfree_guest_refresh_libc_auxv();
     (void)bfree_guest_ensure_fallback_heap();
     bfree_guest_begin_hybrid_alloc();
@@ -6406,12 +6407,14 @@ __attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
     guest_d3_register_wayland_qpa();
     guest_serial_puts("[desktop_qt] plugin wayland only\n");
     guest_serial_puts("[desktop_qt] platform=wayland\n");
-    QCoreApplication::setSetuidAllowed(true);
+    guest_serial_puts("[desktop_qt] before operator new\n");
     qapp_mem = ::operator new(sizeof(QGuiApplication));
     if (!qapp_mem) {
         guest_serial_puts("[desktop_qt] QGuiApplication operator new 0\n");
         guest_d3_exit_group_noreturn();
     }
+    guest_serial_puts("[desktop_qt] operator new ok\n");
+    bfree_guest_refresh_libc_auxv();
     g_qapp = new (qapp_mem) QGuiApplication(g_qt_argc, g_qt_argv);
     guest_serial_puts("[desktop_qt] QGuiApplication OK\n");
 

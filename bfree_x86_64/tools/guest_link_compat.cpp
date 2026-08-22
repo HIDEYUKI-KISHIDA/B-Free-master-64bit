@@ -2093,7 +2093,8 @@ static void *bfree_guest_bump_alloc(size_t n)
         bfree_guest_serial_lit("[desktop_qt] bump alloc fail\n");
         return 0;
     }
-    if (p && bfree_guest_ctor_bump_mode && n && !bfree_guest_on_mmap_ctor_stack)
+    /* Qt on hybrid mmap stack assumes calloc-like memory (QImage alpha paths). */
+    if (p && n)
         memset(p, 0, n);
     return p;
 }
@@ -2420,7 +2421,7 @@ static void *bfree_guest_mmap_fallback_alloc(size_t n)
         bfree_guest_serial_hex_u64((uint64_t)n);
         bfree_guest_serial_lit("\n");
     }
-    if (!bfree_guest_on_mmap_ctor_stack)
+    if (p && n)
         memset(p, 0, n);
     return p;
 }
