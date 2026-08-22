@@ -71,6 +71,9 @@ else
   if [[ -f "$ROOT/tools/check_desktop_phdrs_embedded.py" ]]; then
     python3 "$ROOT/tools/check_desktop_phdrs_embedded.py" "$DESK" || fail=1
   fi
+  if [[ -x "$ROOT/tools/check_d3_desktop_main_tls.sh" ]]; then
+    bash "$ROOT/tools/check_d3_desktop_main_tls.sh" "$DESK" || fail=1
+  fi
   if [[ "${BFREE_D3_FULL:-0}" == "1" ]]; then
     strings "$DESK" | grep -qF '[desktop_qt] D3 wayland desk session' || {
       echo "FAIL: $DESK lacks D3 wayland session (run build_desktop_d3_wayland.sh)" >&2
