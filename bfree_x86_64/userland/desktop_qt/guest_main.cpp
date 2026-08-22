@@ -6396,6 +6396,7 @@ __attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
 {
     const int desk_w = 1024;
     const int desk_h = 768;
+    void *qapp_mem;
 
     __asm__ volatile("andq $-16, %%rsp" ::: "rsp");
     bfree_guest_refresh_libc_auxv();
@@ -6405,7 +6406,14 @@ __attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
     guest_d3_register_wayland_qpa();
     guest_serial_puts("[desktop_qt] plugin wayland only\n");
     guest_serial_puts("[desktop_qt] platform=wayland\n");
-    guest_ctor_qgui_application();
+    QCoreApplication::setSetuidAllowed(true);
+    qapp_mem = ::operator new(sizeof(QGuiApplication));
+    if (!qapp_mem) {
+        guest_serial_puts("[desktop_qt] QGuiApplication operator new 0\n");
+        guest_d3_exit_group_noreturn();
+    }
+    g_qapp = new (qapp_mem) QGuiApplication(g_qt_argc, g_qt_argv);
+    guest_serial_puts("[desktop_qt] QGuiApplication OK\n");
 
     QWindow win;
     win.setGeometry(0, 0, desk_w, desk_h);

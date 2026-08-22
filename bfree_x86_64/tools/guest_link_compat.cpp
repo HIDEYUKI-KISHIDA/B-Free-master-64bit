@@ -2000,13 +2000,30 @@ static int bfree_guest_mmap_ctor_bump_arena(void)
 {
     uintptr_t va = (uintptr_t)BFREE_GUEST_CTOR_BUMP_MMAP_VA;
     size_t bytes = BFREE_GUEST_CTOR_BUMP_MMAP_BYTES;
+    uintptr_t ctor_end = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA + BFREE_GUEST_CTOR_MMAP_STACK_BYTES;
 
-    if (bfree_guest_ctor_bump_base && bfree_guest_ctor_bump_cap >= bytes)
+    /* init_array leaves bss bump pointers — never treat as the 32 MiB hybrid arena. */
+    if (bfree_guest_ctor_bump_base == bfree_guest_bump_heap) {
+        bfree_guest_ctor_bump_base = 0;
+        bfree_guest_ctor_bump_cap = 0;
+    }
+    if (bfree_guest_ctor_bump_base == (unsigned char *)va && bfree_guest_ctor_bump_cap >= bytes) {
+        bfree_guest_ctor_bump_off = 0;
         return 0;
-    if (bfree_guest_mmap_fixed_anon(va, bytes) != 0)
+    }
+    if (bfree_guest_mmap_fixed_anon(va, bytes) != 0) {
+        /* preflight_ctor_mmap maps [0x08000000,0x18000000); bump is the top 32 MiB. */
+        if (va + bytes <= ctor_end) {
+            bfree_guest_ctor_bump_base = (unsigned char *)va;
+            bfree_guest_ctor_bump_cap = bytes;
+            bfree_guest_ctor_bump_off = 0;
+            return 0;
+        }
         return -1;
+    }
     bfree_guest_ctor_bump_base = (unsigned char *)va;
     bfree_guest_ctor_bump_cap = bytes;
+    bfree_guest_ctor_bump_off = 0;
     return 0;
 }
 
@@ -2066,6 +2083,11 @@ static void *bfree_guest_bump_alloc(size_t n)
         p = bfree_guest_bump_alloc_raw(bfree_guest_bump_heap, sizeof(bfree_guest_bump_heap),
                                        &bfree_guest_bump_off, n);
     if (!p && bfree_guest_ctor_bump_mode) {
+        if (bfree_guest_ctor_bump_hybrid && bfree_guest_on_mmap_ctor_stack) {
+            p = bfree_guest_mmap_fallback_alloc(n);
+            if (p)
+                return p;
+        }
         bfree_guest_serial_lit("[desktop_qt] bump alloc fail\n");
         return 0;
     }
@@ -3403,8 +3425,14 @@ static void bfree_guest_run_on_ctor_stack_inner(void (*fn)(void), int bump_polic
         bfree_guest_ctor_bump_hybrid = (bump_policy == 2) ? 1 : 0;
         if (bump_policy == 1)
             bfree_guest_musl_malloc_ready = 0;
-        if (bump_policy == 2 && !bfree_guest_preserve_ctor_bump_off)
-            bfree_guest_ctor_bump_off = 0;
+        if (bump_policy == 2) {
+            if (!bfree_guest_preserve_ctor_bump_off)
+                bfree_guest_ctor_bump_off = 0;
+            if (bfree_guest_ctor_bump_base == bfree_guest_bump_heap) {
+                bfree_guest_ctor_bump_base = 0;
+                bfree_guest_ctor_bump_cap = 0;
+            }
+        }
         if (bfree_guest_mmap_ctor_bump_arena() != 0) {
             if (bump_policy == 2) {
                 bfree_guest_serial_lit("[desktop_qt] ctor bump mmap fail (musl+fallback)\n");
@@ -3542,6 +3570,7 @@ extern "C" __attribute__((noinline)) void bfree_guest_run_on_ctor_stack_musl(voi
 extern "C" __attribute__((noinline)) void bfree_guest_run_on_ctor_stack_hybrid(void (*fn)(void))
 {
     /* mmap stack + bump (shallow realloc) with musl fallback for large allocs. */
+    bfree_guest_preserve_ctor_bump_off = 0;
     bfree_guest_run_on_ctor_stack_inner(fn, 2, 0);
 }
 
@@ -3627,12 +3656,13 @@ extern "C" __attribute__((noinline)) void bfree_guest_run_on_ctor_stack_musl_nor
 /* Enable hybrid bump arena on current (mmap) stack without another RSP switch. */
 extern "C" void bfree_guest_begin_hybrid_alloc(void)
 {
-    const int fresh = !bfree_guest_ctor_bump_mode;
-
     bfree_guest_ctor_bump_mode = 1;
     bfree_guest_ctor_bump_hybrid = 1;
-    if (fresh)
-        bfree_guest_ctor_bump_off = 0;
+    bfree_guest_ctor_bump_off = 0;
+    if (bfree_guest_ctor_bump_base == bfree_guest_bump_heap) {
+        bfree_guest_ctor_bump_base = 0;
+        bfree_guest_ctor_bump_cap = 0;
+    }
     if (bfree_guest_mmap_ctor_bump_arena() != 0) {
         bfree_guest_serial_lit("[desktop_qt] hybrid bump fail (musl+fallback)\n");
         bfree_guest_ctor_bump_base = 0;
@@ -4225,7 +4255,6 @@ extern "C" void bfree_guest_run_init_array(void)
         int saved_musl = bfree_guest_musl_malloc_ready;
         int saved_ctor_bump = bfree_guest_ctor_bump_mode;
         int saved_ctor_hybrid = bfree_guest_ctor_bump_hybrid;
-        size_t saved_ctor_bump_off = bfree_guest_ctor_bump_off;
 
         ctor_stack = bfree_guest_alloc_ctor_stack(&ctor_top);
         if (!ctor_stack || ctor_top == 0) {
@@ -4282,7 +4311,9 @@ extern "C" void bfree_guest_run_init_array(void)
             bfree_guest_ctor_bump_mode = saved_ctor_bump;
             bfree_guest_ctor_bump_hybrid = saved_ctor_hybrid;
             bfree_guest_musl_malloc_ready = saved_musl;
-            bfree_guest_ctor_bump_off = saved_ctor_bump_off;
+            bfree_guest_ctor_bump_off = 0;
+            bfree_guest_ctor_bump_base = 0;
+            bfree_guest_ctor_bump_cap = 0;
         }
     }
     bfree_guest_serial("[desktop_qt] init_array: C runner end\n");
