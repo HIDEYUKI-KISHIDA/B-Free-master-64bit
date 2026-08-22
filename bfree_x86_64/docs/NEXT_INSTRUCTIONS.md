@@ -52,12 +52,10 @@ https://github.com/HIDEYUKI-KISHIDA/B-Free-master-64bit/blob/work/posix-holes-re
 
 ## 現在の状態（エージェントが更新）
 
-- **Updated:** 2026-08-11（**NEXT 両方順**: Controls visible → mount/proc）
-- **1 Controls `setVisible(true)`:** host-fill で parent → post-act dense UR **後**に Theme+`ItemHasContents=false`+show → **visible ok**（FILL+PARENT+VIS+LOOP PF=0）
-- **2 mount↔`/proc/mounts`:** 動的スロット反映；BusyBox に umount 無しのため **p8test** で mount+umount2 検証 → **`P8_MOUNTS_OK` PASS**
-- **RLIMIT_NOFILE / flock / COW:** 前回どおり維持
-- **soft-rel:** 据え置き
-- **Next:** スマホ指示待ち
+- **Updated:** 2026-08-22（D3 hybrid-qgui-paint-v1）
+- **症状:** `1f967ff` hybrid-fallback-v1 は QPA=wayland まで緑。`leave_ctor_bump` 直後の `QGuiApplication` ctor が `#PF CR2=0x28`（`operator new ok` の直後）。qresource wipe 無しでも同じ。6218f669 が既にこの PF を revert 済み。
+- **修正:** QGui ctor は hybrid bump のまま（qt_wl_hello）。ctor OK のあと `leave_ctor_bump` して QWindow/QImage は fallback（hybrid-qgui の QImage alpha #GP 回避）。
+- **Next:** WSL で `bash tools/wsl_sync_d3_branch.sh` → `rm -f userland/desktop_qt/guest_link_compat.o userland/desktop_qt/guest_main.o` → `bash tools/build_desktop_d3_wayland.sh` → `strings … | grep hybrid-qgui-paint-v1` → `BFREE_D3=1 BFREE_D3_FULL=1 bash tools/_d3_compositor_stub_smoke.sh`。成功: `QGuiApplication OK` → `paint fallback heap` → `D2 fill desk` → `exit_group`。
 
 ---
 ---

@@ -6408,13 +6408,12 @@ __attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
     guest_d3_register_wayland_qpa();
     guest_serial_puts("[desktop_qt] plugin wayland only\n");
     guest_serial_puts("[desktop_qt] platform=wayland\n");
-    /* Plugin QList on hybrid bump; QGui on 128 MiB fallback (qgui_mmap_stack_alloc_mode).
-     * Do not guest_reset_qt_resource_registry here (hybrid-zero #PF CR2=0x28).
-     * Do not keep hybrid through QGui on full desktop (hybrid-qgui #GP QImage alpha). */
-    bfree_guest_leave_ctor_bump_alloc();
-    bfree_guest_refresh_libc_auxv();
-    guest_serial_puts("[desktop_qt] QGui fallback heap\n");
+    /* Keep hybrid bump through QGuiApplication ctor (qt_wl_hello / hybrid-qgui-v1).
+     * leave_ctor_bump before this ctor is #PF CR2=0x28 after operator new ok
+     * (595697d / hybrid-fallback-v1), even without qresource registry wipe.
+     * Do not guest_reset_qt_resource_registry here (hybrid-zero, same CR2). */
     QGuiApplication::setDesktopSettingsAware(false);
+    guest_serial_puts("[desktop_qt] QGui hybrid heap\n");
     guest_serial_puts("[desktop_qt] QGuiApplication ctor start\n");
     guest_serial_puts("[desktop_qt] before operator new\n");
     qapp_mem = ::operator new(sizeof(QGuiApplication));
@@ -6426,23 +6425,35 @@ __attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
     bfree_guest_refresh_libc_auxv();
     g_qapp = new (qapp_mem) QGuiApplication(g_qt_argc, g_qt_argv);
     guest_serial_puts("[desktop_qt] QGuiApplication OK\n");
+    /* QGui object lives on hybrid bump. Paint/QImage on fallback (hybrid-qgui #GP
+     * was QImage alpha after ctor, not the ctor itself). */
+    bfree_guest_leave_ctor_bump_alloc();
+    bfree_guest_refresh_libc_auxv();
+    guest_serial_puts("[desktop_qt] paint fallback heap\n");
 
+    guest_serial_puts("[desktop_qt] QWindow start\n");
     QWindow win;
     win.setGeometry(0, 0, desk_w, desk_h);
     win.setSurfaceType(QSurface::RasterSurface);
+    guest_serial_puts("[desktop_qt] QBackingStore start\n");
     QBackingStore store(&win);
+    guest_serial_puts("[desktop_qt] win.create\n");
     win.create();
     store.resize(QSize(desk_w, desk_h));
     win.show();
+    guest_serial_puts("[desktop_qt] win.show\n");
 
     const QRect rect(0, 0, desk_w, desk_h);
+    guest_serial_puts("[desktop_qt] beginPaint\n");
     store.beginPaint(rect);
+    guest_serial_puts("[desktop_qt] beginPaint ok\n");
     if (QImage *img = static_cast<QImage *>(store.paintDevice())) {
         unsigned *bits = reinterpret_cast<unsigned *>(img->bits());
         const int bpl = img->bytesPerLine() / 4;
         const int w = img->width();
         const int h = img->height();
         if (bits && w > 0 && h > 0) {
+            guest_serial_puts("[desktop_qt] bits\n");
             guest_d3_fill_rect(bits, bpl, w, h, 0, 0, w, h, 0xff7a8fa8u);
             guest_d3_fill_rect(bits, bpl, w, h, w * 40 / 480, h * 28 / 320, w * 400 / 480,
                                h * 200 / 320, 0xfff8fafcu);

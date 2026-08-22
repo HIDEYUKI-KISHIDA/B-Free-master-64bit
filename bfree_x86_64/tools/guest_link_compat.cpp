@@ -4147,7 +4147,7 @@ static void bfree_guest_sync_stack_canary(void)
 
 /* musl static TLS list head — VA from guest_resource_holder_va.h (nm after link). */
 static const char bfree_guest_compat_build_id[] =
-    "[desktop_qt] compat build=main_tls-va-v2 defer-env-v1 phdr-text-v1 hybrid-fallback-v1";
+    "[desktop_qt] compat build=main_tls-va-v2 defer-env-v1 phdr-text-v1 hybrid-qgui-paint-v1";
 
 static void bfree_guest_init_musl_tls(void)
 {
