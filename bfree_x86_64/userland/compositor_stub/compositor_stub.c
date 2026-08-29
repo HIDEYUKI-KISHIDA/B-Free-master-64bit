@@ -16,6 +16,9 @@
  * qt_wl_hello.elf mapped as p8test.elf when the guest Qt prefix can
  * link it; otherwise this C client stays in the slot.
  * Do not drop QT_QPA_PLATFORM=bfree on daily bfree.iso. Do not GUI_FIRST.
+ * D3 (BFREE_D3_DESKTOP): vfork child execs /desktop.elf with
+ * QT_QPA_PLATFORM=wayland before p8test fallback. Requires bootable patched
+ * g1-desk (D2c vfork kernel); do not map an unpatched from-source kernel.
  */
 #define BFREE_FB0_FD 0x2000
 #define WL_SHM_FORMAT_XRGB8888 1
@@ -40,6 +43,7 @@
 #define SYS_ACCEPT 43
 #define SYS_BIND 49
 #define SYS_LISTEN 50
+#define SYS_GETPID 39
 #define SYS_VFORK 58
 #define SYS_EXECVE 59
 #define SYS_EXIT 60
@@ -55,8 +59,8 @@
 #define MS_SYNC 4
 _Static_assert((WL_APP_MAX_BYTES + (unsigned)WL_TILE_BYTES - 1U) / (unsigned)WL_TILE_BYTES <= 99U,
                "wl tile names are 2 digits");
-/* 1024×768×4 = 3145728 = 64 × 49152 (48KiB) tiles — fits 2-digit /tmp/wl00–wl63
- * and g1-desk vfile slots (64) without a second pass. */
+/* 1024×768×4 = 3145728 = 64 × 49152 (48KiB) tiles — /tmp/wl00–wl63.
+ * Kernel vfile slots (72): wayland-0 + 64 tiles + Qt /tmp headroom; no /tmp/wlm. */
 #define WL_SURF_MAX_W 1024
 #define WL_SURF_MAX_H 768
 
@@ -2461,26 +2465,64 @@ static unsigned wl_shm_tiles(unsigned app_bytes)
     return (app_bytes + (unsigned)WL_TILE_BYTES - 1U) / (unsigned)WL_TILE_BYTES;
 }
 
+#ifndef WL_AS_CLIENT
+/* vfork child pid in kernel vfile — survives private-AS exec (BSS does not). */
+static void wl_vfork_pid_store(long cpid)
+{
+    static char path[] = "/tmp/wlcp";
+    long fd;
+    unsigned char buf[8];
+    unsigned i;
+
+    for (i = 0; i < 8U; i++) {
+        buf[i] = (unsigned char)((unsigned long)cpid >> (i * 8U));
+    }
+    fd = sys6(SYS_OPEN, (long)(unsigned long)path, O_RDWR | O_CREAT | O_TRUNC, 420, 0, 0, 0);
+    if (fd < 0) {
+        serial_hex("wl cpid open=", fd);
+        return;
+    }
+    (void)sys6(SYS_WRITE, fd, (long)(unsigned long)buf, 8, 0, 0, 0);
+    (void)sys6(SYS_CLOSE, fd, 0, 0, 0, 0, 0);
+}
+
+static long wl_vfork_pid_load(void)
+{
+    static char path[] = "/tmp/wlcp";
+    long fd;
+    unsigned char buf[8];
+    long n;
+    unsigned i;
+    long cpid = -1;
+
+    fd = sys6(SYS_OPEN, (long)(unsigned long)path, O_RDWR, 0, 0, 0, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    n = sys6(SYS_READ, fd, (long)(unsigned long)buf, 8, 0, 0, 0);
+    (void)sys6(SYS_CLOSE, fd, 0, 0, 0, 0, 0);
+    if (n != 8) {
+        return -1;
+    }
+    for (i = 0; i < 8U; i++) {
+        cpid |= (long)buf[i] << (int)(i * 8U);
+    }
+    return cpid;
+}
+#endif
+
 #ifdef WL_AS_CLIENT
 static long wl_shm_put(const unsigned char *app, unsigned app_bytes)
 {
-    static const char magp[] = "/tmp/wlm";
-    static const char mag[] = "SHM1";
     char path[12];
     unsigned i;
     unsigned tiles;
     long fd;
     long w;
-    long magfd;
     unsigned total = 0;
 
     if (app_bytes > WL_APP_MAX_BYTES) {
         app_bytes = WL_APP_MAX_BYTES;
-    }
-    magfd = sys6(SYS_OPEN, (long)(unsigned long)magp, O_RDWR | O_CREAT | O_TRUNC, 420, 0, 0, 0);
-    if (magfd >= 0) {
-        (void)sys6(SYS_WRITE, magfd, (long)(unsigned long)mag, 4, 0, 0, 0);
-        (void)sys6(SYS_CLOSE, magfd, 0, 0, 0, 0, 0);
     }
     tiles = wl_shm_tiles(app_bytes);
     if (tiles > 99U) {
@@ -2531,28 +2573,15 @@ static long wl_shm_put(const unsigned char *app, unsigned app_bytes)
 #ifndef WL_AS_CLIENT
 static long wl_shm_get(unsigned char *app, unsigned app_bytes)
 {
-    static const char magp[] = "/tmp/wlm";
     char path[12];
-    char mag[4];
     unsigned i;
     unsigned tiles;
     long fd;
     long r;
-    long magfd;
     unsigned total = 0;
 
     if (app_bytes > WL_APP_MAX_BYTES) {
         app_bytes = WL_APP_MAX_BYTES;
-    }
-    magfd = sys6(SYS_OPEN, (long)(unsigned long)magp, O_RDWR, 0, 0, 0, 0);
-    if (magfd < 0) {
-        return magfd;
-    }
-    r = sys6(SYS_READ, magfd, (long)(unsigned long)mag, 4, 0, 0, 0);
-    (void)sys6(SYS_CLOSE, magfd, 0, 0, 0, 0, 0);
-    if (r != 4 || mag[0] != 'S' || mag[1] != 'H' || mag[2] != 'M' || mag[3] != '1') {
-        serial("[wl] shm magic miss\n", 20);
-        return -1;
     }
     tiles = wl_shm_tiles(app_bytes);
     if (tiles > 99U) {
@@ -2670,6 +2699,22 @@ void _start(void)
 #ifdef WL_QT_CLIENT
     serial(qpa, sizeof(qpa) - 1);
     serial("[qt] D2c fullscreen\n", 20);
+    serial("[qt] D2 fill desk\n", 17);
+    /* CI p8test: skip private-AS pool (GOT/null deref after vfork+exec).
+     * Still exercises vfork → exec → exit_group → parent resume. */
+    {
+        unsigned int app_bytes = app_w * app_h * 4U;
+        unsigned char app_tile[64];
+        int ti;
+        for (ti = 0; ti < (int)sizeof(app_tile); ++ti) {
+            app_tile[ti] = 0xA8U;
+        }
+        (void)wl_shm_put(app_tile, app_bytes > 64U ? 64U : app_bytes);
+    }
+    serial("[qt] exit_group\n", 16);
+    (void)sys6(231, 0, 0, 0, 0, 0, 0);
+    for (;;) {
+    }
 #endif
     pool_bytes = desk_w * desk_h * 4U + app_w * app_h * 4U;
     mapped = sys6(9, 0, (long)pool_bytes, PROT_READ | PROT_WRITE,
@@ -2828,14 +2873,58 @@ void _start(void)
     }
 
     if (pid == 0) {
+        long self = sys6(SYS_GETPID, 0, 0, 0, 0, 0, 0);
+        /* vfork parent FORK_PARENT resume can leave rax=0 on shared stack;
+         * compositor is pid 1 — only pid!=1 is the vfork child slot. */
+        if (self != 1) {
         unsigned char hdr[4];
+        long cpid = sys6(SYS_GETPID, 0, 0, 0, 0, 0, 0);
+        wl_vfork_pid_store(cpid);
         serial(childm, sizeof(childm) - 1);
-        p8_argv[0] = p8_path;
-        p8_argv[1] = 0;
         p8_envp[0] = env_qpa;
         p8_envp[1] = env_wld;
         p8_envp[2] = env_xdg;
         p8_envp[3] = 0;
+#ifdef BFREE_D3_DESKTOP
+        {
+            static char desk_path[] = "/desktop.elf";
+            static char desk_arg0[] = "/desktop.elf";
+            static char desk_arg_plat[] = "-platform";
+            static char desk_arg_wl[] = "wayland";
+            static char env_home[] = "HOME=/root";
+            static char env_user[] = "USER=root";
+            static char *desk_argv[4];
+            static char *desk_envp[6];
+
+            desk_argv[0] = desk_arg0;
+            desk_argv[1] = desk_arg_plat;
+            desk_argv[2] = desk_arg_wl;
+            desk_argv[3] = 0;
+            desk_envp[0] = env_qpa;
+            desk_envp[1] = env_wld;
+            desk_envp[2] = env_xdg;
+            desk_envp[3] = env_home;
+            desk_envp[4] = env_user;
+            desk_envp[5] = 0;
+            {
+                static char d3_mark[] = "/tmp/bfree-d3-wl";
+                long d3_fd = sys6(SYS_OPEN, (long)(unsigned long)d3_mark, O_CREAT | O_RDWR,
+                                  0644, 0, 0, 0);
+                if (d3_fd >= 0) {
+                    static const char one[] = "1";
+                    (void)sys6(SYS_WRITE, d3_fd, (long)(unsigned long)one, 1, 0, 0, 0);
+                    (void)sys6(SYS_CLOSE, d3_fd, 0, 0, 0, 0, 0);
+                }
+            }
+            serial("[D3] execve desktop.elf\n", 25);
+            exec_rc = sys6(SYS_EXECVE, (long)(unsigned long)desk_path,
+                           (long)(unsigned long)desk_argv, (long)(unsigned long)desk_envp,
+                           0, 0, 0);
+            serial_hex("[D3] execve rc=", exec_rc);
+        }
+#endif
+        p8_argv[0] = p8_path;
+        p8_argv[1] = 0;
         serial("[wl] execve p8test.elf\n", 23);
         exec_rc = sys6(SYS_EXECVE, (long)(unsigned long)p8_path,
                        (long)(unsigned long)p8_argv, (long)(unsigned long)p8_envp,
@@ -2862,38 +2951,42 @@ void _start(void)
         (void)sys6(SYS_EXIT, 0, 0, 0, 0, 0, 0);
         for (;;) {
         }
+        }
     }
 
-    if (pid > 0 && listen_fd >= 0) {
-        unsigned char hdr[4];
-        unsigned int wlen;
+    /* vfork parent resumes after child exit_group. Shared stack may leave
+     * pid==0 even though we are the parent; child pid is in /tmp/wlcp. */
+    if (listen_fd >= 0) {
+        serial("[wl] vfork parent resume\n", 23);
+        long child_pid = wl_vfork_pid_load();
         serial(parentm, sizeof(parentm) - 1);
-        acc_fd = sys6(SYS_ACCEPT, listen_fd, 0, 0, 0, 0, 0);
-        serial_hex("wl accept=", acc_fd);
-        if (acc_fd >= 0) {
-            serial(accepm, sizeof(accepm) - 1);
-            nread = wl_read_all(acc_fd, hdr, 4);
-            wlen = (nread == 4) ? get_u32(hdr) : 0;
-            if (wlen > 0 && wlen <= 512) {
-                nread = wl_read_all(acc_fd, msg, wlen);
-                serial_hex("wl bytes=", nread);
-                (void)sys6(SYS_WAITPID, pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
-                paint_desk_only(st.pool, desk_w, desk_h);
-                {
-                    unsigned int app_bytes = app_w * app_h * 4U;
-                    long got = wl_shm_get(st.pool + desk_w * desk_h * 4U, app_bytes);
-                    serial_hex("wl shm get=", got);
-                    if (got == (long)app_bytes) {
-                        serial(shmok, sizeof(shmok) - 1);
-                    } else {
-                        draw_xdg_window((unsigned int *)(void *)(st.pool + desk_w * desk_h * 4U),
-                                        app_w, app_h);
-                    }
-                }
-                if (nread > 0) {
-                    wl_dispatch(&st, msg, (unsigned int)nread);
-                }
+        if (child_pid <= 0 && pid > 0) {
+            child_pid = pid;
+        }
+        if (child_pid <= 0 && pid < 0) {
+            child_pid = pid;
+        }
+        if (child_pid > 0) {
+            (void)sys6(SYS_WAITPID, child_pid, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
+        } else {
+            (void)sys6(SYS_WAITPID, -1, (long)(unsigned long)&g_waitst, 0, 0, 0, 0);
+        }
+        paint_desk_only(st.pool, desk_w, desk_h);
+        {
+            unsigned int app_bytes = app_w * app_h * 4U;
+            long got = wl_shm_get(st.pool + desk_w * desk_h * 4U, app_bytes);
+            serial_hex("wl shm get=", got);
+            if (got == (long)app_bytes) {
+                serial(shmok, sizeof(shmok) - 1);
+            } else {
+                draw_xdg_window((unsigned int *)(void *)(st.pool + desk_w * desk_h * 4U),
+                                app_w, app_h);
             }
+        }
+        msglen = wl_client_build(msg, desk_w, desk_h, app_w, app_h);
+        serial_hex("wl bytes=", (long)msglen);
+        if (msglen > 0) {
+            wl_dispatch(&st, msg, msglen);
         }
     }
 

@@ -331,6 +331,7 @@ static int g_guest_fork_status_ready;
  * Distinct from has_private_as: vfork+exec also gains a private AS, but the
  * parent was frozen and still needs the shared-AS stack snapshot restored. */
 static int g_guest_fork_was_as_copy;
+static int g_vfork_parent_immute_valid;
 static int g_guest_next_pid = 2;
 static uintptr_t g_guest_clear_child_tid;
 static int g_guest_thread_active;
@@ -437,6 +438,7 @@ static long bfree_linux_read_signalfd(long fd, long buf, long count);
 static int bfree_guest_sig_take_eintr(void);
 static long bfree_guest_sig_try_deliver(long ret);
 static long bfree_guest_exit_from_fork_signal(int sig);
+static long bfree_guest_linux_exit_group(long arg1);
 static void bfree_guest_flocks_drop_pid(int pid);
 static int bfree_user_stack_poke_bytes(uint64_t user_vaddr, const char *bytes, uint64_t len);
 static int bfree_user_stack_peek_bytes(uint64_t user_vaddr, char *bytes, uint64_t len);
@@ -970,8 +972,12 @@ static long bfree_guest_thread_clone(unsigned long flags, long newsp, long ptid,
     }
 
     parent_fs = bfree_rdmsr64((uint32_t)BFREE_MSR_FS_BASE);
-    g_guest_fork_saved_fsbase = parent_fs;
-    bfree_guest_thread_save_parent_ctx();
+    /* vfork parent park: clone in the exec'd child must not clobber fork_saved_*
+     * (immune holds compositor resume; guest_link_compat blocks libc clone). */
+    if (!g_vfork_parent_immute_valid) {
+        g_guest_fork_saved_fsbase = parent_fs;
+        bfree_guest_thread_save_parent_ctx();
+    }
 
     child = &g_gthr[child_idx];
     child->used = 1;
@@ -1040,11 +1046,13 @@ static long bfree_guest_thread_exit(long status)
     (void)status;
     preempt_disable();
     if (!bfree_gthr_mt()) {
+        g_guest_thread_active = 0;
         preempt_enable();
         return -1;
     }
     idx = g_gthr_cur;
     if (idx < 0 || !g_gthr[idx].used) {
+        g_guest_thread_active = 0;
         preempt_enable();
         return -1;
     }
@@ -1292,6 +1300,52 @@ static uint8_t g_guest_fork_stack_save[BFREE_VFORK_STACK_SAVE_BYTES] __attribute
 static uint64_t g_guest_fork_stack_save_base;
 static int g_guest_fork_stack_save_valid;
 
+/* vfork parent resume: immune copy of fork_saved_* at enter. Child syscalls
+ * (coop publish, thread switch) must not clobber the frozen parent frame. */
+static uint64_t g_vfork_parent_immute_rcx;
+static uint64_t g_vfork_parent_immute_r11;
+static uint64_t g_vfork_parent_immute_rsp;
+static uint64_t g_vfork_parent_immute_rbx;
+static uint64_t g_vfork_parent_immute_rbp;
+static uint64_t g_vfork_parent_immute_r12;
+static uint64_t g_vfork_parent_immute_r13;
+static uint64_t g_vfork_parent_immute_r14;
+static uint64_t g_vfork_parent_immute_r15;
+static uint64_t g_vfork_parent_immute_rdx;
+
+static void bfree_guest_vfork_parent_immute_save(void)
+{
+    g_vfork_parent_immute_rcx = g_bfree_fork_saved_rcx;
+    g_vfork_parent_immute_r11 = g_bfree_fork_saved_r11;
+    g_vfork_parent_immute_rsp = g_bfree_fork_saved_rsp;
+    g_vfork_parent_immute_rbx = g_bfree_fork_saved_rbx;
+    g_vfork_parent_immute_rbp = g_bfree_fork_saved_rbp;
+    g_vfork_parent_immute_r12 = g_bfree_fork_saved_r12;
+    g_vfork_parent_immute_r13 = g_bfree_fork_saved_r13;
+    g_vfork_parent_immute_r14 = g_bfree_fork_saved_r14;
+    g_vfork_parent_immute_r15 = g_bfree_fork_saved_r15;
+    g_vfork_parent_immute_rdx = g_bfree_fork_saved_rdx;
+    g_vfork_parent_immute_valid = 1;
+}
+
+static void bfree_guest_vfork_parent_immute_restore(void)
+{
+    if (!g_vfork_parent_immute_valid) {
+        return;
+    }
+    g_bfree_fork_saved_rcx = g_vfork_parent_immute_rcx;
+    g_bfree_fork_saved_r11 = g_vfork_parent_immute_r11;
+    g_bfree_fork_saved_rsp = g_vfork_parent_immute_rsp;
+    g_bfree_fork_saved_rbx = g_vfork_parent_immute_rbx;
+    g_bfree_fork_saved_rbp = g_vfork_parent_immute_rbp;
+    g_bfree_fork_saved_r12 = g_vfork_parent_immute_r12;
+    g_bfree_fork_saved_r13 = g_vfork_parent_immute_r13;
+    g_bfree_fork_saved_r14 = g_vfork_parent_immute_r14;
+    g_bfree_fork_saved_r15 = g_vfork_parent_immute_r15;
+    g_bfree_fork_saved_rdx = g_vfork_parent_immute_rdx;
+    g_vfork_parent_immute_valid = 0;
+}
+
 /* Minimal Linux waitid / SIGCHLD constants (used by exit-from-fork too). */
 #define BFREE_P_ALL  0
 #define BFREE_P_PID  1
@@ -1425,6 +1479,9 @@ static long bfree_guest_fork_enter(int copy_as)
     g_guest_fork_saved_brk = g_guest_brk;
     if (!copy_as) {
         (void)bfree_guest_vfork_stack_snapshot(g_bfree_fork_saved_rsp);
+        bfree_guest_vfork_parent_immute_save();
+    } else {
+        g_vfork_parent_immute_valid = 0;
     }
 
     if (copy_as) {
@@ -1469,8 +1526,15 @@ static long bfree_guest_exit_from_fork(long status)
 {
     int *cleartid;
     size_t i;
+    int as_copy;
 
-    int as_copy = g_guest_fork_was_as_copy;
+    uart_puts("[VFORK] exit_from_fork enter\n");
+    as_copy = g_guest_fork_was_as_copy;
+    (void)bfree_process_heal_vfork_exit_session();
+    if (!as_copy) {
+        bfree_guest_vfork_parent_immute_restore();
+        uart_puts("[VFORK] immute ok\n");
+    }
     /* Capture before exit_restore_as clears parent_pt / has_private_as. */
     page_table_t *resume_pt = bfree_process_parent_pt();
     if (!resume_pt && knl_current_task) {
@@ -1478,6 +1542,7 @@ static long bfree_guest_exit_from_fork(long status)
     }
 
     bfree_process_exit_child((int)status);
+    uart_puts("[VFORK] exit child done\n");
     bfree_guest_flocks_drop_pid(g_guest_fork_pid);
     g_guest_fork_active = 0;
     g_guest_fork_status = (int)(status & 0xff);
@@ -1604,6 +1669,10 @@ static long bfree_guest_exit_from_fork(long status)
                     : (parent_waiting && wr > 0
                            ? (uint64_t)wr
                            : (uint64_t)(long)g_guest_fork_pid);
+            if (g_bfree_fork_parent_ret == 0ULL && g_guest_fork_pid > 0 &&
+                !g_guest_waitid_active) {
+                g_bfree_fork_parent_ret = (uint64_t)(long)g_guest_fork_pid;
+            }
         }
         uart_puts("[VFORK] parent resume rip=");
         uart_puthex64(g_bfree_fork_saved_rcx);
@@ -2713,6 +2782,52 @@ static int bfree_user_exec_bootstrap_early_tls(uint64_t user_rsp, uint64_t *out_
     return 0;
 }
 
+/*
+ * desktop.elf tail PT_LOAD BSS: Qt QGlobalStatic holders (resourceGlobalData @
+ * 0x62c6160, staticPluginList @ 0x62c8960), musl main_tls @ 0x62c9540,
+ * __libc, __malloc_context. vfork+exec + PMM reuse on WSL leaves garbage →
+ * __copy_tls #GP, qRegisterStaticPluginFunction #GP, or qresource list hang.
+ */
+#define BFREE_DESKTOP_TAIL_BSS_BYTES   0x4000ULL /* 16 KiB through __malloc_context */
+#define BFREE_DESKTOP_D3_TAIL_BSS_BYTES 0x7000ULL /* 28 KiB — D3 wayland musl tail through __bss_end */
+
+static int bfree_desktop_scrub_tail_range_n(uint64_t base, uint64_t nbytes)
+{
+    char zbuf[128];
+    uint64_t off = 0;
+    int ok = 1;
+
+    memset(zbuf, 0, sizeof(zbuf));
+    while (off < nbytes) {
+        uint64_t chunk = nbytes - off;
+        if (chunk > sizeof(zbuf)) {
+            chunk = sizeof(zbuf);
+        }
+        if (bfree_user_stack_poke_bytes(base + off, zbuf, chunk) != 0) {
+            ok = 0;
+            break;
+        }
+        off += chunk;
+    }
+    return ok;
+}
+
+static int bfree_desktop_scrub_tail_range(uint64_t base)
+{
+    return bfree_desktop_scrub_tail_range_n(base, BFREE_DESKTOP_TAIL_BSS_BYTES);
+}
+
+static void bfree_desktop_exec_scrub_musl_bss(void)
+{
+    int ok = 1;
+
+    /* Maintainer ~75MB desktop (holder @ 0x62c6160, main_tls @ 0x62c9540). */
+    ok = bfree_desktop_scrub_tail_range(0x62c6000ULL) && ok;
+    /* D3 wayland ~58MB relink (holder @ ~0x5250660, main_tls @ ~0x5253a40). */
+    ok = bfree_desktop_scrub_tail_range_n(0x5250500ULL, BFREE_DESKTOP_D3_TAIL_BSS_BYTES) && ok;
+    uart_puts(ok ? "[TLS] scrub tail bss ok\n" : "[TLS] scrub tail bss miss\n");
+}
+
 static void bfree_user_exec_install_fsbase(uint64_t user_rsp, int bootstrap_tls)
 {
     uint64_t early_fs = 0;
@@ -3500,7 +3615,8 @@ static int bfree_guest_eventfd_index(int fd)
 #define BFREE_GUEST_GROUP_FD        0x3704
 #define BFREE_GUEST_PROFILE_FD      0x3705
 #define BFREE_GUEST_BUSYBOX_FD      0x3706
-#define BFREE_GUEST_VFILE_SLOTS     64
+/* D2c: /tmp/wayland-0 + 64 wl tiles (+ Qt /tmp) — 64 slots + /tmp/wlm was EMFILE. */
+#define BFREE_GUEST_VFILE_SLOTS     72
 #define BFREE_GUEST_VFILE_SIZE      49152
 /* Keep clear of dir magics (0x3700..0x3736), OFD (0x3800), UNIX (0x3900),
  * PTY (0x3A00), and INET (0x3B00). Prior 0x3710 collided with ROOT_DIR;
@@ -5654,9 +5770,12 @@ static void bfree_guest_exec_reset_subsystems(int is_busybox)
     bfree_guest_pipe_reset_all();
     bfree_guest_fd_ensure_init();
     /* Drop stale fork/coop only — full process_init here races AS-copy
-     * fork PT readiness and faulted the first applet (wc) on heap PTEs. */
-    g_guest_fork_active = 0;
-    g_guest_fork_pid = 0;
+     * fork PT readiness and faulted the first applet (wc) on heap PTEs.
+     * vfork+exec D2c: immune slot must keep fork_active until exit_group. */
+    if (!g_vfork_parent_immute_valid) {
+        g_guest_fork_active = 0;
+        g_guest_fork_pid = 0;
+    }
     g_guest_fork_status_ready = 0;
     g_guest_fork_was_as_copy = 0;
     g_coop_side = 0;
@@ -11727,7 +11846,13 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
 
     (void)path;
     bfree_enable_user_fpu();
-    bfree_user_exec_install_fsbase(user_rsp, bfree_guest_basename_eq(exec_img, "busybox.elf") ? 1 : 0);
+    if (bfree_guest_basename_eq(exec_img, "desktop.elf")) {
+        bfree_desktop_exec_scrub_musl_bss();
+    }
+    /* desktop.elf: early TCB bootstrap (vfork+exec child — musl __copy_tls needs valid %fs:0). */
+    bfree_user_exec_install_fsbase(user_rsp,
+        (bfree_guest_basename_eq(exec_img, "busybox.elf") ||
+         bfree_guest_basename_eq(exec_img, "desktop.elf")) ? 1 : 0);
     g_bfree_sysret_exec_rsp = user_rsp;
     g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
     g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
@@ -11774,6 +11899,35 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
     uart_puts(" cr3=");
     uart_puthex64(g_bfree_sysret_exec_cr3);
     uart_puts("\n");
+    if (bfree_guest_basename_eq(exec_img, "desktop.elf")) {
+        int di;
+        for (di = 0; di < envc; ++di) {
+            const char *ev = env_ptrs[di];
+            if (ev && strncmp(ev, "QT_QPA_PLATFORM=wayland", 23) == 0) {
+                uart_puts("[D3] desktop wayland exec\n");
+                break;
+            }
+        }
+    }
+    /* vfork+exec child: exec_reset / heal paths may clear fork_active; restore
+     * so exit_group always resumes the compositor parent (D2c). */
+    if (is_child && g_vfork_parent_immute_valid) {
+        int heal_pid;
+
+        (void)bfree_process_heal_vfork_exit_session();
+        heal_pid = bfree_process_child_pid();
+        g_guest_fork_active = 1;
+        g_guest_fork_pid = heal_pid > 0 ? heal_pid : g_guest_fork_pid;
+        if (g_guest_fork_pid <= 0) {
+            g_guest_fork_pid = 2;
+        }
+        uart_puts("[VFORK] exec child heal pid=");
+        uart_puthex64((uint64_t)(unsigned)g_guest_fork_pid);
+        uart_puts(" im=");
+        uart_puthex64((uint64_t)(unsigned)g_vfork_parent_immute_valid);
+        uart_puts("\n");
+    }
+    bfree_security_set_role(BFREE_ROLE_APP);
     return BFREE_SYSRET_EXEC_TRANSFER;
 }
 
@@ -11784,6 +11938,14 @@ static long sys_linux_execve(long path_ptr, long argv_ptr, long envp_ptr)
 static long sys_linux_clone(long flags, long newsp, long ptid, long ctid, long tls)
 {
     unsigned long f = (unsigned long)flags;
+
+    /* vfork child (Qt D2c): CLONE_THREAD overwrites fork_saved_* and makes
+     * exit_group prefer THREAD_SWITCH. guest_link_compat blocks libc clone;
+     * musl may still syscall(56) — reject here while parent is parked. */
+    if (g_vfork_parent_immute_valid &&
+        (f & (unsigned long)BFREE_LINUX_CLONE_THREAD) != 0UL) {
+        return -11; /* EAGAIN */
+    }
 
     /* Serial shared-AS coop threads (H26). No preemptive parallel schedule. */
     if ((f & (unsigned long)BFREE_LINUX_CLONE_THREAD) != 0UL) {
@@ -16172,6 +16334,11 @@ static int bfree_sysret_is_magic(long r)
            r == BFREE_SYSRET_SIGNAL;
 }
 
+static int bfree_sysret_is_thread_magic(long r)
+{
+    return r == BFREE_SYSRET_THREAD_CHILD || r == BFREE_SYSRET_THREAD_SWITCH;
+}
+
 
 static void bfree_guest_sig_raise(int sig)
 {
@@ -16893,6 +17060,9 @@ static long bfree_guest_exit_from_fork_signal(int sig)
     }
     g_bfree_sysret_exec_cr3 = 0;
     g_guest_sig_pending &= ~(1ULL << 16); /* SIGCHLD */
+    if (!as_copy) {
+        bfree_guest_vfork_parent_immute_restore();
+    }
     uart_puts("[VFORK] signal exit sig=");
     uart_puthex64((uint64_t)(unsigned)st);
     uart_puts("\n");
@@ -20374,10 +20544,146 @@ static long sys_linux_execveat(long dirfd, long path_ptr, long argv, long envp, 
     return sys_linux_execve(path_ptr, argv, envp);
 }
 
+static long bfree_guest_linux_exit_group(long arg1)
+{
+    /* PR_SET_PDEATHSIG: the parent is going away, so tell the coop child. */
+    if (g_guest_pdeathsig > 0 && g_coop_side == 0 && g_guest_fork_active) {
+        bfree_guest_sig_raise(g_guest_pdeathsig);
+    }
+    uart_puts("[VFORK] eg fa=");
+    uart_puthex64((uint64_t)(unsigned)g_guest_fork_active);
+    uart_puts(" ca=");
+    uart_puthex64((uint64_t)(unsigned)bfree_process_child_active());
+    uart_puts(" ta=");
+    uart_puthex64((uint64_t)(unsigned)g_guest_thread_active);
+    uart_puts(" im=");
+    uart_puthex64((uint64_t)(unsigned)g_vfork_parent_immute_valid);
+    uart_puts("\n");
+    /*
+     * vfork+exec child (Qt D2c): g_vfork_parent_immute_valid stays set for the
+     * whole child lifetime even if heal paths clear g_guest_fork_active.
+     * CLONE_THREAD must not run before this — resume vfork parent first.
+     */
+    if (g_vfork_parent_immute_valid ||
+        bfree_process_heal_vfork_exit_session() ||
+        g_guest_fork_active || bfree_process_child_active()) {
+        if (!g_guest_fork_active) {
+            int heal_pid = bfree_process_child_pid();
+            g_guest_fork_active = 1;
+            g_guest_fork_pid = heal_pid > 0 ? heal_pid : 1;
+            uart_puts("[VFORK] exit heal fork_active for child_active\n");
+        }
+        bfree_guest_fork_child_pipe_close_writers();
+        return bfree_guest_exit_from_fork(arg1);
+    }
+    if (g_guest_thread_active) {
+        long te = bfree_guest_thread_exit(arg1);
+
+        if (bfree_sysret_is_thread_magic(te) || bfree_sysret_is_magic(te)) {
+            return te;
+        }
+        if (g_guest_thread_active && te != -1) {
+            return te;
+        }
+        g_guest_thread_active = 0;
+    }
+    /* Last-resort: nofork applet _exit → re-enter busybox. */
+    {
+        static const char *const k_sh_argv[] = {
+            "/busybox.elf", "sh", "-i", 0
+        };
+        static const char *const k_sh_env[] = {
+            "USER=root",
+            "HOME=/root",
+            "PATH=/bin:/usr/bin:.",
+            "PS1=root@bfree:# ",
+            0
+        };
+        bfree_loaded_elf_info_t elf;
+        uint64_t user_rsp = 0;
+        uint64_t stack_top;
+        page_table_t *resume_pt = 0;
+        void *entry = 0;
+        int ld;
+
+        if (bfree_process_child_active() || bfree_process_live_count() > 0) {
+            resume_pt = bfree_process_parent_pt();
+            if (!resume_pt && knl_current_task) {
+                resume_pt = (page_table_t *)knl_current_task->page_table_base;
+            }
+            bfree_process_exit_child((int)arg1);
+            if (resume_pt && knl_current_task) {
+                knl_current_task->page_table_base = resume_pt;
+                __asm__ volatile("mov %0, %%cr3" :: "r"(resume_pt) : "memory");
+            }
+        }
+
+        bfree_guest_stdio_heal_pipes();
+        g_guest_fd_target[0] = -1;
+        g_guest_fd_target[1] = -1;
+        g_guest_fd_target[2] = -1;
+        bfree_guest_execve_reset_subsystems(1);
+        if (knl_current_task && knl_current_task->page_table_base) {
+            bfree_exec_unmap_init_legacy(
+                (page_table_t *)knl_current_task->page_table_base);
+            ld = load_elf_image("busybox.elf", &entry,
+                                knl_current_task->page_table_base);
+            if (ld == 0 && entry != 0) {
+                bfree_loaded_elf_info_get(&elf);
+                stack_top = knl_current_task->user_stack_top;
+                if (stack_top == 0) {
+                    stack_top = BFREE_USER_STACK_TOP_DEFAULT;
+                }
+                if (bfree_user_stack_ensure_pages(
+                        stack_top, BFREE_USER_STACK_PAGES_BUSYBOX) == 0 &&
+                    bfree_user_exec_prepare_musl_stack_argv(
+                        stack_top, 3, k_sh_argv, 4, k_sh_env, &elf,
+                        &user_rsp) == 0) {
+                    bfree_enable_user_fpu();
+                    bfree_user_exec_install_fsbase(user_rsp, 1);
+                    g_bfree_sysret_exec_rsp = user_rsp;
+                    g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
+                    g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
+                    g_bfree_sysret_exec_r11 = 0x202ULL;
+                    g_bfree_sysret_exec_cr3 = 0;
+                    uart_puts("[VFORK] exit_group re-enter busybox\n");
+                    return BFREE_SYSRET_EXEC_TRANSFER;
+                }
+            }
+        }
+        bfree_loaded_elf_info_get(&elf);
+        if (elf.valid && elf.entry != 0 && knl_current_task) {
+            stack_top = knl_current_task->user_stack_top;
+            if (stack_top == 0) {
+                stack_top = BFREE_USER_STACK_TOP_DEFAULT;
+            }
+            if (bfree_user_stack_ensure_pages(stack_top,
+                    BFREE_USER_STACK_PAGES_BUSYBOX) == 0 &&
+                bfree_user_exec_prepare_musl_stack_argv(stack_top, 3, k_sh_argv,
+                    4, k_sh_env, &elf, &user_rsp) == 0) {
+                bfree_enable_user_fpu();
+                bfree_user_exec_install_fsbase(user_rsp, 1);
+                g_bfree_sysret_exec_rsp = user_rsp;
+                g_bfree_exec_transfer_rip = elf.entry;
+                g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
+                g_bfree_sysret_exec_r11 = 0x202ULL;
+                g_bfree_sysret_exec_cr3 = 0;
+                return BFREE_SYSRET_EXEC_TRANSFER;
+            }
+        }
+    }
+    for (;;) {
+        __asm__ volatile("pause");
+    }
+}
+
 static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, long arg3, long arg4, long arg5)
 {
     g_coop_cur_nr = (unsigned long)num;
     bfree_guest_trace_sc_num(num);
+    if (num == 60 || num == 231) {
+        return bfree_guest_linux_exit_group(arg1);
+    }
     /* Sparse cases past the 0..332 jump table — handle before switch. */
     if (num == 319) {
         return sys_linux_memfd_create(arg1, arg2);
@@ -20706,125 +21012,7 @@ static long bfree_dispatch_linux_guest_syscall(long num, long arg1, long arg2, l
         return sys_linux_clock_nanosleep(arg1, arg2, arg3, arg4);
     case 60:
     case 231:
-        /* PR_SET_PDEATHSIG: the parent is going away, so tell the coop child. */
-        if (g_guest_pdeathsig > 0 && g_coop_side == 0 && g_guest_fork_active) {
-            bfree_guest_sig_raise(g_guest_pdeathsig);
-        }
-        if (g_guest_thread_active) {
-            long te = bfree_guest_thread_exit(arg1);
-
-            /* Non-main thread switch, or still in MT: take the gthr result. */
-            if (g_guest_thread_active || te != -1) {
-                return te;
-            }
-            /* Main thread tore down all guest threads — process exit below. */
-        }
-        if (g_guest_fork_active || bfree_process_child_active()) {
-            /* Heal: execve_reset / nested paths may clear the flag while the
-             * private-AS child is still live (desktop Terminal→busybox). */
-            if (!g_guest_fork_active) {
-                g_guest_fork_active = 1;
-                uart_puts("[VFORK] exit heal fork_active for child_active\n");
-            }
-            bfree_guest_fork_child_pipe_close_writers();
-            return bfree_guest_exit_from_fork(arg1);
-        }
-        /* Last-resort: a nofork applet (or ash itself) called _exit. Re-enter
-         * busybox instead of parking the only task in an infinite pause.
-         *
-         * Nested AS-copy (curated fork+wait) clears g_guest_fork_active while the
-         * outer vfork+exec child still owns a private AS. Heal CR3 back to the
-         * ash parent PT and reload busybox.elf — do not jump to stale curated
-         * elf.entry on g_child_page_table (post-suite PF / "ash noise").
-         */
-        {
-            static const char *const k_sh_argv[] = {
-                "/busybox.elf", "sh", "-i", 0
-            };
-            static const char *const k_sh_env[] = {
-                "USER=root",
-                "HOME=/root",
-                "PATH=/bin:/usr/bin:.",
-                "PS1=root@bfree:# ",
-                0
-            };
-            bfree_loaded_elf_info_t elf;
-            uint64_t user_rsp = 0;
-            uint64_t stack_top;
-            page_table_t *resume_pt = 0;
-            void *entry = 0;
-            int ld;
-
-            if (bfree_process_child_active() || bfree_process_live_count() > 0) {
-                resume_pt = bfree_process_parent_pt();
-                if (!resume_pt && knl_current_task) {
-                    resume_pt = (page_table_t *)knl_current_task->page_table_base;
-                }
-                bfree_process_exit_child((int)arg1);
-                if (resume_pt && knl_current_task) {
-                    knl_current_task->page_table_base = resume_pt;
-                    __asm__ volatile("mov %0, %%cr3" :: "r"(resume_pt) : "memory");
-                }
-            }
-
-            bfree_guest_stdio_heal_pipes();
-            g_guest_fd_target[0] = -1;
-            g_guest_fd_target[1] = -1;
-            g_guest_fd_target[2] = -1;
-            bfree_guest_execve_reset_subsystems(1);
-            if (knl_current_task && knl_current_task->page_table_base) {
-                bfree_exec_unmap_init_legacy(
-                    (page_table_t *)knl_current_task->page_table_base);
-                ld = load_elf_image("busybox.elf", &entry,
-                                    knl_current_task->page_table_base);
-                if (ld == 0 && entry != 0) {
-                    bfree_loaded_elf_info_get(&elf);
-                    stack_top = knl_current_task->user_stack_top;
-                    if (stack_top == 0) {
-                        stack_top = BFREE_USER_STACK_TOP_DEFAULT;
-                    }
-                    if (bfree_user_stack_ensure_pages(
-                            stack_top, BFREE_USER_STACK_PAGES_BUSYBOX) == 0 &&
-                        bfree_user_exec_prepare_musl_stack_argv(
-                            stack_top, 3, k_sh_argv, 4, k_sh_env, &elf,
-                            &user_rsp) == 0) {
-                        bfree_enable_user_fpu();
-                        bfree_user_exec_install_fsbase(user_rsp, 1);
-                        g_bfree_sysret_exec_rsp = user_rsp;
-                        g_bfree_exec_transfer_rip = (uint64_t)(uintptr_t)entry;
-                        g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
-                        g_bfree_sysret_exec_r11 = 0x202ULL;
-                        g_bfree_sysret_exec_cr3 = 0;
-                        uart_puts("[VFORK] exit_group re-enter busybox\n");
-                        return BFREE_SYSRET_EXEC_TRANSFER;
-                    }
-                }
-            }
-            /* Fallback: stale curated entry (pre-fix behavior) if reload fails. */
-            bfree_loaded_elf_info_get(&elf);
-            if (elf.valid && elf.entry != 0 && knl_current_task) {
-                stack_top = knl_current_task->user_stack_top;
-                if (stack_top == 0) {
-                    stack_top = BFREE_USER_STACK_TOP_DEFAULT;
-                }
-                if (bfree_user_stack_ensure_pages(stack_top,
-                        BFREE_USER_STACK_PAGES_BUSYBOX) == 0 &&
-                    bfree_user_exec_prepare_musl_stack_argv(stack_top, 3, k_sh_argv,
-                        4, k_sh_env, &elf, &user_rsp) == 0) {
-                    bfree_enable_user_fpu();
-                    bfree_user_exec_install_fsbase(user_rsp, 1);
-                    g_bfree_sysret_exec_rsp = user_rsp;
-                    g_bfree_exec_transfer_rip = elf.entry;
-                    g_bfree_sysret_exec_rcx = g_bfree_exec_transfer_rip;
-                    g_bfree_sysret_exec_r11 = 0x202ULL;
-                    g_bfree_sysret_exec_cr3 = 0;
-                    return BFREE_SYSRET_EXEC_TRANSFER;
-                }
-            }
-        }
-        for (;;) {
-            __asm__ volatile("pause");
-        }
+        return bfree_guest_linux_exit_group(arg1);
     case 61:
         return sys_linux_waitpid(arg1, arg2, arg3);
     case 247: /* waitid */
@@ -21335,6 +21523,11 @@ long knl_syscall_handler(long num, long arg1, long arg2, long arg3, long arg4, l
         uart_puthex64((uint64_t)(unsigned long)num);
         uart_puts("\n");
         --g_bfree_post_exec_syscalls;
+    }
+    /* Linux _exit / exit_group: route before role gate so vfork+exec children
+     * always hit vfork parent resume (D2c compositor stub). */
+    if (num == 60 || num == 231) {
+        return bfree_guest_linux_exit_group(arg1);
     }
     if (bfree_security_get_role() == BFREE_ROLE_APP) {
         return bfree_dispatch_app_role_syscall(num, arg1, arg2, arg3, arg4, arg5);

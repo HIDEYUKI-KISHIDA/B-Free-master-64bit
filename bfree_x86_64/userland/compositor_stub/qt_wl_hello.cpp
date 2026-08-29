@@ -347,17 +347,16 @@ __attribute__((noinline)) static void hello_gui_session(void)
                          : "+r"(rax)
                          : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9)
                          : "rcx", "r11", "memory");
-        qt_hello_serial("[qt] exit returned\n");
-        rax = 60;
-        rdi = 0;
-        __asm__ volatile("syscall"
-                         : "+r"(rax)
-                         : "r"(rdi), "r"(rsi), "r"(rdx), "r"(r10), "r"(r8), "r"(r9)
-                         : "rcx", "r11", "memory");
-        qt_hello_serial("[qt] exit60 returned\n");
-        (void)rax;
+        if (rax == (long)-4089)
+            qt_hello_serial("[qt] exit ret=THREAD_SWITCH\n");
+        else if (rax == (long)-4093)
+            qt_hello_serial("[qt] exit ret=FORK_PARENT\n");
+        else
+            qt_hello_serial("[qt] exit returned\n");
     }
+    qt_hello_serial("[qt] exit_group hang\n");
     for (;;) {
+        __asm__ volatile("pause" ::: "memory");
     }
 }
 
@@ -366,6 +365,7 @@ int main(int argc, char **argv)
     (void)argc;
     (void)argv;
 
+    qt_hello_serial("[qt] build=d2c-vfork-3\n");
     qt_hello_serial("[qt] hello hybrid-qpa\n");
     qt_hello_serial("[qt] D1 wayland\n");
     qt_hello_serial("[qt] D2 qml-client\n");

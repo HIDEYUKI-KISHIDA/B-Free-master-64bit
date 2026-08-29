@@ -7,6 +7,16 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STUB="$ROOT/userland/compositor_stub"
 DESK="$ROOT/userland/desktop_qt"
+OUT="$STUB/qt_wl_hello.elf"
+
+# WSL/maintainer: keep a copied prebuilt hello (skip failed link that restores .keep).
+if [[ "${BFREE_FORCE_QT_HELLO_REBUILD:-0}" != "1" && -f "$OUT" ]]; then
+  sz="$(wc -c < "$OUT")"
+  if [[ "$sz" -gt 1000000 ]]; then
+    echo "[qt_wl_hello] keep existing ELF ($sz bytes); BFREE_FORCE_QT_HELLO_REBUILD=1 to rebuild"
+    exit 0
+  fi
+fi
 
 if [[ -x "${HOME}/x86_64-elf-toolchain/bin/x86_64-elf-g++" ]]; then
   export PATH="${HOME}/x86_64-elf-toolchain/bin:${PATH:-}"
@@ -111,7 +121,7 @@ done
 # p8test is APP: Linux mmap is 9, 26 is msync. Rebuild compat for hello only.
 # Do not overwrite desktop_qt/guest_link_compat.o (desktop.elf).
 COMPAT_HELLO="$STUB/guest_link_compat_hello.o"
-if [[ -n "$MUSL_INC" && -f "$ROOT/tools/guest_link_compat.cpp" ]]; then
+if [[ -n "$MUSL_INC" && -f "$ROOT/tools/guest_link_compat.cpp" && -f "$DESK/guest_serial.h" ]]; then
   echo "[qt_wl_hello] compiling guest_link_compat for APP mmap (syscall 9 only, 32MiB ctor)"
   if "$CXX" -m64 -mcmodel=large -mno-red-zone -fno-stack-protector \
       -fno-pic -fno-exceptions -fno-rtti -O2 -std=gnu++17 \
@@ -119,10 +129,12 @@ if [[ -n "$MUSL_INC" && -f "$ROOT/tools/guest_link_compat.cpp" ]]; then
       -c -o "$COMPAT_HELLO" "$ROOT/tools/guest_link_compat.cpp"; then
     export BFREE_GUEST_COMPAT="$COMPAT_HELLO"
   else
-    echo "qt_wl_hello skip: APP mmap compat compile failed. C p8test stays." >&2
-    echo "Do not link desktop_qt/guest_link_compat.o into hello." >&2
-    exit 0
+    echo "[qt_wl_hello] WARN: APP mmap compat compile failed — using $DESK/guest_link_compat.o" >&2
+    export BFREE_GUEST_COMPAT="$DESK/guest_link_compat.o"
   fi
+elif [[ -n "$MUSL_INC" && ! -f "$DESK/guest_serial.h" ]]; then
+  echo "[qt_wl_hello] WARN: missing $DESK/guest_serial.h — using desktop guest_link_compat.o" >&2
+  export BFREE_GUEST_COMPAT="$DESK/guest_link_compat.o"
 fi
 
 make -C "$STUB" wl_stub_flush.o

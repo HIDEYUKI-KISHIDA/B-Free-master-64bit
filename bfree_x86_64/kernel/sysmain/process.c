@@ -452,6 +452,46 @@ int bfree_process_child_active(void)
     return ch && bfree_process_is_runnable_state(ch->state);
 }
 
+void bfree_process_heal_focus_for_exit(void)
+{
+    int i;
+
+    bfree_process_heal_active();
+    if (g_active >= 0) {
+        return;
+    }
+    for (i = 0; i < BFREE_PROC_MAX_CHILDREN; ++i) {
+        if (bfree_process_is_runnable_state(g_children[i].state)) {
+            g_active = i;
+            return;
+        }
+    }
+}
+
+int bfree_process_heal_vfork_exit_session(void)
+{
+    int i;
+
+    bfree_process_heal_focus_for_exit();
+    if (g_active >= 0 &&
+        bfree_process_is_live_state(g_children[g_active].state) &&
+        (g_children[g_active].parent_pt != 0 ||
+         g_children[g_active].state == BFREE_PROC_VFORK)) {
+        return 1;
+    }
+    for (i = 0; i < BFREE_PROC_MAX_CHILDREN; ++i) {
+        if (!bfree_process_is_live_state(g_children[i].state)) {
+            continue;
+        }
+        if (g_children[i].parent_pt != 0 ||
+            g_children[i].state == BFREE_PROC_VFORK) {
+            g_active = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int bfree_process_pid_is_stopped(int pid)
 {
     int slot = bfree_process_slot_of_pid(pid);
@@ -663,7 +703,12 @@ void bfree_process_exit_restore_as(void)
     }
 
     if (ch->child_pt) {
-        vmm_destroy_user_mappings_keep(ch->child_pt, ch->parent_pt);
+        /* vfork+exec uses g_child_page_table — no COW user pages shared with parent. */
+        if (ch->fork_pt_idx < 0) {
+            vmm_destroy_user_mappings(ch->child_pt);
+        } else {
+            vmm_destroy_user_mappings_keep(ch->child_pt, ch->parent_pt);
+        }
     }
     pt_idx = ch->fork_pt_idx;
     if (pt_idx >= 0) {

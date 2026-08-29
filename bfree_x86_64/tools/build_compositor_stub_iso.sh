@@ -31,7 +31,7 @@ if [[ -x "${HOME}/x86_64-elf-toolchain/bin/x86_64-elf-gcc" ]]; then
   export PATH="${HOME}/x86_64-elf-toolchain/bin:${PATH:-}"
 fi
 
-make -C "$ROOT/userland/compositor_stub"
+make -C "$ROOT/userland/compositor_stub" ${BFREE_D3:+BFREE_D3=1}
 COMP="$ROOT/userland/compositor_stub/compositor.elf"
 TRAMP="$ROOT/userland/compositor_stub/init_tramp.elf"
 CLIENT="$ROOT/userland/compositor_stub/wl_client.elf"
@@ -52,6 +52,19 @@ test -s "$TRAMP"
 test -s "$CLIENT"
 test -s "$QTCLI"
 
+DESK="$ROOT/userland/desktop_qt/desktop.elf"
+if [[ "${BFREE_D3:-}" == "1" ]]; then
+  if [[ ! -s "$DESK" ]]; then
+    echo "BFREE_D3=1 requires $DESK (copy from maintainer tree)" >&2
+    false
+  fi
+  DESK_BYTES="$(wc -c < "$DESK")"
+  if [[ "$DESK_BYTES" -lt 10000000 ]]; then
+    echo "BFREE_D3=1: $DESK is ${DESK_BYTES} bytes (need >=10MB guest desktop)" >&2
+    false
+  fi
+fi
+
 WORK="$(mktemp -d)"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
@@ -64,12 +77,17 @@ grep -q 'module2 /boot/hello.elf hello.elf' "$WORK/grub.new"
 grep -q 'module2 /boot/p8test.elf p8test.elf' "$WORK/grub.new"
 
 cp -f "$SRC_ISO" "$OUT_ISO"
+XORRISO_MAP=( -map "$TRAMP" /boot/init_tramp.elf
+  -map "$COMP" /boot/compositor.elf
+  -map "$CLIENT" /boot/hello.elf
+  -map "$QTCLI" /boot/p8test.elf
+)
+if [[ "${BFREE_D3:-}" == "1" ]]; then
+  XORRISO_MAP+=( -map "$DESK" /boot/desktop.elf )
+fi
 xorriso -indev "$OUT_ISO" -outdev "$OUT_ISO" \
   -boot_image any replay \
-  -map "$TRAMP" /boot/init_tramp.elf \
-  -map "$COMP" /boot/compositor.elf \
-  -map "$CLIENT" /boot/hello.elf \
-  -map "$QTCLI" /boot/p8test.elf \
+  "${XORRISO_MAP[@]}" \
   -update "$WORK/grub.new" /boot/grub/grub.cfg \
   -commit >/dev/null
 
@@ -85,6 +103,15 @@ echo "GRUB_CLIENT=hello.elf"
 echo "GRUB_QT_CLIENT=p8test.elf"
 echo "P8_KIND=$QT_KIND"
 echo "P8_BYTES=$(wc -c < "$QTCLI")"
+if [[ "${BFREE_D3:-}" == "1" ]]; then
+  echo "D3_MODE=desktop.elf vfork exec (Wayland env)"
+  echo "D3_DESKTOP_BYTES=$DESK_BYTES"
+  if strings "$COMP" | grep -qF '[D3] execve desktop.elf'; then
+    echo "D3_COMPOSITOR=ok"
+  else
+    echo "D3_COMPOSITOR=MISSING (rebuild compositor with BFREE_D3=1)"
+  fi
+fi
 if grep -aq 'hello hybrid-qpa' "$QTCLI" 2>/dev/null; then
   echo "P8TEST_STAMP=hybrid-qpa"
 else

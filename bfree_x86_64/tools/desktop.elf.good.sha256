@@ -1,0 +1,9 @@
+# Known-good guest desktop.elf fingerprint (exec-tier D3 smoke PASS).
+# Size: 75331080 bytes (0x47D7608)
+# Holder: nm=embed=0x62c6160
+# Strings: [desktop_qt] build=mmap96-v349 staged
+#
+# PHDR-patched (required for WSL D3 vfork __copy_tls — run relink_desktop_phdrs_only.sh):
+03ce1e835bdfea24757abb715288fe36a9aa60bce21a26002b0b47a92c61d321
+# Pre-patch maintainer copy (stale embedded bfree_guest_phdrs — D3 GP on WSL):
+77b7d2b37ee1d784f1ca90ed4509627d4b0f650ede92c93755af0b344cb731cf

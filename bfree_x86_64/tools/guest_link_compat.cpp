@@ -25,6 +25,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <unwind.h>
+#include <elf.h>
 
 #include "../userland/desktop_qt/guest_serial.h"
 #include "../userland/desktop_qt/guest_resource_holder_va.h"
@@ -881,13 +882,26 @@ struct bfree_guest_ctor_stack_ctx {
 };
 static struct bfree_guest_ctor_stack_ctx g_ctor_stack_ctx;
 
-/* desktop.elf: .text @0x2800000 .. .rodata @0x35f2000 (see readelf -S). */
-#define BFREE_GUEST_TEXT_LO 0x02800000ULL
-#define BFREE_GUEST_TEXT_HI 0x035F2000ULL
+/*
+ * Embedded PT_LOAD/PT_TLS — regenerate: python3 tools/emit_guest_compat_phdrs.py
+ * Kernel does not map the file PHDR table; musl __init_tls reads this copy.
+ */
+static const Elf64_Phdr bfree_guest_phdrs[] = {
+    { PT_LOAD, PF_R | PF_W | PF_X, 0x1000, 0x2800000, 0x2800000, 0x3acc4c0, 0x3acc4c0, 0x1000 },
+    { PT_TLS, PF_R, 0x192c7d0, 0x412b7d0, 0x412b7d0, 0x28, 0xa8, 0x10 },
+    { PT_GNU_EH_FRAME, PF_R, 0x0, 0x0, 0x0, 0x0, 0x0, 0x10 },
+};
 
+/* File-backed PT_LOAD (code+rodata, not BSS tail) — D3 wayland spans ~0x28..0x3b. */
 static int bfree_guest_ptr_in_text(uintptr_t a)
 {
-    return a >= BFREE_GUEST_TEXT_LO && a < BFREE_GUEST_TEXT_HI;
+    const Elf64_Phdr *load = &bfree_guest_phdrs[0];
+    uintptr_t lo = (uintptr_t)load->p_vaddr;
+    uintptr_t hi = lo + (uintptr_t)load->p_filesz;
+
+    if (load->p_type != PT_LOAD || load->p_filesz == 0)
+        return a >= 0x02800000ULL && a < 0x035F2000ULL;
+    return a >= lo && a < hi;
 }
 
 static int bfree_guest_code_entry_looks_valid(uintptr_t a)
@@ -1615,6 +1629,19 @@ static void (*g_deferred_ctors[BFREE_GUEST_DEFERRED_CTORS_MAX])(void);
 static unsigned g_deferred_ctor_idx[BFREE_GUEST_DEFERRED_CTORS_MAX];
 static unsigned g_deferred_ctor_count;
 
+static int bfree_guest_defer_plugin_import_ctor(uintptr_t addr)
+{
+    const unsigned char *fn = (const unsigned char *)addr;
+
+    if (!bfree_guest_addr_in_desktop_image(addr))
+        return 0;
+    /* desktop_plugin_import.cpp: defer to guest_main guest_ctor_plugins_only(). */
+    if (fn[0] == 0x55 && fn[1] == 0x48 && fn[2] == 0x89 && fn[3] == 0xe5 && fn[4] == 0x48 && fn[5] == 0x83
+        && fn[6] == 0xec && fn[7] == 0x60 && fn[8] == 0x48 && fn[9] == 0x8d && fn[10] == 0x7d && fn[11] == 0xe0)
+        return 1;
+    return 0;
+}
+
 static int bfree_guest_defer_late_ctor(uintptr_t addr, unsigned array_index)
 {
     const unsigned char *fn = (const unsigned char *)addr;
@@ -1973,13 +2000,30 @@ static int bfree_guest_mmap_ctor_bump_arena(void)
 {
     uintptr_t va = (uintptr_t)BFREE_GUEST_CTOR_BUMP_MMAP_VA;
     size_t bytes = BFREE_GUEST_CTOR_BUMP_MMAP_BYTES;
+    uintptr_t ctor_end = (uintptr_t)BFREE_GUEST_CTOR_MMAP_VA + BFREE_GUEST_CTOR_MMAP_STACK_BYTES;
 
-    if (bfree_guest_ctor_bump_base && bfree_guest_ctor_bump_cap >= bytes)
+    /* init_array leaves bss bump pointers — never treat as the 32 MiB hybrid arena. */
+    if (bfree_guest_ctor_bump_base == bfree_guest_bump_heap) {
+        bfree_guest_ctor_bump_base = 0;
+        bfree_guest_ctor_bump_cap = 0;
+    }
+    if (bfree_guest_ctor_bump_base == (unsigned char *)va && bfree_guest_ctor_bump_cap >= bytes) {
+        bfree_guest_ctor_bump_off = 0;
         return 0;
-    if (bfree_guest_mmap_fixed_anon(va, bytes) != 0)
+    }
+    if (bfree_guest_mmap_fixed_anon(va, bytes) != 0) {
+        /* preflight_ctor_mmap maps [0x08000000,0x18000000); bump is the top 32 MiB. */
+        if (va + bytes <= ctor_end) {
+            bfree_guest_ctor_bump_base = (unsigned char *)va;
+            bfree_guest_ctor_bump_cap = bytes;
+            bfree_guest_ctor_bump_off = 0;
+            return 0;
+        }
         return -1;
+    }
     bfree_guest_ctor_bump_base = (unsigned char *)va;
     bfree_guest_ctor_bump_cap = bytes;
+    bfree_guest_ctor_bump_off = 0;
     return 0;
 }
 
@@ -2028,6 +2072,8 @@ static size_t bfree_guest_bump_user_size(void *p)
     return *(size_t *)(u - sizeof(size_t));
 }
 
+static void *bfree_guest_mmap_fallback_alloc(size_t n);
+
 static void *bfree_guest_bump_alloc(size_t n)
 {
     void *p;
@@ -2039,10 +2085,16 @@ static void *bfree_guest_bump_alloc(size_t n)
         p = bfree_guest_bump_alloc_raw(bfree_guest_bump_heap, sizeof(bfree_guest_bump_heap),
                                        &bfree_guest_bump_off, n);
     if (!p && bfree_guest_ctor_bump_mode) {
+        if (bfree_guest_ctor_bump_hybrid && bfree_guest_on_mmap_ctor_stack) {
+            p = bfree_guest_mmap_fallback_alloc(n);
+            if (p)
+                return p;
+        }
         bfree_guest_serial_lit("[desktop_qt] bump alloc fail\n");
         return 0;
     }
-    if (p && bfree_guest_ctor_bump_mode && n && !bfree_guest_on_mmap_ctor_stack)
+    /* Qt on hybrid mmap stack assumes calloc-like memory (QImage alpha paths). */
+    if (p && n)
         memset(p, 0, n);
     return p;
 }
@@ -2212,6 +2264,20 @@ extern "C" void bfree_guest_set_force_fallback_alloc(int on)
         bfree_guest_qrc_alloc_scope_leave();
 }
 
+/* guest_main / guest_qquick_window.o name; same as set_force_fallback_alloc. */
+extern "C" void bfree_guest_set_prefer_fallback_alloc(int on)
+{
+    bfree_guest_set_force_fallback_alloc(on);
+}
+
+/* Satisfy guest_qquick_window.o; D3 wayland desk uses QWindow, not this path. */
+extern "C" void bfree_guest_call_on_stack(void (*fn)(void), unsigned long long stack_top)
+{
+    (void)stack_top;
+    if (fn)
+        fn();
+}
+
 static unsigned g_malloc_fail_diag;
 
 static void bfree_guest_fill_auxv_tables(void);
@@ -2355,7 +2421,7 @@ static void *bfree_guest_mmap_fallback_alloc(size_t n)
         bfree_guest_serial_hex_u64((uint64_t)n);
         bfree_guest_serial_lit("\n");
     }
-    if (!bfree_guest_on_mmap_ctor_stack)
+    if (p && n)
         memset(p, 0, n);
     return p;
 }
@@ -2431,6 +2497,8 @@ extern "C" void *__wrap_malloc(size_t n)
         p = bfree_guest_mmap_fallback_alloc(n);
         if (!p)
             p = bfree_guest_bump_alloc(n);
+        if (p && n && !bfree_guest_ptr_is_mmap_fallback(p))
+            memset(p, 0, n);
         bfree_guest_trace_alloc((unsigned long)n, p);
         return p;
     }
@@ -2720,7 +2788,8 @@ extern "C" void bfree_guest_enable_main_bump_arena(void)
 #ifdef BFREE_GUEST_APP_MMAP
 static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=wayland";
 #else
-static char bfree_guest_env_qpa[] = "QT_QPA_PLATFORM=bfree";
+/* Buffer fits wayland overwrite on D3 vfork exec; default is bfree (N2 daily). */
+static char bfree_guest_env_qpa[28] = "QT_QPA_PLATFORM=bfree";
 #endif
 static char bfree_guest_env_quick[] = "QT_QUICK_BACKEND=software";
 static char bfree_guest_env_noft[] = "QT_NO_FT_LIB=1";
@@ -2749,6 +2818,19 @@ static char bfree_guest_env_qv4gc[] = "QV4_GC_MAX_STACK_SIZE=1048576";
 static char bfree_guest_env_qv4interp[] = "QV4_FORCE_INTERPRETER=1";
 static char bfree_guest_env_fixedlocale[] = "BFREE_GUEST_FIXED_LOCALE=1";
 
+#ifndef BFREE_GUEST_APP_MMAP
+/* D3: compositor writes /tmp/bfree-d3-wl before vfork exec desktop.elf. */
+static int bfree_guest_d3_wl_marker_present(void)
+{
+    int fd = open("/tmp/bfree-d3-wl", O_RDONLY);
+    if (fd < 0) {
+        return 0;
+    }
+    (void)close(fd);
+    return 1;
+}
+#endif
+
 extern "C" {
 char *bfree_guest_environ_storage[25];
 char **environ = bfree_guest_environ_storage;
@@ -2757,6 +2839,12 @@ char **__environ = bfree_guest_environ_storage;
 
 extern "C" void bfree_guest_install_static_env(void)
 {
+#ifndef BFREE_GUEST_APP_MMAP
+    if (bfree_guest_d3_wl_marker_present()) {
+        memcpy(bfree_guest_env_qpa, "QT_QPA_PLATFORM=wayland",
+               sizeof("QT_QPA_PLATFORM=wayland"));
+    }
+#endif
     bfree_guest_environ_storage[0] = bfree_guest_env_qpa;
     bfree_guest_environ_storage[1] = bfree_guest_env_quick;
     bfree_guest_environ_storage[2] = bfree_guest_env_noft;
@@ -3342,8 +3430,16 @@ static void bfree_guest_run_on_ctor_stack_inner(void (*fn)(void), int bump_polic
         bfree_guest_ctor_bump_hybrid = (bump_policy == 2) ? 1 : 0;
         if (bump_policy == 1)
             bfree_guest_musl_malloc_ready = 0;
-        if (bump_policy == 2 && !bfree_guest_preserve_ctor_bump_off)
+        if (bump_policy == 2) {
+            if (!bfree_guest_preserve_ctor_bump_off)
+                bfree_guest_ctor_bump_off = 0;
+            if (bfree_guest_ctor_bump_base == bfree_guest_bump_heap) {
+                bfree_guest_ctor_bump_base = 0;
+                bfree_guest_ctor_bump_cap = 0;
+            }
+        } else if (bump_policy == 1) {
             bfree_guest_ctor_bump_off = 0;
+        }
         if (bfree_guest_mmap_ctor_bump_arena() != 0) {
             if (bump_policy == 2) {
                 bfree_guest_serial_lit("[desktop_qt] ctor bump mmap fail (musl+fallback)\n");
@@ -3481,6 +3577,7 @@ extern "C" __attribute__((noinline)) void bfree_guest_run_on_ctor_stack_musl(voi
 extern "C" __attribute__((noinline)) void bfree_guest_run_on_ctor_stack_hybrid(void (*fn)(void))
 {
     /* mmap stack + bump (shallow realloc) with musl fallback for large allocs. */
+    bfree_guest_preserve_ctor_bump_off = 0;
     bfree_guest_run_on_ctor_stack_inner(fn, 2, 0);
 }
 
@@ -3566,12 +3663,13 @@ extern "C" __attribute__((noinline)) void bfree_guest_run_on_ctor_stack_musl_nor
 /* Enable hybrid bump arena on current (mmap) stack without another RSP switch. */
 extern "C" void bfree_guest_begin_hybrid_alloc(void)
 {
-    const int fresh = !bfree_guest_ctor_bump_mode;
-
     bfree_guest_ctor_bump_mode = 1;
     bfree_guest_ctor_bump_hybrid = 1;
-    if (fresh)
-        bfree_guest_ctor_bump_off = 0;
+    bfree_guest_ctor_bump_off = 0;
+    if (bfree_guest_ctor_bump_base == bfree_guest_bump_heap) {
+        bfree_guest_ctor_bump_base = 0;
+        bfree_guest_ctor_bump_cap = 0;
+    }
     if (bfree_guest_mmap_ctor_bump_arena() != 0) {
         bfree_guest_serial_lit("[desktop_qt] hybrid bump fail (musl+fallback)\n");
         bfree_guest_ctor_bump_base = 0;
@@ -3929,20 +4027,13 @@ extern "C" int *___errno_location(void) __attribute__((alias("__errno_location")
  * table at file offset 0x40 is not mapped — embed program headers in .rodata.
  * Regenerate after desktop.elf link: python3 tools/print_desktop_phdrs.py
  */
-/* Regenerate after desktop.elf link: python3 tools/print_desktop_phdrs.py */
-static const Elf64_Phdr bfree_guest_phdrs[] = {
-    { PT_LOAD, PF_R | PF_W | PF_X, 0x1000, 0x2800000, 0x2800000, 0x1db3a40, 0x1db3a40, 0x1000 },
-    { PT_TLS, PF_R, 0x1198c30, 0x3997c30, 0x3997c30, 0x28, 0xa8, 0x10 },
-    { PT_GNU_EH_FRAME, PF_R, 0x0, 0x0, 0x0, 0x0, 0x0, 0x10 },
-};
-
 static unsigned char bfree_guest_at_random[16];
 
 /* __init_tls: sparse auxv[AT_*].  malloc/getauxval: (type,value)* pairs via __libc.auxv. */
 static size_t bfree_guest_auxv_sparse[40];
 static size_t bfree_guest_auxv_pairs[16];
 
-static void bfree_guest_fill_auxv_tables(void)
+static void bfree_guest_fill_auxv_core(void)
 {
     const size_t phnum = sizeof(bfree_guest_phdrs) / sizeof(bfree_guest_phdrs[0]);
 
@@ -3951,7 +4042,7 @@ static void bfree_guest_fill_auxv_tables(void)
     bfree_guest_auxv_sparse[AT_PHENT] = sizeof(Elf64_Phdr);
     bfree_guest_auxv_sparse[AT_PHNUM] = phnum;
     bfree_guest_auxv_sparse[AT_PHDR] = (size_t)(uintptr_t)bfree_guest_phdrs;
-    bfree_guest_auxv_sparse[AT_ENTRY] = 0x2800000;
+    bfree_guest_auxv_sparse[AT_ENTRY] = 0x2800083;
     bfree_guest_auxv_sparse[AT_RANDOM] = (size_t)(uintptr_t)bfree_guest_at_random;
 
     bfree_guest_auxv_pairs[0] = AT_PAGESZ;
@@ -3963,7 +4054,7 @@ static void bfree_guest_fill_auxv_tables(void)
     bfree_guest_auxv_pairs[6] = AT_PHDR;
     bfree_guest_auxv_pairs[7] = (size_t)(uintptr_t)bfree_guest_phdrs;
     bfree_guest_auxv_pairs[8] = AT_ENTRY;
-    bfree_guest_auxv_pairs[9] = 0x2800000;
+    bfree_guest_auxv_pairs[9] = 0x2800083;
     bfree_guest_auxv_pairs[10] = AT_RANDOM;
     bfree_guest_auxv_pairs[11] = (size_t)(uintptr_t)bfree_guest_at_random;
     bfree_guest_auxv_pairs[12] = 0;
@@ -3971,6 +4062,11 @@ static void bfree_guest_fill_auxv_tables(void)
 
     __libc.page_size = 4096;
     __libc.auxv = bfree_guest_auxv_pairs;
+}
+
+static void bfree_guest_fill_auxv_tables(void)
+{
+    bfree_guest_fill_auxv_core();
     bfree_guest_install_static_env();
 }
 
@@ -4049,15 +4145,25 @@ static void bfree_guest_sync_stack_canary(void)
     __init_ssp(0);
 }
 
+/* musl static TLS list head — VA from guest_resource_holder_va.h (nm after link). */
+static const char bfree_guest_compat_build_id[] =
+    "[desktop_qt] compat build=main_tls-va-v2 defer-env-v1 phdr-text-v1 hybrid-qgui-paint-v1";
+
 static void bfree_guest_init_musl_tls(void)
 {
     long prctl_ret;
+    uintptr_t fs0 __attribute__((unused));
 
     bfree_guest_serial_step('A');
+    if (BFREE_DESKTOP_MAIN_TLS_VA != 0u) {
+        memset((void *)(uintptr_t)BFREE_DESKTOP_MAIN_TLS_VA, 0, BFREE_DESKTOP_MAIN_TLS_BYTES);
+    }
     memset(&__libc, 0, sizeof(__libc));
     __libc.can_do_threads = 1;
     __libc.need_locks = 0;
     __libc.page_size = 4096;
+    fs0 = bfree_guest_read_fs0();
+    (void)fs0;
     memset(bfree_guest_early_tcb, 0, sizeof(bfree_guest_early_tcb));
     *(uintptr_t *)bfree_guest_early_tcb = (uintptr_t)bfree_guest_early_tcb;
     prctl_ret = bfree_guest_syscall2(BFREE_LINUX_SYS_ARCH_PRCTL, BFREE_ARCH_SET_FS,
@@ -4067,8 +4173,9 @@ static void bfree_guest_init_musl_tls(void)
     bfree_guest_serial_hex(bfree_guest_read_fs0());
 
     bfree_guest_seed_at_random();
-    bfree_guest_fill_auxv_tables();
     memset(__malloc_context, 0, BFREE_MUSL_MALLOC_CONTEXT_BYTES);
+    /* No open()/install_static_env before __init_tls — musl malloc metadata is stale on vfork exec. */
+    bfree_guest_fill_auxv_core();
 
     bfree_guest_serial_step('C');
     bfree_guest_serial_hex((uintptr_t)bfree_guest_phdrs);
@@ -4077,6 +4184,7 @@ static void bfree_guest_init_musl_tls(void)
     __init_tls(bfree_guest_auxv_sparse);
     bfree_guest_sync_stack_canary();
     bfree_guest_force_single_thread_libc();
+    bfree_guest_install_static_env();
     bfree_guest_fill_auxv_tables();
 
     bfree_guest_serial_step('D');
@@ -4122,6 +4230,8 @@ extern "C" void bfree_guest_post_tls_banners(void)
 
 /* Called from crt0.S before main — logs each ctor for serial bring-up.
  * Set BFREE_SKIP_GUEST_INIT_ARRAY=1 at compile time to reach main without static ctors. */
+static void bfree_guest_resource_pin_global_guard(void);
+
 extern "C" void bfree_guest_run_init_array(void)
 {
     bfree_guest_init_musl_tls();
@@ -4141,6 +4251,7 @@ extern "C" void bfree_guest_run_init_array(void)
     unsigned n = 0;
     unsigned executed = 0;
 
+    bfree_guest_resource_pin_global_guard();
     bfree_guest_serial("[desktop_qt] init_array: C runner begin\n");
     bfree_guest_serial("[desktop_qt] init_array ptr0=");
     bfree_guest_serial_hex((uintptr_t)*__init_array_start);
@@ -4151,7 +4262,6 @@ extern "C" void bfree_guest_run_init_array(void)
         int saved_musl = bfree_guest_musl_malloc_ready;
         int saved_ctor_bump = bfree_guest_ctor_bump_mode;
         int saved_ctor_hybrid = bfree_guest_ctor_bump_hybrid;
-        size_t saved_ctor_bump_off = bfree_guest_ctor_bump_off;
 
         ctor_stack = bfree_guest_alloc_ctor_stack(&ctor_top);
         if (!ctor_stack || ctor_top == 0) {
@@ -4187,6 +4297,11 @@ extern "C" void bfree_guest_run_init_array(void)
                     ++executed;
                     continue;
                 }
+                if (bfree_guest_defer_plugin_import_ctor((uintptr_t)*p)) {
+                    bfree_guest_serial("[desktop_qt] ctor deferred (plugins -> main)\n");
+                    ++executed;
+                    continue;
+                }
                 if (bfree_guest_defer_late_ctor((uintptr_t)*p, n)) {
                     bfree_guest_record_deferred_ctor(*p, n);
                     bfree_guest_serial("[desktop_qt] ctor deferred (late -> main)\n");
@@ -4203,7 +4318,9 @@ extern "C" void bfree_guest_run_init_array(void)
             bfree_guest_ctor_bump_mode = saved_ctor_bump;
             bfree_guest_ctor_bump_hybrid = saved_ctor_hybrid;
             bfree_guest_musl_malloc_ready = saved_musl;
-            bfree_guest_ctor_bump_off = saved_ctor_bump_off;
+            bfree_guest_ctor_bump_off = 0;
+            bfree_guest_ctor_bump_base = 0;
+            bfree_guest_ctor_bump_cap = 0;
         }
     }
     bfree_guest_serial("[desktop_qt] init_array: C runner end\n");
@@ -4246,6 +4363,15 @@ static void bfree_guest_resource_list_sanitize(void)
     n = *(int64_t *)(h + 0x28);
     if (n <= 0)
         return;
+    if (n > 4096 || (uintptr_t)ptrs < 0x02800000ULL || (uintptr_t)ptrs >= 0x08000000ULL) {
+        *(void ***)(h + 0x20) = 0;
+        *(int64_t *)(h + 0x28) = 0;
+        if (g_qreg_sanitize_diag < 8u) {
+            ++g_qreg_sanitize_diag;
+            bfree_guest_serial_lit("[desktop_qt] qresource reset corrupt list\n");
+        }
+        return;
+    }
     if (!ptrs) {
         *(int64_t *)(h + 0x28) = 0;
         return;

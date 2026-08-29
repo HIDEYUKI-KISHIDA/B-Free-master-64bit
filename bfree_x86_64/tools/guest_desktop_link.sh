@@ -170,6 +170,11 @@ archives_grouped=()
 for a in "${archives[@]}"; do
   case "$a" in
     *libqbfree.a)
+      if [[ "${BFREE_D3_WAYLAND_LINK:-}" == "1" ]]; then
+        echo "[guest_desktop_link] D3: libqbfree.a for desktop symbol refs (no --whole-archive; runtime QPA=wayland)" >&2
+        archives_grouped+=("$a")
+        continue
+      fi
       archives_grouped+=(--whole-archive "$a" --no-whole-archive)
       qpa_whole_archive+=("$a")
       ;;

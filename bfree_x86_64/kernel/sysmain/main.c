@@ -439,6 +439,7 @@ void knl_main(void) {
     pmm_init_reservations();
     pmm_init_pt_pool();
     uart_puts("[BOOT] Memory management initialization is complete.\n");
+    uart_puts("[KERNEL] build=d2c-vfork-3\n");
     bfree_security_init();
     if (bfree_verify_boot_stage("kernel.elf") != 0) {
         uart_puts("[PANIC][SECURITY] kernel stage verification failed\n");

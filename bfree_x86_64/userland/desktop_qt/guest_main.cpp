@@ -58,6 +58,7 @@
 #include <QString>
 #include <QUrl>
 #include <QWindow>
+#include <QPluginLoader>
 #include <QtPlugin>
 
 #include "guest_resource_holder_va.h"
@@ -69,6 +70,9 @@
 #include <sys/time.h>
 
 extern QStaticPlugin qt_static_plugin_QPlatformIntegrationPluginBFree(void);
+#if defined(BFREE_D3_WAYLAND_QPA)
+extern QStaticPlugin qt_static_plugin_QBfreeWlIntegrationPlugin(void);
+#endif
 extern QStaticPlugin qt_static_plugin_QGifPlugin(void);
 extern QStaticPlugin qt_static_plugin_QICOPlugin(void);
 extern void bfree_qpa_pump_guest_input(void);
@@ -106,6 +110,7 @@ void bfree_guest_run_on_ctor_stack_hybrid_keep_bump(void (*fn)(void));
 void bfree_guest_enter_preflighted_mmap_noreturn(void (*fn)(void));
 void bfree_guest_preflight_ctor_mmap(void);
 void bfree_guest_begin_hybrid_alloc(void);
+void bfree_guest_leave_ctor_bump_alloc(void);
 void bfree_guest_run_on_ctor_stack_musl(void (*fn)(void));
 void bfree_guest_run_on_ctor_stack_musl_noreturn(void (*fn)(void));
 void bfree_guest_qv4_preflight_arena(void);
@@ -279,9 +284,9 @@ static QQuickSwitch *g_controls_switch_probe = nullptr;
 static QObject *g_qml_controls_button_root = nullptr;
 static QQuickButton *g_qml_controls_button_standin = nullptr;
 static QQuickRowLayout *g_layouts_row_probe = nullptr;
-static QQuickItem *g_ds_qml_root = nullptr; /* qrc:/DesktopShell.qml Item root */
 static QQuickRowLayout *g_ds_subset_row = nullptr;
 #endif
+static QQuickItem *g_ds_qml_root = nullptr; /* qrc:/DesktopShell.qml Item root (attach shell) */
 static QQuickItem *g_cpp_item_parent_probe = nullptr;
 static int g_sg_chrome_need_pulse = 0;
 static int g_sg_start_leaf_ok = 0;
@@ -6166,7 +6171,10 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     qInstallMessageHandler(guest_qt_message_handler);
     guest_serial_puts("[desktop_qt] qt log hook installed\n");
     guest_serial_puts("[desktop_qt] QGuiApplication OK\n");
-    guest_serial_puts("[desktop_qt] platform=bfree\n");
+    if (g_qt_argv && g_qt_argv[2] && strcmp(g_qt_argv[2], "wayland") == 0)
+        guest_serial_puts("[desktop_qt] platform=wayland\n");
+    else
+        guest_serial_puts("[desktop_qt] platform=bfree\n");
 
     guest_stage_banner(4, "deferred init_array ctors");
     bfree_guest_run_deferred_init_array_ctors();
@@ -6323,6 +6331,168 @@ __attribute__((noinline)) static void guest_mmap_session_body(void)
     }
 }
 
+static int guest_d3_wl_marker_present(void)
+{
+    long fd = guest_sys3(2 /* open */, (long)"/tmp/bfree-d3-wl", 0 /* O_RDONLY */, 0);
+    if (fd < 0)
+        return 0;
+    (void)guest_sys3(3 /* close */, fd, 0, 0);
+    return 1;
+}
+
+static void guest_d3_fill_rect(unsigned *bits, int bpl, int w, int h, int x0, int y0, int rw,
+                              int rh, unsigned argb)
+{
+    int x;
+    int y;
+
+    if (x0 < 0) {
+        rw += x0;
+        x0 = 0;
+    }
+    if (y0 < 0) {
+        rh += y0;
+        y0 = 0;
+    }
+    if (rw <= 0 || rh <= 0 || x0 >= w || y0 >= h)
+        return;
+    for (y = y0; y < y0 + rh && y < h; ++y) {
+        unsigned *row = bits + y * bpl;
+        for (x = x0; x < x0 + rw && x < w; ++x)
+            row[x] = argb;
+    }
+}
+
+static void guest_d3_exit_group_noreturn(void)
+{
+    {
+        register long rax __asm__("rax") = 110;
+        register long rdi __asm__("rdi") = 0;
+        __asm__ volatile("syscall" : "+r"(rax) : "r"(rdi) : "rcx", "r11", "memory");
+        if (rax == 1)
+            guest_serial_puts("[desktop_qt] ppid=1\n");
+        else if (rax == 0)
+            guest_serial_puts("[desktop_qt] ppid=0\n");
+    }
+    guest_serial_puts("[desktop_qt] exit_group\n");
+    {
+        register long rax __asm__("rax") = 231;
+        register long rdi __asm__("rdi") = 0;
+        __asm__ volatile("syscall" : "+r"(rax) : "r"(rdi) : "rcx", "r11", "memory");
+    }
+    guest_serial_puts("[desktop_qt] exit_group hang\n");
+    for (;;)
+        __asm__ volatile("pause" ::: "memory");
+}
+
+#if defined(BFREE_D3_WAYLAND_QPA)
+static void guest_d3_register_wayland_qpa(void)
+{
+    qRegisterStaticPluginFunction(qt_static_plugin_QBfreeWlIntegrationPlugin());
+    guest_serial_puts("[desktop_qt] D3 wayland QPA registered\n");
+}
+
+/* qt_wl_hello と同系: qRegisterStaticPlugin は bss bump では PF。hybrid mmap 上で登録。 */
+__attribute__((noinline)) static void guest_d3_hybrid_gui_session(void)
+{
+    const int desk_w = 1024;
+    const int desk_h = 768;
+    void *qapp_mem;
+
+    __asm__ volatile("andq $-16, %%rsp" ::: "rsp");
+    QCoreApplication::setSetuidAllowed(true);
+    bfree_guest_refresh_libc_auxv();
+    (void)bfree_guest_ensure_fallback_heap();
+    bfree_guest_begin_hybrid_alloc();
+    guest_serial_puts("[desktop_qt] hybrid alloc armed\n");
+    guest_d3_register_wayland_qpa();
+    guest_serial_puts("[desktop_qt] plugin wayland only\n");
+    guest_serial_puts("[desktop_qt] platform=wayland\n");
+    /* Keep hybrid bump through QGuiApplication ctor (qt_wl_hello / hybrid-qgui-v1).
+     * leave_ctor_bump before this ctor is #PF CR2=0x28 after operator new ok
+     * (595697d / hybrid-fallback-v1), even without qresource registry wipe.
+     * Do not guest_reset_qt_resource_registry here (hybrid-zero, same CR2). */
+    QGuiApplication::setDesktopSettingsAware(false);
+    guest_serial_puts("[desktop_qt] QGui hybrid heap\n");
+    guest_serial_puts("[desktop_qt] QGuiApplication ctor start\n");
+    guest_serial_puts("[desktop_qt] before operator new\n");
+    qapp_mem = ::operator new(sizeof(QGuiApplication));
+    if (!qapp_mem) {
+        guest_serial_puts("[desktop_qt] QGuiApplication operator new 0\n");
+        guest_d3_exit_group_noreturn();
+    }
+    guest_serial_puts("[desktop_qt] operator new ok\n");
+    bfree_guest_refresh_libc_auxv();
+    g_qapp = new (qapp_mem) QGuiApplication(g_qt_argc, g_qt_argv);
+    guest_serial_puts("[desktop_qt] QGuiApplication OK\n");
+    /* QGui object lives on hybrid bump. Paint/QImage on fallback (hybrid-qgui #GP
+     * was QImage alpha after ctor, not the ctor itself). */
+    bfree_guest_leave_ctor_bump_alloc();
+    bfree_guest_refresh_libc_auxv();
+    guest_serial_puts("[desktop_qt] paint fallback heap\n");
+
+    guest_serial_puts("[desktop_qt] QWindow start\n");
+    QWindow win;
+    win.setGeometry(0, 0, desk_w, desk_h);
+    win.setSurfaceType(QSurface::RasterSurface);
+    guest_serial_puts("[desktop_qt] QBackingStore start\n");
+    QBackingStore store(&win);
+    guest_serial_puts("[desktop_qt] win.create\n");
+    win.create();
+    store.resize(QSize(desk_w, desk_h));
+    win.show();
+    guest_serial_puts("[desktop_qt] win.show\n");
+
+    const QRect rect(0, 0, desk_w, desk_h);
+    guest_serial_puts("[desktop_qt] beginPaint\n");
+    store.beginPaint(rect);
+    guest_serial_puts("[desktop_qt] beginPaint ok\n");
+    if (QImage *img = static_cast<QImage *>(store.paintDevice())) {
+        unsigned *bits = reinterpret_cast<unsigned *>(img->bits());
+        const int bpl = img->bytesPerLine() / 4;
+        const int w = img->width();
+        const int h = img->height();
+        if (bits && w > 0 && h > 0) {
+            guest_serial_puts("[desktop_qt] bits\n");
+            guest_d3_fill_rect(bits, bpl, w, h, 0, 0, w, h, 0xff7a8fa8u);
+            guest_d3_fill_rect(bits, bpl, w, h, w * 40 / 480, h * 28 / 320, w * 400 / 480,
+                               h * 200 / 320, 0xfff8fafcu);
+            guest_d3_fill_rect(bits, bpl, w, h, w * 56 / 480, h * 48 / 320, w * 48 / 480,
+                               w * 48 / 480, 0xff1d4ed8u);
+            guest_d3_fill_rect(bits, bpl, w, h, w * 120 / 480, h * 48 / 320, w * 48 / 480,
+                               w * 48 / 480, 0xff0f766eu);
+            guest_d3_fill_rect(bits, bpl, w, h, w * 184 / 480, h * 48 / 320, w * 48 / 480,
+                               w * 48 / 480, 0xffc2410cu);
+            guest_d3_fill_rect(bits, bpl, w, h, 0, h - (h * 36 / 320), w, h * 36 / 320,
+                               0xff334155u);
+            guest_serial_puts("[desktop_qt] D2c fullscreen\n");
+            guest_serial_puts("[desktop_qt] D2 fill desk\n");
+        }
+    }
+    store.endPaint();
+    store.flush(rect);
+    guest_serial_puts("[desktop_qt] D3 wayland flush ok\n");
+    guest_persist_create_desk_note();
+    guest_d3_exit_group_noreturn();
+}
+#endif
+
+/* D3 stub compositor: 1024×768 GuestMvpShell bits via stub wayland QPA, then exit_group. */
+__attribute__((noreturn)) static void guest_d3_wayland_desk_session(void)
+{
+    guest_serial_puts("[desktop_qt] D3 wayland desk session\n");
+    bfree_guest_refresh_libc_auxv();
+    bfree_guest_preflight_musl_heap();
+    bfree_guest_preflight_ctor_mmap();
+    guest_serial_puts("[desktop_qt] enter hybrid D3 session\n");
+#if defined(BFREE_D3_WAYLAND_QPA)
+    bfree_guest_run_on_ctor_stack_hybrid(guest_d3_hybrid_gui_session);
+#else
+    guest_serial_puts("[desktop_qt] D3 wayland QPA not linked\n");
+#endif
+    guest_d3_exit_group_noreturn();
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
@@ -6331,10 +6501,20 @@ int main(int argc, char **argv)
     static char prog[] = "/desktop";
     static char arg_platform[] = "-platform";
     static char arg_bfree[] = "bfree";
-    static char *qt_argv[] = { prog, arg_platform, arg_bfree, nullptr };
+    static char arg_wayland[] = "wayland";
+    static char *qt_argv_bfree[] = { prog, arg_platform, arg_bfree, nullptr };
+    static char *qt_argv_wayland[] = { prog, arg_platform, arg_wayland, nullptr };
     int qt_argc = 3;
+    int use_wayland = 0;
+    {
+        int fd = guest_sys3(2 /* open */, (long) "/tmp/bfree-d3-wl", 0 /* O_RDONLY */, 0);
+        if (fd >= 0) {
+            (void)guest_sys3(3 /* close */, (long) fd, 0, 0);
+            use_wayland = 1;
+        }
+    }
     g_qt_argc = qt_argc;
-    g_qt_argv = qt_argv;
+    g_qt_argv = use_wayland ? qt_argv_wayland : qt_argv_bfree;
 
     bfree_guest_serial_step_c('H');
     bfree_guest_serial_step_c('I');
@@ -6347,6 +6527,12 @@ int main(int argc, char **argv)
     bfree_guest_serial_step_c('L');
     g_qt_msg_diag = 0;
     bfree_guest_install_static_env();
+
+#if defined(BFREE_D3_WAYLAND_QPA)
+    if (use_wayland) {
+        guest_d3_wayland_desk_session();
+    }
+#endif
 
     guest_stage_banner(1, "static plugins (bss+bump)");
     guest_serial_puts("[desktop_qt] ctor enter\n");

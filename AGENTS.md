@@ -23,7 +23,13 @@ product desk (`DesktopShell.qml` as Qt Wayland client; **D1 done**,
 `QQmlEngine` / `beginCreate`. **D2c:** client SHM is 1024×768
 (48KiB×64 tiles, `view[1]` at 0,0) so stub chrome is covered; needs g1-desk vfile 48KiB.
 Product QML IR waits until asked.
-D3 not started). **GPU** = accel (G* not started). Stub history:
+**D3 exec path done:** `BFREE_D3=1` compositor vfork-execs `/desktop.elf`
+with `QT_QPA_PLATFORM=wayland` + `/tmp/bfree-d3-wl` marker; patched
+kernel (D2c vfork + 48KiB vfile) injected via xorriso — not daily
+`kernel.elf.g1-desk` overwrite. Smoke: `bash tools/_d3_compositor_stub_smoke.sh`
+(`[D3] execve desktop.elf` → `[ELF] exec transfer desktop.elf` →
+`[desktop_qt] main entry`). Full vfork parent needs desktop relink:
+`bash tools/build_desktop_d3_wayland.sh`. **GPU** = accel (G* not started).
 `docs/HONDESK_PHASES.ja.md`. Scripts live under `bfree_x86_64/`
 (`cd` there, not `$HOME`).
 W8 **done** (gold/navy/cyan + `[wl] vfork parent`).
@@ -38,6 +44,19 @@ EX/VW/TE tiles (not W8 gold). **D2c:** 1024×768 client SHM at
 (0,0) covers stub chrome (`D2c fullscreen`). Tiles are 48KiB×64
 (`/tmp/wl00`–`wl63`). Release g1-desk at 16KiB vfile → `wl shm put trunc=-28`.
 Smoke: `bash tools/_d2c_compositor_stub_smoke.sh`. Do not keep 480×320 after D2c.
+**WSL branch switch:** if `git checkout cursor/d2c-vfile-slots-9760` fails with
+local/untracked conflicts, run
+`bash tools/wsl_checkout_d2c_vfork.sh` (stashes WIP, checks out
+`d799e1a+`). Before smoke, `bash tools/verify_d2c_build.sh` must pass
+(`build=d2c-vfork-3`, `[VFORK] eg`, **`[VFORK] immute ok`** in `kernel.elf`).
+**Kernel must be clean-rebuilt**
+(`make -C kernel clean && make -C kernel RELEASE=1`) — injecting a stale
+`kernel.elf` that only picked up the stamp string is not enough. Rebuild hello
+after checkout; smoke fails fast on wrong branch or stale artifacts.
+**Copied hello:** if link fails on WSL, `cp` the maintainer
+`qt_wl_hello.elf` (~36MB) into `userland/compositor_stub/`; smoke keeps it
+(`BFREE_FORCE_QT_HELLO_REBUILD=1` to force relink). Stamp `hybrid-qpa` is OK;
+`MISS: [qt] build=d2c-vfork-3` is cosmetic when using a prebuilt hello.
 Stub hello is ~35MB: `[wl] vfork parent` can
 appear several seconds after `[qt] exit_group` (`ppid=1` means the
 parent is still waiting). Grep again after the QEMU window is up;
@@ -413,25 +432,23 @@ it under the desk flashes on present (cursor under / full blit).
 Fill/restore with the desk wallpaper color and dirty-rect blit
 from shm. Terminal/Explorer `vfork`+pipe+`execve("/busybox.elf")`
 and paint captured stdout. That is a
-real busybox process, not `desktop.elf`. From-source kernel on the
-stub ISO still kills QEMU. 本デスク still needs a **bootable**
-kernel that execs `desktop.elf` as a Wayland client (not bfree QPA).
+real busybox process, not `desktop.elf`. Patched from-source kernel
+(D2c vfork) may be xorriso-injected onto the stub ISO for D2c/D3 smoke;
+do not overwrite daily `kernel.elf.g1-desk` or daily `bfree.iso`.
+**D3:** compositor `BFREE_D3=1` vfork-execs `/desktop.elf` with
+Wayland env before p8test fallback. Kernel logs `[D3] desktop wayland exec`.
+Relink desktop for Wayland QPA: `tools/build_desktop_d3_wayland.sh`.
 Phases / TODOLIST: `bfree_x86_64/docs/HONDESK_TODOLIST.ja.md` (W8 current).
 S0–S2 history: `bfree_x86_64/docs/HONDESK_PHASES.ja.md`. QEMU hides the
 host cursor when grabbed (`Ctrl+Alt+G`); the guest must paint
 its own. Still not `desktop.elf` / not product QML.
 That is S1 toward 本デスク (compositor owns the socket).
-S2 source whitelist (`desktop.elf` in `sys_linux_execve`) may
-live in `syscall.c`, but **do not** `make -C kernel` and map
-that ELF onto the stub ISO. Observed: from-source
-`kernel.elf.s2-execve` + `-no-reboot` → QEMU exits immediately,
-serial empty (no `[init]`). That is the same class as the
-VMM/`sparse-pt` hang. Stub ISO must keep the daily `g1-desk`
-kernel. Never overwrite `kernel.elf.g1-desk` or daily
-`bfree.iso`. Do not `execve("desktop.elf")` from the stub
-until a bootable patched kernel exists. The Wayland client on
-`g1-desk` is **p8test.elf**: compositor `vfork`(58)+`execve("/p8test.elf")`
-with `QT_QPA_PLATFORM=wayland`. Not `desktop.elf`. Not compositor
+S2 source whitelist (`desktop.elf` in `sys_linux_execve`) lives in
+`syscall.c`. **D3** uses it on the stub ISO with patched kernel inject
+(xorriso), not daily g1-desk overwrite. Never overwrite
+`kernel.elf.g1-desk` or daily `bfree.iso`. Default stub Wayland client
+is still **p8test.elf** / `qt_wl_hello.elf`; **D3** adds optional
+`desktop.elf` exec when `BFREE_D3=1`. Not compositor
 `fork`(57) — that COWs the FB. C `qt_wl_client.elf`
 is the default mapping; `qt_wl_hello.elf` (`QGuiApplication` + stub
 QPA) replaces it when the guest Qt prefix can link. `hello.elf` is
